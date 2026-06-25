@@ -1,0 +1,42 @@
+# Brainstorming scratch (visual companion mockups)
+.superpowers/
+
+# Rust / Tauri
+/target/
+src-tauri/target/
+**/*.rs.bk
+*.pdb
+
+# Node / Svelte frontend
+node_modules/
+dist/
+build/
+.svelte-kit/
+.vite/
+*.local
+
+# Bundled engine binaries & models (large, not source)
+/engine/bin/
+*.safetensors
+*.gguf
+*.ckpt
+*.pt
+*.bin
+
+# Generated gallery output (if ever placed in-repo)
+/gallery/
+
+# Environment & secrets
+.env
+.env.*
+
+# Logs
+*.log
+
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# Editor
+.idea/
+*.swp
