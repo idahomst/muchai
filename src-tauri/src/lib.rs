@@ -2,6 +2,7 @@ mod command_builder;
 mod config;
 mod gallery;
 mod progress_parser;
+mod sysmon;
 mod types;
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
