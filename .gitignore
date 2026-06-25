@@ -46,3 +46,6 @@ Thumbs.db
 # Editor
 .idea/
 *.swp
+
+# Bundled engine binary (large, not source)
+/src-tauri/binaries/
