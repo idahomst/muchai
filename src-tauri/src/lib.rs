@@ -1,4 +1,5 @@
 mod command_builder;
+mod progress_parser;
 mod types;
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
