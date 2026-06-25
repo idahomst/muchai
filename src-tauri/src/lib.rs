@@ -1,5 +1,6 @@
 mod command_builder;
 mod config;
+mod engine;
 mod gallery;
 mod progress_parser;
 mod sysmon;
