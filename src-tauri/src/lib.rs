@@ -1,4 +1,5 @@
 mod command_builder;
+mod config;
 mod progress_parser;
 mod types;
 
