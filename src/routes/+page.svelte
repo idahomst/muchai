@@ -10,6 +10,7 @@
   import ParamsPanel from "$lib/components/ParamsPanel.svelte";
   import HistoryStrip from "$lib/components/HistoryStrip.svelte";
   import GalleryLocation from "$lib/components/GalleryLocation.svelte";
+  import ModelFolders from "$lib/components/ModelFolders.svelte";
   import ResourceMonitor from "$lib/components/ResourceMonitor.svelte";
 
   onMount(() => {
@@ -41,6 +42,7 @@
     <ParamsPanel />
     <HistoryStrip />
     <GalleryLocation />
+    <ModelFolders />
   </section>
 </main>
 <ResourceMonitor />
