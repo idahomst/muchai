@@ -57,6 +57,7 @@ pub fn run() {
             commands::cancel_generation,
             commands::pick_model_file,
             commands::pick_gallery_dir,
+            commands::open_path,
         ])
         .run(tauri::generate_context!())
         .expect("error while running fridAI");
