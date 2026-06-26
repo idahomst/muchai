@@ -1,3 +1,4 @@
+mod catalog;
 mod command_builder;
 mod commands;
 mod config;
