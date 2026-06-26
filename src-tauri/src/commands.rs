@@ -70,7 +70,7 @@ pub async fn generate(
     app: AppHandle,
     state: State<'_, AppState>,
     request: GenerationRequest,
-) -> Result<GalleryItem, String> {
+) -> Result<Vec<GalleryItem>, String> {
     let cfg = state.config.lock().unwrap().clone();
     let binary = resolve_binary(&cfg)
         .ok_or_else(|| "stable-diffusion engine not found. Set its path in Settings.".to_string())?;
@@ -95,21 +95,54 @@ pub async fn generate(
     .map_err(|e| e.to_string())?;
 
     match result {
-        Ok(()) => {
-            let item = GalleryItem {
-                id,
-                image_path: image_path.to_string_lossy().into_owned(),
-                request,
-                created_at_unix: now_unix(),
-            };
-            gallery::write_sidecar(&image_path, &item).map_err(|e| e.to_string())?;
-            // persist last-used request
+        Ok(seeds) => {
+            // For batch_count > 1 the engine writes "{id}_0.png", "{id}_1.png", …;
+            // for a single image it writes "{id}.png". Discover whichever exist so
+            // every produced image becomes its own selectable, reproducible item.
+            let batch = request.batch_count.max(1) as usize;
+            let mut produced: Vec<(usize, PathBuf)> = Vec::new();
+            for i in 0..batch {
+                let p = gallery_dir.join(format!("{id}_{i}.png"));
+                if p.exists() {
+                    produced.push((i, p));
+                }
+            }
+            if produced.is_empty() && image_path.exists() {
+                produced.push((0, image_path.clone()));
+            }
+            if produced.is_empty() {
+                return Err("Engine finished but no image file was found.".to_string());
+            }
+
+            let multi = produced.len() > 1;
+            let mut items = Vec::with_capacity(produced.len());
+            for (i, path) in produced {
+                // Prefer the engine-reported seed; otherwise derive it (base + i,
+                // or leave -1 when the base was random and unreported).
+                let seed = seeds.get(i).copied().unwrap_or(if request.seed >= 0 {
+                    request.seed + i as i64
+                } else {
+                    -1
+                });
+                let mut req_i = request.clone();
+                req_i.seed = seed;
+                req_i.batch_count = 1; // each item is one concrete image
+                let item = GalleryItem {
+                    id: if multi { format!("{id}_{i}") } else { id.clone() },
+                    image_path: path.to_string_lossy().into_owned(),
+                    request: req_i,
+                    created_at_unix: now_unix(),
+                };
+                gallery::write_sidecar(&path, &item).map_err(|e| e.to_string())?;
+                items.push(item);
+            }
+            // persist last-used request (the original, with its batch settings)
             {
                 let mut c = state.config.lock().unwrap();
-                c.last_request = item.request.clone();
+                c.last_request = request.clone();
                 let _ = config::save_config_to(&config::config_file_path(), &c);
             }
-            Ok(item)
+            Ok(items)
         }
         Err(GenError::NonZero { oom: true, .. }) => Err(
             "Out of GPU memory. Try a smaller width/height or batch count.".to_string(),
@@ -137,6 +170,14 @@ pub async fn pick_model_file(app: AppHandle) -> Option<String> {
         .add_filter("Models", &["safetensors", "gguf", "ckpt"])
         .blocking_pick_file();
     file.and_then(|f| f.into_path().ok()).map(|p| p.to_string_lossy().into_owned())
+}
+
+/// Open a folder (or file) in the OS file manager / default app. Runs the
+/// opener via its Rust API so it isn't subject to the JS command's path scope
+/// (the gallery dir is user-chosen and trusted).
+#[tauri::command]
+pub fn open_path(path: String) -> Result<(), String> {
+    tauri_plugin_opener::open_path(path, None::<&str>).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

@@ -42,6 +42,33 @@ pub fn parse_progress_line(line: &str) -> Option<ProgressUpdate> {
     best.map(|(current_step, total_steps)| ProgressUpdate { current_step, total_steps })
 }
 
+/// One parsed "generating image: i/N - seed S" line from the engine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ImageSeed {
+    /// 1-based image index within the batch, as the engine reports it.
+    pub index: u32,
+    pub seed: i64,
+}
+
+/// Parse stable-diffusion.cpp's per-image seed announcement, e.g.
+///   "[INFO ] stable-diffusion.cpp:4561 - generating image: 2/3 - seed 43"
+/// This is how we learn the *actual* seed of each batch image (each image uses
+/// base_seed + offset, or a random seed when base is -1), so the user can pick
+/// one and reproduce it. Returns None for any other line.
+pub fn parse_image_seed_line(line: &str) -> Option<ImageSeed> {
+    let after = line.split("generating image:").nth(1)?;
+    // `after` looks like: " 2/3 - seed 43"
+    let (idx_part, _) = after.split_once('/')?;
+    let index: u32 = idx_part.trim().parse().ok()?;
+    let seed_part = after.split("seed").nth(1)?.trim();
+    let tok: String = seed_part
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '-')
+        .collect();
+    let seed: i64 = tok.parse().ok()?;
+    Some(ImageSeed { index, seed })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -75,5 +102,17 @@ mod tests {
     fn bar_line_without_any_ratio_returns_none() {
         // SPEC implies: a '|' bar with no "<digits>/<digits>" pair is not progress.
         assert_eq!(parse_progress_line("  |===========>            |"), None);
+    }
+
+    #[test]
+    fn parses_image_seed_line() {
+        let line = "[INFO ] stable-diffusion.cpp:4561 - generating image: 2/3 - seed 43";
+        assert_eq!(parse_image_seed_line(line), Some(ImageSeed { index: 2, seed: 43 }));
+    }
+
+    #[test]
+    fn image_seed_ignores_other_lines() {
+        assert_eq!(parse_image_seed_line("  |####| 5/30 - 2.3it/s"), None);
+        assert_eq!(parse_image_seed_line("[INFO] save result image 0"), None);
     }
 }

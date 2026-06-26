@@ -10,8 +10,10 @@
     if (!req.prompt.trim()) { genStatus.set({ kind: "error", message: "Enter a prompt." }); return; }
     genStatus.set({ kind: "running", progress: null });
     try {
-      const item = await generate(req);
-      currentImage.set(imageSrc(item.image_path));
+      const items = await generate(req);
+      if (items.length > 0) {
+        currentImage.set(imageSrc(items[0].image_path));
+      }
       history.set(await listHistory());
       genStatus.set({ kind: "idle" });
     } catch (e) {

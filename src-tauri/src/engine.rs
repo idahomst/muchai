@@ -1,5 +1,5 @@
 use crate::command_builder::build_args;
-use crate::progress_parser::parse_progress_line;
+use crate::progress_parser::{parse_image_seed_line, parse_progress_line};
 use crate::types::{GenerationRequest, ProgressUpdate};
 use std::io::{BufRead, BufReader};
 use std::path::Path;
@@ -30,13 +30,16 @@ fn looks_like_oom(s: &str) -> bool {
 /// call `on_progress` for each parsed progress line, and map the exit status.
 /// The engine writes the PNG to `output_path` itself. `slot` receives the child
 /// handle so it can be cancelled.
+/// On success, returns the actual seed of each generated image, ordered by the
+/// engine's 1-based image index (so element 0 is the first image). May be empty
+/// if the engine didn't announce seeds; callers then derive seeds themselves.
 pub fn run_generation<F: FnMut(ProgressUpdate)>(
     binary: &Path,
     req: &GenerationRequest,
     output_path: &Path,
     slot: &ChildSlot,
     mut on_progress: F,
-) -> Result<(), GenError> {
+) -> Result<Vec<i64>, GenError> {
     if !binary.exists() {
         return Err(GenError::BinaryNotFound(binary.display().to_string()));
     }
@@ -72,9 +75,12 @@ pub fn run_generation<F: FnMut(ProgressUpdate)>(
         }
     });
 
+    let mut seeds: Vec<(u32, i64)> = Vec::new();
     for line in rx {
         if let Some(update) = parse_progress_line(&line) {
             on_progress(update);
+        } else if let Some(s) = parse_image_seed_line(&line) {
+            seeds.push((s.index, s.seed));
         }
     }
     let _ = h_out.join();
@@ -91,7 +97,8 @@ pub fn run_generation<F: FnMut(ProgressUpdate)>(
     let status = child.wait().map_err(|e| GenError::Spawn(e.to_string()))?;
 
     if status.success() {
-        Ok(())
+        seeds.sort_by_key(|(i, _)| *i);
+        Ok(seeds.into_iter().map(|(_, s)| s).collect())
     } else {
         let tail = h_err_lines.lock().unwrap();
         let joined = tail.iter().rev().take(20).rev().cloned().collect::<Vec<_>>().join("\n");
