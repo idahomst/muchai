@@ -25,7 +25,15 @@ pub fn run() {
             // Background system-stats loop: emit "system:stats" ~every second.
             let handle = app.handle().clone();
             std::thread::spawn(move || {
-                let nvml = nvml_wrapper::Nvml::init().ok();
+                // Many driver installs ship only the versioned NVML
+                // (libnvidia-ml.so.1) without the unversioned dev symlink that
+                // Nvml::init() loads by default. Try the versioned name first,
+                // then fall back to the default so both layouts work.
+                let nvml = nvml_wrapper::Nvml::builder()
+                    .lib_path(std::ffi::OsStr::new("libnvidia-ml.so.1"))
+                    .init()
+                    .or_else(|_| nvml_wrapper::Nvml::init())
+                    .ok();
                 let mut sys = sysinfo::System::new();
                 loop {
                     let stats = sysmon::gather(&mut sys, nvml.as_ref());

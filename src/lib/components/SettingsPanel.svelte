@@ -10,16 +10,16 @@
   <label class="label">CFG
     <input type="number" min="1" max="30" step="0.5" bind:value={$request.cfg_scale} />
   </label>
-  <label class="label">Sampler
-    <select bind:value={$request.sampler}>
-      {#each SAMPLERS as s}<option value={s.value}>{s.label}</option>{/each}
-    </select>
-  </label>
   <label class="label">Width
     <input type="number" min="64" max="2048" step="64" bind:value={$request.width} />
   </label>
   <label class="label">Height
     <input type="number" min="64" max="2048" step="64" bind:value={$request.height} />
+  </label>
+  <label class="label">Sampler
+    <select bind:value={$request.sampler}>
+      {#each SAMPLERS as s}<option value={s.value}>{s.label}</option>{/each}
+    </select>
   </label>
   <label class="label">Batch
     <input type="number" min="1" max="8" bind:value={$request.batch_count} />

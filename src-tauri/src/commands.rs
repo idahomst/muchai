@@ -105,6 +105,16 @@ pub async fn generate(
         Err(GenError::NonZero { oom: true, .. }) => Err(
             "Out of GPU memory. Try a smaller width/height or batch count.".to_string(),
         ),
+        // Surface the engine's own stderr so failures are diagnosable instead
+        // of an opaque "exited with code N".
+        Err(GenError::NonZero { code, stderr_tail, .. }) => {
+            let tail = stderr_tail.trim();
+            if tail.is_empty() {
+                Err(format!("Image generation failed (engine exited with code {code:?})."))
+            } else {
+                Err(format!("Image generation failed (code {code:?}):\n{tail}"))
+            }
+        }
         Err(e) => Err(e.to_string()),
     }
 }
