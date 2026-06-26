@@ -1,4 +1,107 @@
+use std::fs::File;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+
+#[derive(Debug)]
+pub enum DownloadError {
+    Unauthorized,
+    NotFound,
+    Network(String),
+    Io(String),
+    Cancelled,
+}
+
+impl DownloadError {
+    /// User-facing message for the command layer.
+    pub fn message(&self) -> String {
+        match self {
+            DownloadError::Unauthorized => {
+                "This model requires an access token. Add one and try again.".into()
+            }
+            DownloadError::NotFound => "No file was found at that URL.".into(),
+            DownloadError::Network(e) => format!("Download failed: {e}"),
+            DownloadError::Io(e) => format!("Could not save the file: {e}"),
+            DownloadError::Cancelled => "Download cancelled.".into(),
+        }
+    }
+}
+
+/// Download `url` into `dest_dir`, streaming to a `.part` file and renaming on
+/// success. Calls `on_progress(downloaded, total)` as bytes arrive (`total` is
+/// None when the server omits Content-Length). Aborts promptly when `cancel`
+/// flips to true, removing the partial file.
+pub fn download_model<F: FnMut(u64, Option<u64>)>(
+    url: &str,
+    token: &str,
+    dest_dir: &Path,
+    mut on_progress: F,
+    cancel: &AtomicBool,
+) -> Result<PathBuf, DownloadError> {
+    let mut req = ureq::get(url);
+    if !token.is_empty() {
+        req = req.set("Authorization", &format!("Bearer {token}"));
+    }
+    let resp = match req.call() {
+        Ok(r) => r,
+        Err(ureq::Error::Status(401, _)) | Err(ureq::Error::Status(403, _)) => {
+            return Err(DownloadError::Unauthorized)
+        }
+        Err(ureq::Error::Status(404, _)) => return Err(DownloadError::NotFound),
+        Err(ureq::Error::Status(code, _)) => {
+            return Err(DownloadError::Network(format!("server returned {code}")))
+        }
+        Err(ureq::Error::Transport(t)) => return Err(DownloadError::Network(t.to_string())),
+    };
+
+    let total: Option<u64> = resp
+        .header("Content-Length")
+        .and_then(|s| s.parse::<u64>().ok());
+    let filename = derive_filename(resp.header("Content-Disposition"), url);
+    let final_path = unique_path(dest_dir, &filename);
+    let part_path = final_path.with_extension(format!(
+        "{}part",
+        final_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| format!("{e}."))
+            .unwrap_or_default()
+    ));
+
+    let mut file = File::create(&part_path).map_err(|e| DownloadError::Io(e.to_string()))?;
+    let mut reader = resp.into_reader();
+    let mut buf = [0u8; 65536];
+    let mut downloaded: u64 = 0;
+
+    loop {
+        if cancel.load(Ordering::SeqCst) {
+            drop(file);
+            let _ = std::fs::remove_file(&part_path);
+            return Err(DownloadError::Cancelled);
+        }
+        let n = match reader.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(e) => {
+                drop(file);
+                let _ = std::fs::remove_file(&part_path);
+                return Err(DownloadError::Io(e.to_string()));
+            }
+        };
+        if let Err(e) = file.write_all(&buf[..n]) {
+            drop(file);
+            let _ = std::fs::remove_file(&part_path);
+            return Err(DownloadError::Io(e.to_string()));
+        }
+        downloaded += n as u64;
+        on_progress(downloaded, total);
+    }
+
+    file.flush().map_err(|e| DownloadError::Io(e.to_string()))?;
+    drop(file);
+    std::fs::rename(&part_path, &final_path).map_err(|e| DownloadError::Io(e.to_string()))?;
+    Ok(final_path)
+}
 
 /// Strip any directory components and control chars; fall back to a default.
 pub fn sanitize_filename(name: &str) -> String {
