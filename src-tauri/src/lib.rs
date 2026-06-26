@@ -11,6 +11,7 @@ mod sysmon;
 mod types;
 
 use commands::AppState;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use tauri::{Emitter, Manager};
 
@@ -25,6 +26,7 @@ pub fn run() {
         .manage(AppState {
             config: Mutex::new(initial),
             child: Arc::new(Mutex::new(None)),
+            download_cancel: Arc::new(AtomicBool::new(false)),
         })
         .setup(move |app| {
             // Allow the configured gallery dir for the asset protocol so saved
@@ -61,6 +63,12 @@ pub fn run() {
             commands::pick_model_file,
             commands::pick_gallery_dir,
             commands::open_path,
+            commands::list_models,
+            commands::starter_models,
+            commands::delete_model,
+            commands::download_model,
+            commands::cancel_download,
+            commands::pick_folder,
         ])
         .run(tauri::generate_context!())
         .expect("error while running fridAI");

@@ -1,14 +1,16 @@
 use crate::engine::{self, ChildSlot, GenError};
-use crate::types::{AppConfig, GalleryItem, GenerationRequest};
-use crate::{config, gallery};
+use crate::types::{AppConfig, DownloadProgress, GalleryItem, GenerationRequest, ModelInfo};
+use crate::{catalog, config, downloader, gallery, models};
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 pub struct AppState {
     pub config: Mutex<AppConfig>,
     pub child: ChildSlot,
+    pub download_cancel: Arc<AtomicBool>,
 }
 
 fn now_unix() -> u64 {
@@ -182,6 +184,94 @@ pub fn open_path(path: String) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn pick_gallery_dir(app: AppHandle) -> Option<String> {
+    use tauri_plugin_dialog::DialogExt;
+    let dir = app.dialog().file().blocking_pick_folder();
+    dir.and_then(|d| d.into_path().ok()).map(|p| p.to_string_lossy().into_owned())
+}
+
+/// All model folders to scan: primary first, then the watched extras.
+fn model_dirs(cfg: &AppConfig) -> Vec<PathBuf> {
+    let mut dirs = vec![PathBuf::from(&cfg.models_dir)];
+    dirs.extend(cfg.extra_model_dirs.iter().map(PathBuf::from));
+    dirs
+}
+
+#[tauri::command]
+pub fn list_models(state: State<AppState>) -> Vec<ModelInfo> {
+    let cfg = state.config.lock().unwrap().clone();
+    models::scan_models(&model_dirs(&cfg))
+}
+
+#[tauri::command]
+pub fn starter_models(vram_total_mb: Option<u64>) -> Vec<catalog::RatedModel> {
+    catalog::rated_catalog(vram_total_mb)
+}
+
+#[tauri::command]
+pub fn delete_model(path: String) -> Result<(), String> {
+    let p = PathBuf::from(&path);
+    if !p.is_file() {
+        return Err("That model file no longer exists.".into());
+    }
+    std::fs::remove_file(&p).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn cancel_download(state: State<AppState>) {
+    state.download_cancel.store(true, Ordering::SeqCst);
+}
+
+#[tauri::command]
+pub async fn download_model(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    url: String,
+    token: String,
+) -> Result<ModelInfo, String> {
+    let dest = {
+        let cfg = state.config.lock().unwrap();
+        PathBuf::from(&cfg.models_dir)
+    };
+    std::fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
+
+    let cancel = state.download_cancel.clone();
+    cancel.store(false, Ordering::SeqCst);
+    let app2 = app.clone();
+
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        downloader::download_model(
+            &url,
+            &token,
+            &dest,
+            |downloaded, total| {
+                let _ = app2.emit("model:download:progress", DownloadProgress { downloaded, total });
+            },
+            &cancel,
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+
+    match result {
+        Ok(path) => {
+            let size_bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+            let name = path
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            Ok(ModelInfo {
+                path: path.to_string_lossy().into_owned(),
+                name,
+                size_bytes,
+            })
+        }
+        Err(e) => Err(e.message()),
+    }
+}
+
+/// Pick a folder (used for adding watched model folders / changing the primary).
+#[tauri::command]
+pub async fn pick_folder(app: AppHandle) -> Option<String> {
     use tauri_plugin_dialog::DialogExt;
     let dir = app.dialog().file().blocking_pick_folder();
     dir.and_then(|d| d.into_path().ok()).map(|p| p.to_string_lossy().into_owned())
