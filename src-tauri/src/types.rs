@@ -101,6 +101,15 @@ pub struct GalleryItem {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ModelInfo {
+    /// Absolute path passed to the engine via `-m`.
+    pub path: String,
+    /// File stem, shown in the UI.
+    pub name: String,
+    pub size_bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AppConfig {
     pub sd_binary_path: Option<String>, // None => use bundled sidecar
     pub default_model_path: Option<String>,

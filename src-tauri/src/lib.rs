@@ -3,6 +3,7 @@ mod commands;
 mod config;
 mod engine;
 mod gallery;
+mod models;
 mod progress_parser;
 mod sysmon;
 mod types;
