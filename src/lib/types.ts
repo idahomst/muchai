@@ -1,6 +1,9 @@
+// Wire values MUST match the Rust `Sampler` enum's serde snake_case form
+// (src-tauri/src/types.rs). The `++` CLI spelling lives only in Rust's
+// `cli_name()`; never send it over the wire. Display labels are in SAMPLERS.
 export type Sampler =
   | "euler" | "euler_a" | "heun" | "dpm2"
-  | "dpm++2s_a" | "dpm++2m" | "dpm++2mv2"
+  | "dpm_pp2s_a" | "dpm_pp2m" | "dpm_pp2m_v2"
   | "ipndm" | "ipndm_v" | "lcm";
 
 export interface GenerationRequest {
@@ -45,7 +48,15 @@ export const defaultRequest = (): GenerationRequest => ({
   width: 512, height: 512, seed: -1, batch_count: 1,
 });
 
-export const SAMPLERS: Sampler[] = [
-  "euler_a", "euler", "heun", "dpm2",
-  "dpm++2s_a", "dpm++2m", "dpm++2mv2", "ipndm", "ipndm_v", "lcm",
+export const SAMPLERS: { value: Sampler; label: string }[] = [
+  { value: "euler_a", label: "Euler a" },
+  { value: "euler", label: "Euler" },
+  { value: "heun", label: "Heun" },
+  { value: "dpm2", label: "DPM2" },
+  { value: "dpm_pp2s_a", label: "DPM++ 2S a" },
+  { value: "dpm_pp2m", label: "DPM++ 2M" },
+  { value: "dpm_pp2m_v2", label: "DPM++ 2M v2" },
+  { value: "ipndm", label: "iPNDM" },
+  { value: "ipndm_v", label: "iPNDM v" },
+  { value: "lcm", label: "LCM" },
 ];

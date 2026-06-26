@@ -9,7 +9,7 @@
 </script>
 
 <div class="field">
-  <label class="label">Model</label>
+  <span class="label">Model</span>
   <div class="row">
     <button class="btn-secondary" on:click={pick}>Choose…</button>
     <span class="path" title={$request.model_path}>

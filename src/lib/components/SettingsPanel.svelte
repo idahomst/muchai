@@ -12,7 +12,7 @@
   </label>
   <label class="label">Sampler
     <select bind:value={$request.sampler}>
-      {#each SAMPLERS as s}<option value={s}>{s}</option>{/each}
+      {#each SAMPLERS as s}<option value={s.value}>{s.label}</option>{/each}
     </select>
   </label>
   <label class="label">Width

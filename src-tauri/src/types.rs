@@ -130,4 +130,31 @@ mod tests {
         let json = serde_json::to_string(&Sampler::EulerA).unwrap();
         assert_eq!(json, "\"euler_a\"");
     }
+
+    /// Pins the exact JSON wire form for every sampler. The TS `Sampler` union
+    /// and `SAMPLERS` (src/lib/types.ts) MUST mirror these literals — if this
+    /// list changes, update the frontend in lockstep. Guards against the
+    /// TS-spelling-vs-serde-snake_case drift that broke the dpm++ samplers.
+    #[test]
+    fn sampler_wire_form_matches_frontend_contract() {
+        let cases = [
+            (Sampler::Euler, "euler"),
+            (Sampler::EulerA, "euler_a"),
+            (Sampler::Heun, "heun"),
+            (Sampler::Dpm2, "dpm2"),
+            (Sampler::DpmPp2sA, "dpm_pp2s_a"),
+            (Sampler::DpmPp2m, "dpm_pp2m"),
+            (Sampler::DpmPp2mV2, "dpm_pp2m_v2"),
+            (Sampler::Ipndm, "ipndm"),
+            (Sampler::IpndmV, "ipndm_v"),
+            (Sampler::Lcm, "lcm"),
+        ];
+        for (variant, wire) in cases {
+            // serialize: variant -> exact wire string
+            assert_eq!(serde_json::to_string(&variant).unwrap(), format!("\"{wire}\""));
+            // deserialize: wire string the frontend sends -> variant
+            let back: Sampler = serde_json::from_str(&format!("\"{wire}\"")).unwrap();
+            assert_eq!(back, variant);
+        }
+    }
 }
