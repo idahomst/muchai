@@ -7,6 +7,16 @@
   let error = $state<string | null>(null);
 
   const fmtSize = (b: number) => (b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : `${(b / 1e6).toFixed(0)} MB`);
+  const basename = (p: string) => p.split("/").pop() ?? p;
+
+  // A model selected before the library scanned it (e.g. carried over from an
+  // older config, or a path outside any watched folder). Surface it as a
+  // selectable option so the dropdown isn't blank and generation still works.
+  const orphanPath = $derived(
+    $request.model_path && !$models.some((m) => m.path === $request.model_path)
+      ? $request.model_path
+      : null,
+  );
 
   async function refresh() {
     models.set(await listModels());
@@ -44,6 +54,7 @@
   <div class="row">
     <select value={$request.model_path} onchange={onSelect}>
       {#if !$request.model_path}<option value="" disabled selected>Select a model…</option>{/if}
+      {#if orphanPath}<option value={orphanPath}>{basename(orphanPath)} — (not in library)</option>{/if}
       {#each $models as m (m.path)}
         <option value={m.path}>{m.name} — {fmtSize(m.size_bytes)}</option>
       {/each}

@@ -31,6 +31,7 @@
   <aside class="controls">
     <h1 class="brand">fridAI</h1>
     <ModelLibrary />
+    <ModelFolders />
     <PromptPanel />
     <SettingsPanel />
     <div class="spacer"></div>
@@ -42,7 +43,6 @@
     <ParamsPanel />
     <HistoryStrip />
     <GalleryLocation />
-    <ModelFolders />
   </section>
 </main>
 <ResourceMonitor />
