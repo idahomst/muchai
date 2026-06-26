@@ -235,16 +235,25 @@ pub async fn download_model(
     std::fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
 
     let cancel = state.download_cancel.clone();
+    // The UI triggers at most one download at a time; this reset assumes that
+    // single-flight invariant (concurrent downloads would share one cancel flag).
     cancel.store(false, Ordering::SeqCst);
     let app2 = app.clone();
 
     let result = tauri::async_runtime::spawn_blocking(move || {
+        // Throttle: emit at most every ~4 MiB (or on completion) so multi-GB
+        // downloads don't flood the frontend with ~100k IPC events.
+        let mut last_emit: u64 = 0;
         downloader::download_model(
             &url,
             &token,
             &dest,
-            |downloaded, total| {
-                let _ = app2.emit("model:download:progress", DownloadProgress { downloaded, total });
+            move |downloaded, total| {
+                if downloaded.saturating_sub(last_emit) >= 4 << 20 || Some(downloaded) == total {
+                    last_emit = downloaded;
+                    let _ = app2
+                        .emit("model:download:progress", DownloadProgress { downloaded, total });
+                }
             },
             &cancel,
         )
