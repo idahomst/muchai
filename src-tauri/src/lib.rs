@@ -9,19 +9,25 @@ mod types;
 
 use commands::AppState;
 use std::sync::{Arc, Mutex};
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let initial = config::load_config_from(&config::config_file_path());
+    let gallery_dir = initial.gallery_dir.clone();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .manage(AppState {
             config: Mutex::new(initial),
             child: Arc::new(Mutex::new(None)),
         })
-        .setup(|app| {
+        .setup(move |app| {
+            // Allow the configured gallery dir for the asset protocol so saved
+            // images load even when it's not the default location.
+            let _ = app.asset_protocol_scope().allow_directory(&gallery_dir, true);
+
             // Background system-stats loop: emit "system:stats" ~every second.
             let handle = app.handle().clone();
             std::thread::spawn(move || {
@@ -50,6 +56,7 @@ pub fn run() {
             commands::generate,
             commands::cancel_generation,
             commands::pick_model_file,
+            commands::pick_gallery_dir,
         ])
         .run(tauri::generate_context!())
         .expect("error while running fridAI");

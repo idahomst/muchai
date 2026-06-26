@@ -4,7 +4,7 @@ use crate::{config, gallery};
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 pub struct AppState {
     pub config: Mutex<AppConfig>,
@@ -37,8 +37,17 @@ pub fn get_settings(state: State<AppState>) -> AppConfig {
 }
 
 #[tauri::command]
-pub fn set_settings(state: State<AppState>, config: AppConfig) -> Result<(), String> {
+pub fn set_settings(
+    app: AppHandle,
+    state: State<AppState>,
+    config: AppConfig,
+) -> Result<(), String> {
     config::save_config_to(&config::config_file_path(), &config).map_err(|e| e.to_string())?;
+    // Keep the asset-protocol scope in sync so images in a newly chosen gallery
+    // dir can be displayed without restarting the app.
+    let _ = app
+        .asset_protocol_scope()
+        .allow_directory(&config.gallery_dir, true);
     *state.config.lock().unwrap() = config;
     Ok(())
 }
@@ -128,4 +137,11 @@ pub async fn pick_model_file(app: AppHandle) -> Option<String> {
         .add_filter("Models", &["safetensors", "gguf", "ckpt"])
         .blocking_pick_file();
     file.and_then(|f| f.into_path().ok()).map(|p| p.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+pub async fn pick_gallery_dir(app: AppHandle) -> Option<String> {
+    use tauri_plugin_dialog::DialogExt;
+    let dir = app.dialog().file().blocking_pick_folder();
+    dir.and_then(|d| d.into_path().ok()).map(|p| p.to_string_lossy().into_owned())
 }

@@ -8,6 +8,7 @@
   import GenerateBar from "$lib/components/GenerateBar.svelte";
   import ImagePreview from "$lib/components/ImagePreview.svelte";
   import HistoryStrip from "$lib/components/HistoryStrip.svelte";
+  import GalleryLocation from "$lib/components/GalleryLocation.svelte";
   import ResourceMonitor from "$lib/components/ResourceMonitor.svelte";
 
   onMount(() => {
@@ -36,6 +37,7 @@
   <section class="stage">
     <ImagePreview />
     <HistoryStrip />
+    <GalleryLocation />
   </section>
 </main>
 <ResourceMonitor />

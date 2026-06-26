@@ -1,5 +1,6 @@
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { openPath } from "@tauri-apps/plugin-opener";
 import type { AppConfig, GalleryItem, GenerationRequest, ProgressUpdate, SystemStats } from "./types";
 
 export const getSettings = () => invoke<AppConfig>("get_settings");
@@ -8,6 +9,10 @@ export const listHistory = () => invoke<GalleryItem[]>("list_history");
 export const generate = (request: GenerationRequest) => invoke<GalleryItem>("generate", { request });
 export const cancelGeneration = () => invoke<void>("cancel_generation");
 export const pickModelFile = () => invoke<string | null>("pick_model_file");
+export const pickGalleryDir = () => invoke<string | null>("pick_gallery_dir");
+
+/** Open a folder (or file) in the OS file manager / default app. */
+export const openFolder = (path: string) => openPath(path);
 
 export const imageSrc = (path: string) => convertFileSrc(path);
 
