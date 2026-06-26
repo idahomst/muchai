@@ -23,16 +23,16 @@ fn collect(dir: &Path, out: &mut Vec<ModelInfo>, seen: &mut HashSet<PathBuf>) {
             collect(&path, out, seen);
         } else if is_model_file(&path) {
             let canon = path.canonicalize().unwrap_or_else(|_| path.clone());
-            if !seen.insert(canon) {
+            if !seen.insert(canon.clone()) {
                 continue; // already found via another watched dir
             }
             let size_bytes = entry.metadata().map(|m| m.len()).unwrap_or(0);
-            let name = path
+            let name = canon
                 .file_stem()
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_default();
             out.push(ModelInfo {
-                path: path.to_string_lossy().into_owned(),
+                path: canon.to_string_lossy().into_owned(),
                 name,
                 size_bytes,
             });
@@ -48,7 +48,7 @@ pub fn scan_models(dirs: &[PathBuf]) -> Vec<ModelInfo> {
     for dir in dirs {
         collect(dir, &mut out, &mut seen);
     }
-    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    out.sort_by_key(|m| m.name.to_lowercase());
     out
 }
 
