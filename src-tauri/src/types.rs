@@ -105,6 +105,12 @@ pub struct AppConfig {
     pub sd_binary_path: Option<String>, // None => use bundled sidecar
     pub default_model_path: Option<String>,
     pub gallery_dir: String,
+    /// Primary managed models folder; downloads land here.
+    #[serde(default)]
+    pub models_dir: String,
+    /// Additional folders fridAI scans and merges into the model list.
+    #[serde(default)]
+    pub extra_model_dirs: Vec<String>,
     pub last_request: GenerationRequest,
 }
 
