@@ -1,6 +1,6 @@
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { AppConfig, GalleryItem, GenerationRequest, ProgressUpdate, SystemStats } from "./types";
+import type { AppConfig, GalleryItem, GenerationRequest, ProgressUpdate, SystemStats, ModelInfo, RatedModel, DownloadProgress } from "./types";
 
 export const getSettings = () => invoke<AppConfig>("get_settings");
 export const setSettings = (config: AppConfig) => invoke<void>("set_settings", { config });
@@ -21,3 +21,15 @@ export const onProgress = (cb: (p: ProgressUpdate) => void): Promise<UnlistenFn>
 
 export const onSystemStats = (cb: (s: SystemStats) => void): Promise<UnlistenFn> =>
   listen<SystemStats>("system:stats", (e) => cb(e.payload));
+
+export const listModels = () => invoke<ModelInfo[]>("list_models");
+export const starterModels = (vramTotalMb: number | null) =>
+  invoke<RatedModel[]>("starter_models", { vramTotalMb });
+export const deleteModel = (path: string) => invoke<void>("delete_model", { path });
+export const downloadModel = (url: string, token: string) =>
+  invoke<ModelInfo>("download_model", { url, token });
+export const cancelDownload = () => invoke<void>("cancel_download");
+export const pickFolder = () => invoke<string | null>("pick_folder");
+
+export const onDownloadProgress = (cb: (p: DownloadProgress) => void): Promise<UnlistenFn> =>
+  listen<DownloadProgress>("model:download:progress", (e) => cb(e.payload));

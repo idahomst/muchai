@@ -39,6 +39,8 @@ export interface AppConfig {
   sd_binary_path: string | null;
   default_model_path: string | null;
   gallery_dir: string;
+  models_dir: string;
+  extra_model_dirs: string[];
   last_request: GenerationRequest;
 }
 
@@ -60,3 +62,16 @@ export const SAMPLERS: { value: Sampler; label: string }[] = [
   { value: "ipndm_v", label: "iPNDM v" },
   { value: "lcm", label: "LCM" },
 ];
+
+export interface ModelInfo { path: string; name: string; size_bytes: number; }
+
+export type ModelKind = "sd15" | "sdxl";
+export type Suitability = "recommended" | "tight" | "too_big" | "unknown";
+
+export interface RatedModel {
+  id: string; name: string; url: string; size_bytes: number;
+  kind: ModelKind; min_vram_mb: number; recommended_vram_mb: number;
+  suitability: Suitability;
+}
+
+export interface DownloadProgress { downloaded: number; total: number | null; }
