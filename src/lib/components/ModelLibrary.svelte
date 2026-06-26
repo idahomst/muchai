@@ -60,7 +60,7 @@
 </div>
 
 {#if showDownload}
-  <DownloadDialog onclose={() => (showDownload = false)} ondownloaded={onDownloaded} {refresh} />
+  <DownloadDialog onclose={() => (showDownload = false)} ondownloaded={onDownloaded} />
 {/if}
 
 <style>
