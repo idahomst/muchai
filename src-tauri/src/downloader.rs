@@ -19,15 +19,24 @@ pub fn sanitize_filename(name: &str) -> String {
 pub fn derive_filename(content_disposition: Option<&str>, url: &str) -> String {
     if let Some(cd) = content_disposition {
         if let Some(idx) = cd.to_lowercase().find("filename=") {
-            let raw = cd[idx + "filename=".len()..]
-                .trim()
-                .trim_matches('"')
-                .split(';')
-                .next()
-                .unwrap_or("");
-            let cleaned = sanitize_filename(raw);
-            if cleaned != "model.safetensors" {
-                return cleaned;
+            let start = idx + "filename=".len();
+            // `idx` is found in the lowercased copy; Content-Disposition keys are
+            // ASCII tokens so the offset is valid in the original, but guard the
+            // boundary so we never slice mid-codepoint on an exotic header.
+            if cd.is_char_boundary(start) {
+                let raw = cd[start..]
+                    .split(';')
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .trim_matches('"')
+                    .trim();
+                // Use the header name whenever it produced anything (including a
+                // file legitimately named "model.safetensors"); only fall back to
+                // the URL when the header gave us nothing usable.
+                if !raw.is_empty() {
+                    return sanitize_filename(raw);
+                }
             }
         }
     }
@@ -89,6 +98,8 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("m.safetensors"), b"x").unwrap();
         assert_eq!(unique_path(&dir, "m.safetensors").file_name().unwrap(), "m (1).safetensors");
+        std::fs::write(dir.join("m (1).safetensors"), b"x").unwrap();
+        assert_eq!(unique_path(&dir, "m.safetensors").file_name().unwrap(), "m (2).safetensors");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
