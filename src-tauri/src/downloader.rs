@@ -97,9 +97,15 @@ pub fn download_model<F: FnMut(u64, Option<u64>)>(
         on_progress(downloaded, total);
     }
 
-    file.flush().map_err(|e| DownloadError::Io(e.to_string()))?;
+    file.flush().map_err(|e| {
+        let _ = std::fs::remove_file(&part_path);
+        DownloadError::Io(e.to_string())
+    })?;
     drop(file);
-    std::fs::rename(&part_path, &final_path).map_err(|e| DownloadError::Io(e.to_string()))?;
+    std::fs::rename(&part_path, &final_path).map_err(|e| {
+        let _ = std::fs::remove_file(&part_path);
+        DownloadError::Io(e.to_string())
+    })?;
     Ok(final_path)
 }
 
