@@ -11,6 +11,7 @@
   let token = $state("");
   let busy = $state(false);
   let error = $state<string | null>(null);
+  let cancelling = $state(false);
   let downloaded = $state(0);
   let total = $state<number | null>(null);
   let unlisten: (() => void) | null = null;
@@ -35,22 +36,22 @@
 
   async function start(downloadUrl: string) {
     if (busy || !downloadUrl) return;
-    busy = true; error = null; downloaded = 0; total = null;
+    busy = true; error = null; cancelling = false; downloaded = 0; total = null;
     try {
       const info = await downloadModel(downloadUrl, token.trim());
       ondownloaded(info.path);
     } catch (e) {
-      error = String(e);
+      if (!cancelling) error = String(e);   // silent on user-initiated cancel
     } finally {
-      busy = false;
+      busy = false; cancelling = false;
     }
   }
 
-  function cancel() { cancelDownload(); }
+  function cancel() { cancelling = true; void cancelDownload(); }
 </script>
 
-<div class="backdrop" onclick={onclose} role="presentation">
-  <div class="dialog" onclick={(e) => e.stopPropagation()} role="dialog" aria-label="Download model">
+<div class="backdrop" onclick={(e) => { if (e.target === e.currentTarget) onclose(); }} role="presentation">
+  <div class="dialog" role="dialog" aria-modal="true" aria-label="Download model">
     <h2>Download a model</h2>
 
     {#if busy}
