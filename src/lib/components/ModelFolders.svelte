@@ -3,6 +3,7 @@
   import { setSettings, pickFolder, listModels } from "$lib/api";
 
   let busy = $state(false);
+  let error = $state<string | null>(null);
 
   async function persist(next: typeof $settings) {
     if (!next) return;
@@ -14,19 +15,30 @@
   async function addFolder() {
     if (!$settings || busy) return;
     busy = true;
+    error = null;
     try {
       const dir = await pickFolder();
       if (!dir) return;
       if ($settings.extra_model_dirs.includes(dir) || dir === $settings.models_dir) return;
       await persist({ ...$settings, extra_model_dirs: [...$settings.extra_model_dirs, dir] });
+    } catch (e) {
+      error = String(e);
     } finally {
       busy = false;
     }
   }
 
   async function removeFolder(dir: string) {
-    if (!$settings) return;
-    await persist({ ...$settings, extra_model_dirs: $settings.extra_model_dirs.filter((d) => d !== dir) });
+    if (!$settings || busy) return;
+    busy = true;
+    error = null;
+    try {
+      await persist({ ...$settings, extra_model_dirs: $settings.extra_model_dirs.filter((d) => d !== dir) });
+    } catch (e) {
+      error = String(e);
+    } finally {
+      busy = false;
+    }
   }
 </script>
 
@@ -41,9 +53,10 @@
   {#each $settings?.extra_model_dirs ?? [] as dir (dir)}
     <div class="extra">
       <span class="path" title={dir}>{dir}</span>
-      <button class="x" onclick={() => removeFolder(dir)} aria-label="Remove folder">×</button>
+      <button class="x" onclick={() => removeFolder(dir)} disabled={busy} aria-label="Remove folder">×</button>
     </div>
   {/each}
+  {#if error}<span class="err">{error}</span>{/if}
 </div>
 
 <style>
@@ -56,4 +69,5 @@
   button { font:inherit; font-size:.72rem; padding:.2rem .5rem; cursor:pointer; }
   button:disabled { opacity:.5; cursor:default; }
   .x { padding:.1rem .4rem; }
+  .err { color:#ff6b6b; opacity:1; }
 </style>
