@@ -1,7 +1,7 @@
 <script lang="ts">
   import { get } from "svelte/store";
   import { onMount } from "svelte";
-  import { request, genStatus, history, currentImage } from "../stores";
+  import { request, genStatus, history, currentImage, currentItem } from "../stores";
   import { generate, cancelGeneration, imageSrc, listHistory, onProgress } from "../api";
 
   async function run() {
@@ -13,6 +13,7 @@
       const items = await generate(req);
       if (items.length > 0) {
         currentImage.set(imageSrc(items[0].image_path));
+        currentItem.set(items[0]);
       }
       history.set(await listHistory());
       genStatus.set({ kind: "idle" });

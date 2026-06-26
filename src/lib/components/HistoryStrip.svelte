@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { history, currentImage, request } from "../stores";
+  import { history, currentImage, currentItem, request } from "../stores";
   import { imageSrc } from "../api";
   import type { GalleryItem } from "../types";
   function open(item: GalleryItem) {
     currentImage.set(imageSrc(item.image_path));
+    currentItem.set(item);
     request.set({ ...item.request });
   }
 </script>

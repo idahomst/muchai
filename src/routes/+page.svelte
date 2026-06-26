@@ -7,6 +7,7 @@
   import SettingsPanel from "$lib/components/SettingsPanel.svelte";
   import GenerateBar from "$lib/components/GenerateBar.svelte";
   import ImagePreview from "$lib/components/ImagePreview.svelte";
+  import ParamsPanel from "$lib/components/ParamsPanel.svelte";
   import HistoryStrip from "$lib/components/HistoryStrip.svelte";
   import GalleryLocation from "$lib/components/GalleryLocation.svelte";
   import ResourceMonitor from "$lib/components/ResourceMonitor.svelte";
@@ -36,6 +37,7 @@
 
   <section class="stage">
     <ImagePreview />
+    <ParamsPanel />
     <HistoryStrip />
     <GalleryLocation />
   </section>
