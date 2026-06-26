@@ -69,6 +69,21 @@ pub fn parse_image_seed_line(line: &str) -> Option<ImageSeed> {
     Some(ImageSeed { index, seed })
 }
 
+/// Parse stable-diffusion.cpp's resolved base-seed echo from its parameter dump,
+/// whose trimmed form is `seed: 1648302913,`. The engine prints this for *every*
+/// run (single or batch) with the random seed already resolved to a concrete
+/// value, so it lets us recover the actual seed even when the per-image
+/// "generating image: i/N - seed S" lines are absent. Returns None otherwise.
+pub fn parse_resolved_seed_line(line: &str) -> Option<i64> {
+    let rest = line.trim().strip_prefix("seed:")?;
+    let tok: String = rest
+        .trim()
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '-')
+        .collect();
+    tok.parse().ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -114,5 +129,19 @@ mod tests {
     fn image_seed_ignores_other_lines() {
         assert_eq!(parse_image_seed_line("  |####| 5/30 - 2.3it/s"), None);
         assert_eq!(parse_image_seed_line("[INFO] save result image 0"), None);
+    }
+
+    #[test]
+    fn parses_resolved_base_seed_line() {
+        assert_eq!(parse_resolved_seed_line("  seed: 1648302913,"), Some(1648302913));
+        assert_eq!(parse_resolved_seed_line("seed: 42"), Some(42));
+    }
+
+    #[test]
+    fn resolved_seed_ignores_other_lines() {
+        // the per-image line uses "seed " (no colon) and must not match here
+        assert_eq!(parse_resolved_seed_line("generating image: 1/1 - seed 43"), None);
+        assert_eq!(parse_resolved_seed_line("  |####| 5/30"), None);
+        assert_eq!(parse_resolved_seed_line("output_path: \"/tmp/x.png\","), None);
     }
 }

@@ -1,5 +1,5 @@
 use crate::command_builder::build_args;
-use crate::progress_parser::{parse_image_seed_line, parse_progress_line};
+use crate::progress_parser::{parse_image_seed_line, parse_progress_line, parse_resolved_seed_line};
 use crate::types::{GenerationRequest, ProgressUpdate};
 use std::io::{BufRead, BufReader};
 use std::path::Path;
@@ -76,11 +76,14 @@ pub fn run_generation<F: FnMut(ProgressUpdate)>(
     });
 
     let mut seeds: Vec<(u32, i64)> = Vec::new();
+    let mut base_seed: Option<i64> = None;
     for line in rx {
         if let Some(update) = parse_progress_line(&line) {
             on_progress(update);
         } else if let Some(s) = parse_image_seed_line(&line) {
             seeds.push((s.index, s.seed));
+        } else if let Some(b) = parse_resolved_seed_line(&line) {
+            base_seed = Some(b);
         }
     }
     let _ = h_out.join();
@@ -98,7 +101,20 @@ pub fn run_generation<F: FnMut(ProgressUpdate)>(
 
     if status.success() {
         seeds.sort_by_key(|(i, _)| *i);
-        Ok(seeds.into_iter().map(|(_, s)| s).collect())
+        let mut per_image: Vec<i64> = seeds.into_iter().map(|(_, s)| s).collect();
+        // Fallback: some engine builds omit the per-image "generating image:
+        // i/N - seed S" lines (notably for a single image), leaving us with
+        // fewer seeds than images. When that happens but the engine echoed its
+        // resolved base seed, derive each image's seed as base + index — sd.cpp
+        // assigns batch seeds sequentially from the base. This keeps every run
+        // reproducible, single or batch.
+        let batch = req.batch_count.max(1) as usize;
+        if per_image.len() < batch {
+            if let Some(base) = base_seed {
+                per_image = (0..batch).map(|i| base + i as i64).collect();
+            }
+        }
+        Ok(per_image)
     } else {
         let tail = h_err_lines.lock().unwrap();
         let joined = tail.iter().rev().take(20).rev().cloned().collect::<Vec<_>>().join("\n");
@@ -158,6 +174,26 @@ mod tests {
         assert!(res.is_ok());
         let got = updates.lock().unwrap();
         assert_eq!(got.last().copied(), Some(ProgressUpdate { current_step: 3, total_steps: 3 }));
+    }
+
+    #[test]
+    fn derives_seed_from_base_when_per_image_line_absent() {
+        // A single-image run where the engine only echoes its resolved base seed
+        // (no "generating image: 1/1 - seed S" line) must still report that seed.
+        let _guard = spawn_lock().lock().unwrap();
+        let bin = write_fake_engine(
+            "#!/bin/sh\necho '  seed: 1648302913,'\necho '  |#####| 1/1'\nexit 0\n",
+            "baseseed",
+        );
+        let slot: ChildSlot = Arc::new(Mutex::new(None));
+        let res = run_generation(
+            &bin,
+            &GenerationRequest::default(),
+            Path::new("/tmp/ignored.png"),
+            &slot,
+            |_| {},
+        );
+        assert_eq!(res.unwrap(), vec![1648302913]);
     }
 
     #[test]

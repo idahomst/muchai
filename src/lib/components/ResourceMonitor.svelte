@@ -1,6 +1,6 @@
 <script lang="ts">
   import { sysStats } from "../stores";
-  const mb = (v: number) => `${(v / 1024).toFixed(1)} GB`;
+  const gb = (v: number) => (v / 1024).toFixed(1);
 </script>
 
 <div class="monitor">
@@ -8,22 +8,22 @@
     {#if $sysStats.gpu}
       <span class="stat" title="GPU">
         <span class="k">{$sysStats.gpu.name}</span>
-        <span class="v pct">{$sysStats.gpu.utilization_pct}%</span>
+        <span class="v"><span class="num pct">{$sysStats.gpu.utilization_pct}</span>%</span>
       </span>
       <span class="stat" title="VRAM">
         <span class="k">VRAM</span>
-        <span class="v mem">{mb($sysStats.gpu.vram_used_mb)} / {mb($sysStats.gpu.vram_total_mb)}</span>
+        <span class="v"><span class="num mem">{gb($sysStats.gpu.vram_used_mb)}</span> / {gb($sysStats.gpu.vram_total_mb)} GB</span>
       </span>
     {:else}
       <span class="stat">No NVIDIA GPU detected</span>
     {/if}
     <span class="stat" title="CPU">
       <span class="k">CPU</span>
-      <span class="v pct">{$sysStats.cpu_pct.toFixed(0)}%</span>
+      <span class="v"><span class="num pct">{$sysStats.cpu_pct.toFixed(0)}</span>%</span>
     </span>
     <span class="stat" title="RAM">
       <span class="k">RAM</span>
-      <span class="v mem">{mb($sysStats.ram_used_mb)} / {mb($sysStats.ram_total_mb)}</span>
+      <span class="v"><span class="num mem">{gb($sysStats.ram_used_mb)}</span> / {gb($sysStats.ram_total_mb)} GB</span>
     </span>
   {:else}
     <span class="stat">reading system…</span>
@@ -35,9 +35,11 @@
     border-top:1px solid var(--border); white-space:nowrap; overflow-x:auto; }
   .stat { display:inline-flex; gap:.4rem; align-items:baseline; }
   .k { opacity:.7; }
-  /* Tabular numerals + reserved width so a changing value (e.g. 9%→10%)
-     never reflows the neighbouring readouts. */
-  .v { font-variant-numeric: tabular-nums; text-align:right; display:inline-block; }
-  .v.pct { min-width:3ch; }
-  .v.mem { min-width:12ch; }
+  /* Only the changing number gets a fixed-width, right-aligned box so the unit
+     (% / GB) and everything after it never reflow when the digit count changes
+     (e.g. 96%→100%, 9.8→10.1 GB). The unit stays glued to the number's right
+     edge — no inter-element gap — because it lives in the same .v span. */
+  .num { display:inline-block; text-align:right; font-variant-numeric:tabular-nums; }
+  .num.pct { min-width:3ch; }  /* fits "100" */
+  .num.mem { min-width:5ch; }  /* fits "999.9" */
 </style>
