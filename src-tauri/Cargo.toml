@@ -27,5 +27,6 @@ directories = "5"
 sysinfo = "0.33"
 nvml-wrapper = "0.10"
 thiserror = "2"
+ureq = "2"
 tauri-plugin-dialog = "2"
 

@@ -2,6 +2,7 @@ mod catalog;
 mod command_builder;
 mod commands;
 mod config;
+mod downloader;
 mod engine;
 mod gallery;
 mod models;
