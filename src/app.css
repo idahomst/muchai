@@ -1,0 +1,9 @@
+:root {
+  --border: #333;
+  --accent: #4f7cff;
+  color-scheme: dark;
+}
+body { margin:0; background:#1b1b1f; color:#e8e8ea; font-family: system-ui, sans-serif; }
+button { cursor:pointer; border-radius:6px; border:1px solid var(--border); background:#2a2a30; color:inherit; }
+.btn-primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+.label { font-size:.75rem; opacity:.85; }

@@ -11,9 +11,14 @@ src-tauri/target/
 node_modules/
 dist/
 build/
+/build
+/package
 .svelte-kit/
+/.svelte-kit
 .vite/
 *.local
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
 
 # Bundled engine binaries & models (large, not source)
 /engine/bin/
@@ -29,6 +34,7 @@ build/
 # Environment & secrets
 .env
 .env.*
+!.env.example
 
 # Logs
 *.log
@@ -40,3 +46,6 @@ Thumbs.db
 # Editor
 .idea/
 *.swp
+
+# Bundled engine binary (large, not source)
+/src-tauri/binaries/
