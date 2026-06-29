@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
 # Build a self-contained fridAI AppImage.
 #
-# Tauri's linuxdeploy step bundles the CUDA *runtime* (libcudart/libcublas/
-# libcublasLt) automatically — which we want. But it also drags in
-# libcuda.so.1, the NVIDIA *driver* userspace library. That one MUST come from
-# the host: it is version-locked to the running kernel module, so a bundled
-# copy will mismatch (and fail) on any machine with a different driver. We strip
-# it back out and repack so the host's libcuda is used at runtime.
+# The engine is now a Vulkan build (sd-cli + its .so siblings shipped as the
+# `engine` resource dir, found via RUNPATH=$ORIGIN). Vulkan reaches the GPU
+# through the host's ICD loader (libvulkan.so.1) and the vendor ICDs it loads,
+# both of which are version-locked to the installed driver. So we must NOT ship
+# our own libvulkan: a bundled copy would shadow the host loader and break GPU
+# access. We also strip any NVIDIA/CUDA driver libs that linuxdeploy may drag in
+# (the Vulkan engine shouldn't need them, but be defensive) so the AppImage is
+# not vendor-locked. Everything stripped here is host-provided at runtime.
 #
-# Prereq: src-tauri/binaries/sd-cli* must be the multi-arch CUDA engine build.
+# Prereq: src-tauri/binaries/engine/ must be the prebuilt Vulkan engine bundle
+# (sd-cli + all sibling .so files).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -18,18 +21,20 @@ APPIMAGE_DIR="src-tauri/target/release/bundle/appimage"
 APPDIR="$APPIMAGE_DIR/fridai.AppDir"
 PLUGIN="$HOME/.cache/tauri/linuxdeploy-plugin-appimage.AppImage"
 
-export PATH="/usr/local/cuda/bin:$PATH"
-
 echo ">> tauri build (appimage)…"
 npm run tauri build -- --bundles appimage
 
-echo ">> stripping host-provided driver libs from AppDir…"
-# libcuda.so.1 (and any libnvidia-* that may leak) come from the host driver.
+echo ">> stripping host-provided GPU libs from AppDir…"
+# libvulkan.so* is the host ICD loader; libcuda/libnvidia-* are driver libs.
+# All must come from the host, never the bundle.
 find "$APPDIR/usr/lib" \
-  \( -iname 'libcuda.so*' -o -iname 'libnvidia-*' -o -iname 'libnvcuvid*' \) \
+  \( -iname 'libvulkan.so*' \
+     -o -iname 'libcuda.so*' \
+     -o -iname 'libnvidia-*' \
+     -o -iname 'libnvcuvid*' \) \
   -print -delete
 
-echo ">> repacking AppImage without driver libs…"
+echo ">> repacking AppImage without host GPU libs…"
 ( cd "$APPIMAGE_DIR" \
   && ARCH=x86_64 OUTPUT="fridai_0.1.0_amd64.AppImage" \
      APPIMAGE_EXTRACT_AND_RUN=1 \
