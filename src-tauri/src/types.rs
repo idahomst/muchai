@@ -76,6 +76,32 @@ pub struct ProgressUpdate {
     pub total_steps: u32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeviceKind {
+    Discrete,
+    Integrated,
+    Cpu,
+    Other,
+}
+
+/// A Vulkan device as reported by the engine. `index` is the `vulkanN` index
+/// used in `--backend vulkan{index}`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GpuDevice {
+    pub index: u32,
+    pub name: String,
+    pub kind: DeviceKind,
+}
+
+/// The user's persisted device choice. `name` is stored alongside `index` so a
+/// stale selection (hardware/driver changed) can be detected and ignored.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GpuSelection {
+    pub index: u32,
+    pub name: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GpuStats {
     pub name: String,
@@ -126,6 +152,9 @@ pub struct AppConfig {
     /// Additional folders fridAI scans and merges into the model list.
     #[serde(default)]
     pub extra_model_dirs: Vec<String>,
+    /// Chosen Vulkan device. `None` = engine default (auto-picks best device).
+    #[serde(default)]
+    pub gpu_device: Option<GpuSelection>,
     pub last_request: GenerationRequest,
 }
 
@@ -177,5 +206,22 @@ mod tests {
             let back: Sampler = serde_json::from_str(&format!("\"{wire}\"")).unwrap();
             assert_eq!(back, variant);
         }
+    }
+
+    #[test]
+    fn gpu_device_serializes_snake_case_kind() {
+        let d = GpuDevice { index: 1, name: "NVIDIA GeForce RTX 3060".into(), kind: DeviceKind::Discrete };
+        let json = serde_json::to_string(&d).unwrap();
+        assert!(json.contains("\"kind\":\"discrete\""), "got {json}");
+        let back: GpuDevice = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, d);
+    }
+
+    #[test]
+    fn app_config_defaults_gpu_device_to_none_when_absent() {
+        // Config JSON missing the gpu_device key must still deserialize.
+        let json = r#"{"sd_binary_path":null,"default_model_path":null,"gallery_dir":"/tmp/g","models_dir":"/tmp/m","extra_model_dirs":[],"last_request":{"model_path":"","prompt":"","negative_prompt":"","steps":20,"cfg_scale":7.0,"sampler":"euler_a","width":512,"height":512,"seed":-1,"batch_count":1}}"#;
+        let cfg: AppConfig = serde_json::from_str(json).unwrap();
+        assert!(cfg.gpu_device.is_none());
     }
 }

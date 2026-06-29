@@ -2,6 +2,7 @@ mod catalog;
 mod command_builder;
 mod commands;
 mod config;
+mod devices;
 mod downloader;
 mod engine;
 mod gallery;
@@ -27,6 +28,7 @@ pub fn run() {
             config: Mutex::new(initial),
             child: Arc::new(Mutex::new(None)),
             download_cancel: Arc::new(AtomicBool::new(false)),
+            gpu_devices: Arc::new(Mutex::new(None)),
         })
         .setup(move |app| {
             // Allow the configured gallery dir for the asset protocol so saved
@@ -69,6 +71,7 @@ pub fn run() {
             commands::download_model,
             commands::cancel_download,
             commands::pick_folder,
+            commands::list_gpu_devices,
         ])
         .run(tauri::generate_context!())
         .expect("error while running fridAI");

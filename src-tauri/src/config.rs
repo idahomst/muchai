@@ -31,6 +31,7 @@ pub fn default_config() -> AppConfig {
         gallery_dir: default_gallery_dir().to_string_lossy().into_owned(),
         models_dir: default_models_dir().to_string_lossy().into_owned(),
         extra_model_dirs: Vec::new(),
+        gpu_device: None,
         last_request: GenerationRequest::default(),
     }
 }

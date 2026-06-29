@@ -37,13 +37,14 @@ pub fn run_generation<F: FnMut(ProgressUpdate)>(
     binary: &Path,
     req: &GenerationRequest,
     output_path: &Path,
+    backend: Option<&str>,
     slot: &ChildSlot,
     mut on_progress: F,
 ) -> Result<Vec<i64>, GenError> {
     if !binary.exists() {
         return Err(GenError::BinaryNotFound(binary.display().to_string()));
     }
-    let args = build_args(req, &output_path.to_string_lossy());
+    let args = build_args(req, &output_path.to_string_lossy(), backend);
 
     let mut child = Command::new(binary)
         .args(&args)
@@ -168,6 +169,7 @@ mod tests {
             &bin,
             &GenerationRequest::default(),
             Path::new("/tmp/ignored.png"),
+            None,
             &slot,
             move |p| u2.lock().unwrap().push(p),
         );
@@ -190,6 +192,7 @@ mod tests {
             &bin,
             &GenerationRequest::default(),
             Path::new("/tmp/ignored.png"),
+            None,
             &slot,
             |_| {},
         );
@@ -208,6 +211,7 @@ mod tests {
             &bin,
             &GenerationRequest::default(),
             Path::new("/tmp/ignored.png"),
+            None,
             &slot,
             |_| {},
         );
@@ -228,6 +232,7 @@ mod tests {
             Path::new("/no/such/sd-cli"),
             &GenerationRequest::default(),
             Path::new("/tmp/ignored.png"),
+            None,
             &slot,
             |_| {},
         );

@@ -35,6 +35,22 @@ export interface GalleryItem {
   request: GenerationRequest; created_at_unix: number;
 }
 
+// Wire values MUST match the Rust `DeviceKind` enum's serde snake_case form
+// (src-tauri/src/types.rs).
+export type DeviceKind = "discrete" | "integrated" | "cpu" | "other";
+
+export interface GpuDevice {
+  index: number;
+  name: string;
+  kind: DeviceKind;
+}
+
+/** Persisted GPU choice; `name` lets us validate the index still maps to it. */
+export interface GpuSelection {
+  index: number;
+  name: string;
+}
+
 export interface AppConfig {
   sd_binary_path: string | null;
   default_model_path: string | null;
@@ -42,6 +58,7 @@ export interface AppConfig {
   models_dir: string;
   extra_model_dirs: string[];
   last_request: GenerationRequest;
+  gpu_device: GpuSelection | null;
 }
 
 export const defaultRequest = (): GenerationRequest => ({

@@ -1,5 +1,5 @@
 use crate::engine::{self, ChildSlot, GenError};
-use crate::types::{AppConfig, DownloadProgress, GalleryItem, GenerationRequest, ModelInfo};
+use crate::types::{AppConfig, DownloadProgress, GalleryItem, GenerationRequest, GpuDevice, ModelInfo};
 use crate::{catalog, config, downloader, gallery, models};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -11,31 +11,63 @@ pub struct AppState {
     pub config: Mutex<AppConfig>,
     pub child: ChildSlot,
     pub download_cancel: Arc<AtomicBool>,
+    pub gpu_devices: Arc<Mutex<Option<Vec<GpuDevice>>>>,
 }
 
 fn now_unix() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
-/// Resolve the engine binary: explicit config path, else the bundled sidecar
-/// next to the running executable.
-fn resolve_binary(cfg: &AppConfig) -> Option<PathBuf> {
+fn engine_binary_name() -> &'static str {
+    if cfg!(windows) { "sd-cli.exe" } else { "sd-cli" }
+}
+
+/// Directory holding `sd-cli` and its sibling `.so` files. Bundled apps resolve
+/// it from the Tauri resource dir (`<resources>/engine`); dev falls back to the
+/// source tree. `RUNPATH=$ORIGIN` then loads the siblings next to `sd-cli`.
+fn engine_dir(app: &AppHandle) -> Option<PathBuf> {
+    if let Ok(res) = app.path().resource_dir() {
+        let d = res.join("engine");
+        if d.join(engine_binary_name()).exists() {
+            return Some(d);
+        }
+    }
+    let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries/engine");
+    if dev.join(engine_binary_name()).exists() {
+        return Some(dev);
+    }
+    None
+}
+
+/// Resolve the engine binary: explicit config override, else the bundled engine.
+fn resolve_binary(app: &AppHandle, cfg: &AppConfig) -> Option<PathBuf> {
     if let Some(p) = &cfg.sd_binary_path {
         let pb = PathBuf::from(p);
         if pb.exists() {
             return Some(pb);
         }
     }
-    let exe = std::env::current_exe().ok()?;
-    let dir = exe.parent()?;
-    let name = if cfg!(windows) { "sd-cli.exe" } else { "sd-cli" };
-    let cand = dir.join(name);
-    cand.exists().then_some(cand)
+    let bin = engine_dir(app)?.join(engine_binary_name());
+    bin.exists().then_some(bin)
 }
 
 #[tauri::command]
 pub fn get_settings(state: State<AppState>) -> AppConfig {
     state.config.lock().unwrap().clone()
+}
+
+#[tauri::command]
+pub fn list_gpu_devices(app: AppHandle, state: State<AppState>) -> Vec<GpuDevice> {
+    if let Some(cached) = state.gpu_devices.lock().unwrap().as_ref() {
+        return cached.clone();
+    }
+    let cfg = state.config.lock().unwrap().clone();
+    let devices = match resolve_binary(&app, &cfg) {
+        Some(bin) => crate::devices::enumerate(&bin),
+        None => Vec::new(),
+    };
+    *state.gpu_devices.lock().unwrap() = Some(devices.clone());
+    devices
 }
 
 #[tauri::command]
@@ -50,7 +82,16 @@ pub fn set_settings(
     let _ = app
         .asset_protocol_scope()
         .allow_directory(&config.gallery_dir, true);
-    *state.config.lock().unwrap() = config;
+    // A changed engine path means a different binary that may enumerate devices
+    // in a different order — drop the cached list so the next probe re-reads it,
+    // preserving index parity with `--backend vulkanN`.
+    {
+        let mut cfg = state.config.lock().unwrap();
+        if cfg.sd_binary_path != config.sd_binary_path {
+            *state.gpu_devices.lock().unwrap() = None;
+        }
+        *cfg = config;
+    }
     Ok(())
 }
 
@@ -74,8 +115,20 @@ pub async fn generate(
     request: GenerationRequest,
 ) -> Result<Vec<GalleryItem>, String> {
     let cfg = state.config.lock().unwrap().clone();
-    let binary = resolve_binary(&cfg)
+    // Validate the saved device against the enumerated list (cached); a stale
+    // selection silently falls back to the engine default.
+    let binary = resolve_binary(&app, &cfg)
         .ok_or_else(|| "stable-diffusion engine not found. Set its path in Settings.".to_string())?;
+    let backend = {
+        // Enumerate on demand (and cache) if the picker never warmed the list,
+        // so a stored selection is always validated before mapping to a backend.
+        let mut guard = state.gpu_devices.lock().unwrap();
+        let devices = guard
+            .get_or_insert_with(|| crate::devices::enumerate(&binary))
+            .clone();
+        crate::devices::validate_gpu_selection(cfg.gpu_device.clone(), &devices)
+            .map(|s| format!("vulkan{}", s.index))
+    };
 
     let gallery_dir = PathBuf::from(&cfg.gallery_dir);
     std::fs::create_dir_all(&gallery_dir).map_err(|e| e.to_string())?;
@@ -86,10 +139,11 @@ pub async fn generate(
     let app2 = app.clone();
     let req = request.clone();
     let img = image_path.clone();
+    let backend_owned = backend;
 
     // Run the (blocking) engine on a worker thread so the async command yields.
     let result = tauri::async_runtime::spawn_blocking(move || {
-        engine::run_generation(&binary, &req, &img, &slot, |p| {
+        engine::run_generation(&binary, &req, &img, backend_owned.as_deref(), &slot, |p| {
             let _ = app2.emit("generation:progress", p);
         })
     })
