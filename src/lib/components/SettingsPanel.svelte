@@ -1,6 +1,6 @@
 <script lang="ts">
   import { request } from "../stores";
-  import { SAMPLERS } from "../types";
+  import { SAMPLERS, FORMATS } from "../types";
 </script>
 
 <div class="grid">
@@ -23,6 +23,11 @@
   </label>
   <label class="label">Batch
     <input type="number" min="1" max="8" bind:value={$request.batch_count} />
+  </label>
+  <label class="label">Format
+    <select bind:value={$request.output_format}>
+      {#each FORMATS as f}<option value={f.value}>{f.label}</option>{/each}
+    </select>
   </label>
   <label class="label seed">Seed (-1 = random)
     <input type="number" bind:value={$request.seed} />

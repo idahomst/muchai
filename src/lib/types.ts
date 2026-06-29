@@ -1,3 +1,7 @@
+// Wire values MUST match the Rust `OutputFormat` enum's serde snake_case form
+// (src-tauri/src/types.rs). Extensions ("png"/"jpg") live only in Rust.
+export type OutputFormat = "png" | "jpeg";
+
 // Wire values MUST match the Rust `Sampler` enum's serde snake_case form
 // (src-tauri/src/types.rs). The `++` CLI spelling lives only in Rust's
 // `cli_name()`; never send it over the wire. Display labels are in SAMPLERS.
@@ -17,6 +21,7 @@ export interface GenerationRequest {
   height: number;
   seed: number;       // -1 = random
   batch_count: number;
+  output_format: OutputFormat;
 }
 
 export interface ProgressUpdate { current_step: number; total_steps: number; }
@@ -67,6 +72,7 @@ export const defaultRequest = (): GenerationRequest => ({
   model_path: "", prompt: "", negative_prompt: "",
   steps: 20, cfg_scale: 7.0, sampler: "euler_a",
   width: 512, height: 512, seed: -1, batch_count: 1,
+  output_format: "png",
 });
 
 export const SAMPLERS: { value: Sampler; label: string }[] = [
@@ -80,6 +86,11 @@ export const SAMPLERS: { value: Sampler; label: string }[] = [
   { value: "ipndm", label: "iPNDM" },
   { value: "ipndm_v", label: "iPNDM v" },
   { value: "lcm", label: "LCM" },
+];
+
+export const FORMATS: { value: OutputFormat; label: string }[] = [
+  { value: "png", label: "PNG" },
+  { value: "jpeg", label: "JPEG" },
 ];
 
 export interface ModelInfo { path: string; name: string; size_bytes: number; }
