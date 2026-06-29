@@ -27,12 +27,17 @@
         currentImage.set(null);
         currentItem.set(null);
       }
-      confirming = false;
     } catch (e) {
       error = String(e);
     } finally {
       busy = false;
+      confirming = false; // close the prompt whether the delete succeeded or failed
     }
+  }
+
+  function cancel() {
+    confirming = false;
+    error = null;
   }
 </script>
 
@@ -43,7 +48,7 @@
       {#if confirming}
         <span class="ask">Move to trash?</span>
         <button class="del" onclick={doDelete} disabled={busy}>Delete</button>
-        <button onclick={() => (confirming = false)} disabled={busy}>Cancel</button>
+        <button onclick={cancel} disabled={busy}>Cancel</button>
       {:else}
         <button class="del" onclick={() => (confirming = true)} disabled={!$currentItem}>Delete</button>
       {/if}
