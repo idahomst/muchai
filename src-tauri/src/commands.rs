@@ -170,7 +170,8 @@ pub async fn generate(
                 return Err("Engine finished but no image file was found.".to_string());
             }
 
-            let multi = produced.len() > 1;
+            let produced_len = produced.len();
+            let multi = produced_len > 1;
             let mut items = Vec::with_capacity(produced.len());
             for (i, path) in produced {
                 // Prefer the engine-reported seed; otherwise derive it (base + i,
@@ -188,6 +189,9 @@ pub async fn generate(
                     image_path: path.to_string_lossy().into_owned(),
                     request: req_i,
                     created_at_unix: now_unix(),
+                    batch_id: id.clone(),
+                    batch_index: i as u32,
+                    batch_size: produced_len as u32,
                 };
                 gallery::write_sidecar(&path, &item).map_err(|e| e.to_string())?;
                 items.push(item);

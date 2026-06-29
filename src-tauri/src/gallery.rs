@@ -40,6 +40,9 @@ mod tests {
             image_path: format!("/g/{id}.png"),
             request: GenerationRequest::default(),
             created_at_unix: ts,
+            batch_id: id.into(),
+            batch_index: 0,
+            batch_size: 1,
         }
     }
 
@@ -57,6 +60,23 @@ mod tests {
         assert_eq!(listed[1].id, "older");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn legacy_sidecar_without_batch_fields_loads_as_singleton() {
+        // A sidecar written before batch fields existed has only the original
+        // four keys. It must still deserialize, with the new fields defaulted.
+        let it = item("legacy", 100);
+        let mut v = serde_json::to_value(&it).unwrap();
+        let obj = v.as_object_mut().unwrap();
+        obj.remove("batch_id");
+        obj.remove("batch_index");
+        obj.remove("batch_size");
+
+        let back: GalleryItem = serde_json::from_value(v).unwrap();
+        assert_eq!(back.batch_id, "");
+        assert_eq!(back.batch_index, 0);
+        assert_eq!(back.batch_size, 0); // consumers normalize 0 -> 1
     }
 
     #[test]
