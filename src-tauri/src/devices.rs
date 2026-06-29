@@ -1,4 +1,4 @@
-use crate::types::{DeviceKind, GpuDevice};
+use crate::types::{DeviceKind, GpuDevice, GpuSelection};
 use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -83,6 +83,16 @@ fn strip_driver(s: &str) -> String {
     s.to_string()
 }
 
+/// Return the selection only if it still matches an enumerated device by both
+/// index and name; otherwise `None` (fall back to engine default).
+pub fn validate_gpu_selection(sel: Option<GpuSelection>, devices: &[GpuDevice]) -> Option<GpuSelection> {
+    let sel = sel?;
+    devices
+        .iter()
+        .any(|d| d.index == sel.index && d.name == sel.name)
+        .then_some(sel)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -142,5 +152,32 @@ ggml_vulkan: 1 = NVIDIA GeForce RTX 3060 (NVIDIA) | uma: 0 | fp16: 1 | bf16: 0 |
         let d = parse_vulkan_devices(line);
         assert_eq!(d.len(), 1);
         assert_eq!(d[0].kind, DeviceKind::Cpu);
+    }
+
+    fn dev(index: u32, name: &str) -> GpuDevice {
+        GpuDevice { index, name: name.into(), kind: DeviceKind::Discrete }
+    }
+
+    #[test]
+    fn valid_selection_passes_through() {
+        let devs = vec![dev(0, "Intel"), dev(1, "NVIDIA GeForce RTX 3060")];
+        let sel = Some(GpuSelection { index: 1, name: "NVIDIA GeForce RTX 3060".into() });
+        assert_eq!(validate_gpu_selection(sel.clone(), &devs), sel);
+    }
+
+    #[test]
+    fn stale_selection_falls_back_to_none() {
+        let devs = vec![dev(0, "Intel")];
+        // index 1 no longer exists
+        let sel = Some(GpuSelection { index: 1, name: "NVIDIA GeForce RTX 3060".into() });
+        assert_eq!(validate_gpu_selection(sel, &devs), None);
+        // index exists but the name changed (driver/hardware swap)
+        let sel2 = Some(GpuSelection { index: 0, name: "AMD".into() });
+        assert_eq!(validate_gpu_selection(sel2, &devs), None);
+    }
+
+    #[test]
+    fn none_stays_none() {
+        assert_eq!(validate_gpu_selection(None, &[dev(0, "Intel")]), None);
     }
 }
