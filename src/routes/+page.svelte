@@ -53,7 +53,7 @@
 <style>
   .app { display:flex; height:calc(100vh - 34px); }
   .controls { flex:0 0 340px; display:flex; flex-direction:column; gap:.8rem;
-    padding:1rem; border-right:1px solid var(--border); overflow-y:auto; }
+    padding:1rem; border-right:1px solid var(--border); overflow:hidden auto; }
   .brand { margin:0 0 .5rem; font-size:1.2rem; }
   .spacer { flex:1; }
   .stage { flex:1; display:flex; flex-direction:column; padding:1rem; gap:.6rem; min-width:0; }
