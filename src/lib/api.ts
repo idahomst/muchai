@@ -9,6 +9,8 @@ export const setSettings = (config: AppConfig) => invoke<void>("set_settings", {
 export const listHistory = () => invoke<GalleryItem[]>("list_history");
 /** Returns one item per produced image (batch_count may yield several). */
 export const generate = (request: GenerationRequest) => invoke<GalleryItem[]>("generate", { request });
+/** Move a generated image (and its sidecar) to the OS trash. */
+export const deleteImage = (path: string) => invoke<void>("delete_image", { imagePath: path });
 export const cancelGeneration = () => invoke<void>("cancel_generation");
 export const pickModelFile = () => invoke<string | null>("pick_model_file");
 export const pickGalleryDir = () => invoke<string | null>("pick_gallery_dir");
