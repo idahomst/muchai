@@ -72,6 +72,7 @@ pub fn run() {
             commands::cancel_download,
             commands::pick_folder,
             commands::list_gpu_devices,
+            commands::delete_image,
         ])
         .run(tauri::generate_context!())
         .expect("error while running fridAI");

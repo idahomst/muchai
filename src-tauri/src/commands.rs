@@ -102,6 +102,11 @@ pub fn list_history(state: State<AppState>) -> Vec<GalleryItem> {
 }
 
 #[tauri::command]
+pub fn delete_image(image_path: String) -> Result<(), String> {
+    gallery::delete_to_trash(std::path::Path::new(&image_path))
+}
+
+#[tauri::command]
 pub fn cancel_generation(state: State<AppState>) {
     if let Some(mut child) = state.child.lock().unwrap().take() {
         let _ = child.kill();
