@@ -82,7 +82,16 @@ pub fn set_settings(
     let _ = app
         .asset_protocol_scope()
         .allow_directory(&config.gallery_dir, true);
-    *state.config.lock().unwrap() = config;
+    // A changed engine path means a different binary that may enumerate devices
+    // in a different order — drop the cached list so the next probe re-reads it,
+    // preserving index parity with `--backend vulkanN`.
+    {
+        let mut cfg = state.config.lock().unwrap();
+        if cfg.sd_binary_path != config.sd_binary_path {
+            *state.gpu_devices.lock().unwrap() = None;
+        }
+        *cfg = config;
+    }
     Ok(())
 }
 
@@ -108,16 +117,18 @@ pub async fn generate(
     let cfg = state.config.lock().unwrap().clone();
     // Validate the saved device against the enumerated list (cached); a stale
     // selection silently falls back to the engine default.
-    let backend = {
-        let cached = state.gpu_devices.lock().unwrap().clone();
-        let sel = match cached {
-            Some(devices) => crate::devices::validate_gpu_selection(cfg.gpu_device.clone(), &devices),
-            None => cfg.gpu_device.clone(),
-        };
-        sel.map(|s| format!("vulkan{}", s.index))
-    };
     let binary = resolve_binary(&app, &cfg)
         .ok_or_else(|| "stable-diffusion engine not found. Set its path in Settings.".to_string())?;
+    let backend = {
+        // Enumerate on demand (and cache) if the picker never warmed the list,
+        // so a stored selection is always validated before mapping to a backend.
+        let mut guard = state.gpu_devices.lock().unwrap();
+        let devices = guard
+            .get_or_insert_with(|| crate::devices::enumerate(&binary))
+            .clone();
+        crate::devices::validate_gpu_selection(cfg.gpu_device.clone(), &devices)
+            .map(|s| format!("vulkan{}", s.index))
+    };
 
     let gallery_dir = PathBuf::from(&cfg.gallery_dir);
     std::fs::create_dir_all(&gallery_dir).map_err(|e| e.to_string())?;
