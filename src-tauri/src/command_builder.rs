@@ -3,7 +3,7 @@ use crate::types::GenerationRequest;
 /// Build the argument vector for stable-diffusion.cpp's CLI.
 /// Pure function (no I/O) so it is fully unit-testable.
 /// Flag spellings are confirmed against `fixtures/sd-help.txt`.
-pub fn build_args(req: &GenerationRequest, output_path: &str) -> Vec<String> {
+pub fn build_args(req: &GenerationRequest, output_path: &str, backend: Option<&str>) -> Vec<String> {
     let mut a: Vec<String> = Vec::new();
     a.push("-M".into());
     a.push("img_gen".into());
@@ -24,6 +24,10 @@ pub fn build_args(req: &GenerationRequest, output_path: &str) -> Vec<String> {
     push("-s", req.seed.to_string());
     push("-b", req.batch_count.to_string());
     push("-o", output_path.to_string());
+    if let Some(b) = backend {
+        a.push("--backend".into());
+        a.push(b.to_string());
+    }
     a.push("-v".into()); // verbose: ensures progress lines are emitted
     a
 }
@@ -55,7 +59,7 @@ mod tests {
 
     #[test]
     fn includes_core_flags_and_values() {
-        let args = build_args(&sample(), "/out/x.png");
+        let args = build_args(&sample(), "/out/x.png", None);
         assert_eq!(val_after(&args, "-m"), Some("/m/model.safetensors"));
         assert_eq!(val_after(&args, "-p"), Some("a cat"));
         assert_eq!(val_after(&args, "-n"), Some("blurry"));
@@ -71,7 +75,7 @@ mod tests {
 
     #[test]
     fn uses_img_gen_mode() {
-        let args = build_args(&sample(), "/out/x.png");
+        let args = build_args(&sample(), "/out/x.png", None);
         assert_eq!(val_after(&args, "-M"), Some("img_gen"));
     }
 
@@ -79,7 +83,19 @@ mod tests {
     fn omits_negative_prompt_when_empty() {
         let mut req = sample();
         req.negative_prompt = "".into();
-        let args = build_args(&req, "/out/x.png");
+        let args = build_args(&req, "/out/x.png", None);
         assert!(!args.iter().any(|x| x == "-n"));
+    }
+
+    #[test]
+    fn appends_backend_when_some() {
+        let args = build_args(&sample(), "/out/x.png", Some("vulkan1"));
+        assert_eq!(val_after(&args, "--backend"), Some("vulkan1"));
+    }
+
+    #[test]
+    fn omits_backend_when_none() {
+        let args = build_args(&sample(), "/out/x.png", None);
+        assert!(!args.iter().any(|x| x == "--backend"));
     }
 }
