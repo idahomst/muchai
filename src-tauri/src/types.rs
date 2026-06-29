@@ -39,6 +39,29 @@ impl Default for Sampler {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OutputFormat {
+    Png,
+    Jpeg,
+}
+
+impl OutputFormat {
+    /// File extension (no dot) used to drive the engine's `-o` format inference.
+    pub fn extension(self) -> &'static str {
+        match self {
+            OutputFormat::Png => "png",
+            OutputFormat::Jpeg => "jpg",
+        }
+    }
+}
+
+impl Default for OutputFormat {
+    fn default() -> Self {
+        OutputFormat::Png
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GenerationRequest {
     pub model_path: String,
@@ -51,6 +74,10 @@ pub struct GenerationRequest {
     pub height: u32,
     pub seed: i64, // -1 = random
     pub batch_count: u32,
+    /// Output image format. Defaults to PNG; pre-feature sidecars/configs lack
+    /// this key and deserialize as PNG.
+    #[serde(default)]
+    pub output_format: OutputFormat,
 }
 
 impl Default for GenerationRequest {
@@ -66,6 +93,7 @@ impl Default for GenerationRequest {
             height: 512,
             seed: -1,
             batch_count: 1,
+            output_format: OutputFormat::default(),
         }
     }
 }
@@ -237,5 +265,32 @@ mod tests {
         let json = r#"{"sd_binary_path":null,"default_model_path":null,"gallery_dir":"/tmp/g","models_dir":"/tmp/m","extra_model_dirs":[],"last_request":{"model_path":"","prompt":"","negative_prompt":"","steps":20,"cfg_scale":7.0,"sampler":"euler_a","width":512,"height":512,"seed":-1,"batch_count":1}}"#;
         let cfg: AppConfig = serde_json::from_str(json).unwrap();
         assert!(cfg.gpu_device.is_none());
+    }
+
+    #[test]
+    fn output_format_serializes_snake_case() {
+        assert_eq!(serde_json::to_string(&OutputFormat::Png).unwrap(), "\"png\"");
+        assert_eq!(serde_json::to_string(&OutputFormat::Jpeg).unwrap(), "\"jpeg\"");
+        let back: OutputFormat = serde_json::from_str("\"jpeg\"").unwrap();
+        assert_eq!(back, OutputFormat::Jpeg);
+    }
+
+    #[test]
+    fn output_format_extension_maps_correctly() {
+        assert_eq!(OutputFormat::Png.extension(), "png");
+        assert_eq!(OutputFormat::Jpeg.extension(), "jpg");
+    }
+
+    #[test]
+    fn output_format_defaults_to_png() {
+        assert_eq!(OutputFormat::default(), OutputFormat::Png);
+    }
+
+    #[test]
+    fn generation_request_without_output_format_defaults_to_png() {
+        // A pre-feature request/sidecar lacks the output_format key.
+        let json = r#"{"model_path":"","prompt":"","negative_prompt":"","steps":20,"cfg_scale":7.0,"sampler":"euler_a","width":512,"height":512,"seed":-1,"batch_count":1}"#;
+        let req: GenerationRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.output_format, OutputFormat::Png);
     }
 }

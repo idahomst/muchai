@@ -49,6 +49,7 @@ mod tests {
             height: 512,
             seed: 42,
             batch_count: 2,
+            ..Default::default()
         }
     }
 
