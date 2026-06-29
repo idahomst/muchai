@@ -124,6 +124,16 @@ pub struct GalleryItem {
     pub image_path: String,
     pub request: GenerationRequest,
     pub created_at_unix: u64,
+    /// Shared key for all images produced by one generation run. Empty on
+    /// pre-batch-field sidecars; consumers fall back to `id`.
+    #[serde(default)]
+    pub batch_id: String,
+    /// 0-based position within the batch.
+    #[serde(default)]
+    pub batch_index: u32,
+    /// Total images in the batch. 0 on legacy sidecars; normalize with `.max(1)`.
+    #[serde(default)]
+    pub batch_size: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

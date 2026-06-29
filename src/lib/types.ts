@@ -33,6 +33,7 @@ export interface SystemStats {
 export interface GalleryItem {
   id: string; image_path: string;
   request: GenerationRequest; created_at_unix: number;
+  batch_id: string; batch_index: number; batch_size: number;
 }
 
 // Wire values MUST match the Rust `DeviceKind` enum's serde snake_case form
