@@ -32,6 +32,7 @@ pub fn default_config() -> AppConfig {
         models_dir: default_models_dir().to_string_lossy().into_owned(),
         extra_model_dirs: Vec::new(),
         gpu_device: None,
+        params_expanded: false,
         last_request: GenerationRequest::default(),
     }
 }
@@ -97,6 +98,35 @@ mod tests {
         let cfg = default_config();
         assert!(!cfg.models_dir.is_empty());
         assert!(cfg.extra_model_dirs.is_empty());
+    }
+
+    #[test]
+    fn old_config_without_params_expanded_defaults_to_collapsed() {
+        let dir = std::env::temp_dir().join(format!("fridai-cfg-pe-{}", std::process::id()));
+        let path = dir.join("config.json");
+        std::fs::create_dir_all(&dir).unwrap();
+        // A pre-feature config file: no params_expanded key.
+        std::fs::write(
+            &path,
+            r#"{"sd_binary_path":null,"default_model_path":null,"gallery_dir":"/tmp/g","last_request":{"model_path":"","prompt":"","negative_prompt":"","steps":20,"cfg_scale":7.0,"sampler":"euler_a","width":512,"height":512,"seed":-1,"batch_count":1}}"#,
+        )
+        .unwrap();
+        let cfg = load_config_from(&path);
+        assert!(!cfg.params_expanded, "missing params_expanded must default to false (collapsed)");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn params_expanded_round_trips() {
+        let dir = std::env::temp_dir().join(format!("fridai-cfg-pe2-{}", std::process::id()));
+        let path = dir.join("config.json");
+        let mut cfg = default_config();
+        cfg.params_expanded = true;
+        save_config_to(&path, &cfg).unwrap();
+        let back = load_config_from(&path);
+        assert!(back.params_expanded);
+        assert_eq!(back, cfg);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

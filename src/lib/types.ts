@@ -60,6 +60,7 @@ export interface AppConfig {
   extra_model_dirs: string[];
   last_request: GenerationRequest;
   gpu_device: GpuSelection | null;
+  params_expanded: boolean;
 }
 
 export const defaultRequest = (): GenerationRequest => ({

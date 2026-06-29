@@ -165,6 +165,10 @@ pub struct AppConfig {
     /// Chosen Vulkan device. `None` = engine default (auto-picks best device).
     #[serde(default)]
     pub gpu_device: Option<GpuSelection>,
+    /// Whether the params panel under the preview is expanded. Defaults to
+    /// `false` (collapsed) for new and pre-feature config files.
+    #[serde(default)]
+    pub params_expanded: bool,
     pub last_request: GenerationRequest,
 }
 
