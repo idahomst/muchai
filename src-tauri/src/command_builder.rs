@@ -99,4 +99,12 @@ mod tests {
         let args = build_args(&sample(), "/out/x.png", None);
         assert!(!args.iter().any(|x| x == "--backend"));
     }
+
+    #[test]
+    fn output_path_extension_passes_through_verbatim() {
+        // build_args is format-agnostic: whatever extension the caller chose on
+        // the -o path is forwarded unchanged (the engine infers format from it).
+        let args = build_args(&sample(), "/out/x.jpg", None);
+        assert_eq!(val_after(&args, "-o"), Some("/out/x.jpg"));
+    }
 }
