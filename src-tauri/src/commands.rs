@@ -89,7 +89,7 @@ pub async fn generate(
 
     // Run the (blocking) engine on a worker thread so the async command yields.
     let result = tauri::async_runtime::spawn_blocking(move || {
-        engine::run_generation(&binary, &req, &img, &slot, |p| {
+        engine::run_generation(&binary, &req, &img, None, &slot, |p| {
             let _ = app2.emit("generation:progress", p);
         })
     })
