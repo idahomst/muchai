@@ -29,6 +29,26 @@ pub fn list_items(dir: &Path) -> Vec<GalleryItem> {
     items
 }
 
+/// The files to remove for a gallery image: the image itself, plus its sibling
+/// `.json` sidecar when one exists. Image is always first.
+fn deletion_targets(image_path: &Path) -> Vec<PathBuf> {
+    let mut targets = vec![image_path.to_path_buf()];
+    let sidecar = image_path.with_extension("json");
+    if sidecar.exists() {
+        targets.push(sidecar);
+    }
+    targets
+}
+
+/// Move an image (and its sidecar, if any) to the OS trash. Recoverable from the
+/// system file manager. Errors if the image itself cannot be trashed.
+pub fn delete_to_trash(image_path: &Path) -> Result<(), String> {
+    for target in deletion_targets(image_path) {
+        trash::delete(&target).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -77,6 +97,41 @@ mod tests {
         assert_eq!(back.batch_id, "");
         assert_eq!(back.batch_index, 0);
         assert_eq!(back.batch_size, 0); // consumers normalize 0 -> 1
+    }
+
+    #[test]
+    fn deletion_targets_includes_sidecar_only_when_present() {
+        let dir = std::env::temp_dir().join(format!("fridai-del-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let img = dir.join("pic.png");
+        std::fs::write(&img, b"png").unwrap();
+
+        // No sidecar yet -> just the image.
+        assert_eq!(deletion_targets(&img), vec![img.clone()]);
+
+        // With a sidecar -> both, image first.
+        let side = dir.join("pic.json");
+        std::fs::write(&side, b"{}").unwrap();
+        assert_eq!(deletion_targets(&img), vec![img.clone(), side.clone()]);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn delete_to_trash_removes_image_and_sidecar() {
+        let dir = std::env::temp_dir().join(format!("fridai-trash-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let img = dir.join("gone.png");
+        let side = dir.join("gone.json");
+        std::fs::write(&img, b"png").unwrap();
+        std::fs::write(&side, b"{}").unwrap();
+
+        delete_to_trash(&img).unwrap();
+
+        assert!(!img.exists(), "image should be gone from the gallery dir");
+        assert!(!side.exists(), "sidecar should be gone from the gallery dir");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
