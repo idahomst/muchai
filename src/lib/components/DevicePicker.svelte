@@ -51,7 +51,7 @@
         {/each}
       </select>
     {:else}
-      <span class="none">No Vulkan devices detected</span>
+      <span class="none">No devices detected — engine not found</span>
     {/if}
   </div>
   {#if stale}
