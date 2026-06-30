@@ -34,10 +34,11 @@ pub enum Target {
 }
 
 /// Map the saved selection + enumerated devices to a monitor `Target`, mirroring
-/// the generation backend rule. A valid CPU selection (or no real GPU) hides the
+/// the generation backend rule exactly so the monitor always reports the device
+/// generation actually runs on. A valid CPU selection (or no real GPU) hides the
 /// GPU section; a valid GPU selection keys to that device's name; an absent/stale
-/// selection keys to the first non-CPU device (the engine's default backend is the
-/// first Vulkan device).
+/// selection keys to the same default device the generation path picks
+/// (`pick_default_device`: discrete > integrated > other).
 pub fn resolve_target(selection: Option<GpuSelection>, devices: &[GpuDevice]) -> Target {
     use crate::types::DeviceKind;
     if let Some(sel) = crate::devices::validate_gpu_selection(selection, devices) {
@@ -50,7 +51,7 @@ pub fn resolve_target(selection: Option<GpuSelection>, devices: &[GpuDevice]) ->
             _ => Target::Name(device.name.clone()),
         };
     }
-    match devices.iter().find(|d| d.kind != DeviceKind::Cpu) {
+    match crate::devices::pick_default_device(devices) {
         Some(d) => Target::Name(d.name.clone()),
         None => Target::None,
     }
@@ -163,9 +164,10 @@ mod tests {
     }
 
     #[test]
-    fn resolve_target_no_selection_keys_to_first_non_cpu_device() {
+    fn resolve_target_no_selection_keys_to_default_discrete_device() {
+        // Mirrors resolve_backend: the default is the discrete GPU, not banner index 0.
         let devices = vec![gpu_dev(0, "Intel", DeviceKind::Integrated), gpu_dev(1, "NVIDIA", DeviceKind::Discrete), crate::devices::cpu_device()];
-        assert_eq!(resolve_target(None, &devices), Target::Name("Intel".into()));
+        assert_eq!(resolve_target(None, &devices), Target::Name("NVIDIA".into()));
     }
 
     #[test]

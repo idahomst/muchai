@@ -34,6 +34,20 @@ The spike inspected `all-smi` 0.15.0's source and **rejected it**:
 the existing `nvml-wrapper` for NVIDIA (keeping the `libnvidia-ml.so.1` init fix), and
 read AMD/Intel stats from Linux `sysfs` directly (no new dependency, no root).
 
+## E2E Revision (post-implementation): explicit default device
+
+The original design assumed `Default (engine picks)` = the engine runs on "the first
+Vulkan device" (banner index 0). **E2E falsified this:** on a discrete+iGPU box
+(index 0 = Intel iGPU, index 1 = NVIDIA), omitting `--backend` made the engine generate
+on the *NVIDIA* (index 1). ggml-vulkan's default device is loader/ICD-dependent, not the
+banner-index-0 device, and we can't reliably predict it from outside.
+
+**Fix (chosen): stop relying on the engine's opaque default.** A shared
+`pick_default_device(devices)` (prefer discrete > integrated > other non-CPU) is used by
+*both* the generation path (`resolve_backend` now emits `--backend vulkan{index}` for the
+default device instead of omitting the flag) and the monitor (`resolve_target`). Generation
+and the monitor therefore always agree on a known device, and "Default" is deterministic.
+
 ## Decisions
 
 - **Backend:** per-vendor providers feeding one unified `Vec<GpuStats>`:
@@ -42,10 +56,12 @@ read AMD/Intel stats from Linux `sysfs` directly (no new dependency, no root).
   - **AMD** (Linux) — `sysfs` `/sys/class/drm/card*/device/`: `gpu_busy_percent` (util%),
     `mem_info_vram_used` / `mem_info_vram_total` (bytes). No dependency, no root.
   - **Intel** (Linux) — best-effort `sysfs`: discrete Intel (Arc, `xe`/`i915`) may expose
-    `mem_info_vram_*`; integrated GPUs share system RAM and expose no busy%/VRAM. Where a
+    `mem_info_vram_*`; integrated GPUs share system RAM and expose neither `gpu_busy_percent`
+    nor `mem_info_vram_*` in sysfs (those are `amdgpu`-specific attributes). Where a
     field is unavailable it is simply not reported (no fake zeros).
 - **Which device:** the monitor follows the **selected** device, matched by name.
-  `Default (engine picks)` → first real GPU. CPU selected → GPU section hidden.
+  For `Default`, fridAI picks the default device *explicitly* (see "Default device"
+  below) and the monitor keys to that same device. CPU selected → GPU section hidden.
   A GPU with no obtainable live stats (e.g. an Intel iGPU) → GPU section shows the
   vendor-neutral empty state, same as no-match.
 - **Display fields:** unchanged — GPU name, utilization%, VRAM used/total; CPU%; RAM.
@@ -68,11 +84,14 @@ so the Tauri event payload and the Svelte frontend contract stay stable.
   - `select_gpu(gpus: &[GpuStats], target: &Target) -> Option<GpuStats>` — **pure**, no
     I/O. Unit-tested with hand-built `GpuStats` fixtures.
   - `resolve_target(selection: Option<GpuSelection>, devices: &[GpuDevice]) -> Target` —
-    **pure**. Mirrors the generation rule: a valid CPU selection, or no real GPU present →
-    `Target::None`; a valid GPU selection → `Target::Name(device.name)`; no/stale selection
-    with a real GPU present → `Target::Name(first_non_cpu_device.name)` (the engine's
-    default is the first Vulkan device, so we key to *that* device by name, not blindly to
-    the provider list's first entry).
+    **pure**. Mirrors the generation rule exactly: a valid CPU selection, or no real GPU
+    present → `Target::None`; a valid GPU selection → `Target::Name(device.name)`; no/stale
+    selection with a real GPU present → `Target::Name(pick_default_device(devices).name)`,
+    the *same* device the generation path (`resolve_backend`) targets, so the monitor never
+    diverges from where generation actually runs.
+  - `pick_default_device(devices) -> Option<&GpuDevice>` (in `devices.rs`, shared with
+    `resolve_backend`) — **pure**. Picks the default device when there's no valid selection:
+    prefer discrete, then integrated, then any other non-CPU device; `None` if only CPU.
   - `Target` enum: `None` | `Name(String)`.
   - `name_matches(candidate: &str, target: &str) -> bool` — **pure**, case-insensitive,
     normalized (lowercase, collapse whitespace), matches when either name contains the
@@ -132,8 +151,10 @@ of the same vendor are matched by name; if names are indistinguishable the first
 
 - **Rust unit tests** (pure functions, no hardware):
   - `resolve_target`: CPU selection → `None`; valid GPU selection → `Name(that name)`; no
-    selection with a GPU present → `Name(first non-CPU device)`; no selection, CPU-only →
-    `None`; stale selection follows the GPU-presence rule.
+    selection with a GPU present → `Name(pick_default_device)` (the discrete GPU when one
+    exists); no selection, CPU-only → `None`; stale selection follows the same rule.
+  - `pick_default_device` / `resolve_backend`: discrete preferred over integrated; no
+    selection with a GPU → `vulkan{index}` of the default device; CPU-only → `cpu`.
   - `select_gpu`: `None` → `None`; `Name` matches the right entry in a multi-entry list and
     overwrites the returned name with the target; `Name` with no match → `None`; empty
     list → `None`.
@@ -147,10 +168,14 @@ of the same vendor are matched by name; if names are indistinguishable the first
 - `npm run check` (svelte-check) for the frontend wording change.
 - **E2E** on the dev box: select the NVIDIA GPU → NVIDIA stats; select the Intel iGPU →
   vendor-neutral empty state (documented limitation); select CPU → GPU row hidden;
-  Default → first real GPU.
+  Default → the discrete GPU (NVIDIA on this box) is used for generation *and* shown in
+  the monitor (re-verify after the explicit-default fix above).
 
 ## Scope / YAGNI
 
 No power/temperature, no multi-GPU listing, no per-process breakdown, no config changes.
 CPU/RAM via `sysinfo` unchanged. `GpuStats` fields unchanged. Intel iGPU utilization is
-out of scope (needs root/PMU).
+out of scope: it isn't in sysfs (`gpu_busy_percent` is `amdgpu`-specific), and the
+i915/xe paths that *do* expose it — DRM fdinfo (per-PID engine-busy aggregation) and the
+i915 PMU — would each need a new stateful provider. fdinfo is readable by a regular user
+(it's how `nvtop` shows Intel), so this is a scope decision, not a permissions limit.

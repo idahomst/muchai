@@ -60,8 +60,10 @@ impl GpuProvider for AmdSysfsProvider {
 }
 
 /// Intel GPUs via Linux sysfs. Discrete Intel (Arc) may expose `mem_info_vram_*`;
-/// integrated GPUs expose neither VRAM nor a busy%, so they are skipped. Util is
-/// not read (Intel utilization needs root/PMU) and reported as 0.
+/// integrated GPUs expose neither VRAM nor a `gpu_busy_percent` in sysfs (those
+/// are `amdgpu`-specific attributes), so they are skipped. Util is not read here
+/// (the i915/xe drivers report utilization only via DRM fdinfo or the i915 PMU,
+/// not sysfs — out of scope for this sysfs provider) and reported as 0.
 #[cfg(target_os = "linux")]
 pub struct IntelSysfsProvider {
     pub root: PathBuf,
@@ -217,7 +219,8 @@ mod sysfs_tests {
     #[test]
     fn intel_card_reports_vram_and_ignores_busy() {
         // Intel passes read_busy=false: a present gpu_busy_percent must be ignored
-        // (Intel util needs root/PMU) and reported as 0, with VRAM still parsed.
+        // (sysfs busy% is amdgpu-specific; Intel util lives in fdinfo/PMU, not here)
+        // and reported as 0, with VRAM still parsed.
         let root = fixture("intel", &[
             ("vendor", "0x8086\n"),
             ("gpu_busy_percent", "99\n"),
