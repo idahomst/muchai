@@ -277,7 +277,9 @@ pub fn delete_model(path: String) -> Result<(), String> {
     if !p.is_file() {
         return Err("That model file no longer exists.".into());
     }
-    std::fs::remove_file(&p).map_err(|e| e.to_string())
+    // Move to the OS trash (recoverable from the file manager) rather than
+    // unlinking, mirroring image deletion via gallery::delete_to_trash.
+    trash::delete(&p).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
