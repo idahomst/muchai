@@ -12,10 +12,16 @@ pub trait GpuProvider {
 }
 
 /// Build the provider list for this platform. The NVML handle is built once by
-/// the caller (with the `libnvidia-ml.so.1` init fix) and moved in. AMD/Intel
-/// sysfs providers are added in a later change.
+/// the caller (with the `libnvidia-ml.so.1` init fix) and moved in. On Linux,
+/// AMD and Intel sysfs providers are also added to cover non-NVIDIA GPUs.
 pub fn default_providers(nvml: Option<nvml_wrapper::Nvml>) -> Vec<Box<dyn GpuProvider>> {
-    vec![Box::new(NvmlProvider { nvml })]
+    let mut v: Vec<Box<dyn GpuProvider>> = vec![Box::new(NvmlProvider { nvml })];
+    #[cfg(target_os = "linux")]
+    {
+        v.push(Box::new(providers::AmdSysfsProvider::new()));
+        v.push(Box::new(providers::IntelSysfsProvider::new()));
+    }
+    v
 }
 
 /// Which GPU the monitor should report, derived from the user's selection.
