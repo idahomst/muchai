@@ -68,10 +68,12 @@ so the Tauri event payload and the Svelte frontend contract stay stable.
   - `select_gpu(gpus: &[GpuStats], target: &Target) -> Option<GpuStats>` — **pure**, no
     I/O. Unit-tested with hand-built `GpuStats` fixtures.
   - `resolve_target(selection: Option<GpuSelection>, devices: &[GpuDevice]) -> Target` —
-    **pure**. Mirrors the generation rule: a valid CPU selection or a CPU-only system →
-    `Target::None`; a valid GPU selection → `Target::Name(name)`; no/stale selection with
-    a real GPU present → `Target::First`; otherwise `Target::None`.
-  - `Target` enum: `None` | `First` | `Name(String)`.
+    **pure**. Mirrors the generation rule: a valid CPU selection, or no real GPU present →
+    `Target::None`; a valid GPU selection → `Target::Name(device.name)`; no/stale selection
+    with a real GPU present → `Target::Name(first_non_cpu_device.name)` (the engine's
+    default is the first Vulkan device, so we key to *that* device by name, not blindly to
+    the provider list's first entry).
+  - `Target` enum: `None` | `Name(String)`.
   - `name_matches(candidate: &str, target: &str) -> bool` — **pure**, case-insensitive,
     normalized (lowercase, collapse whitespace), matches when either name contains the
     other. Tolerates Vulkan-vs-NVML/sysfs naming differences.
@@ -98,7 +100,7 @@ so the Tauri event payload and the Svelte frontend contract stay stable.
 
 ```
 AppState (config.gpu_device + gpu_devices cache)
-  -> resolve_target(selection, devices) -> Target (None | First | Name)
+  -> resolve_target(selection, devices) -> Target (None | Name)
   -> each provider.probe() -> Vec<GpuStats>  (concatenated)
   -> select_gpu(all, &target) -> Option<GpuStats>
   -> SystemStats { gpu, cpu_pct, ram_* }  -> emit "system:stats"
@@ -110,8 +112,8 @@ AppState (config.gpu_device + gpu_devices cache)
 a Vulkan name ("Intel(R) UHD Graphics 770 (ADL-S GT1)") matches a vendor-keyword provider
 name ("Intel"). For a `Target::Name` match the returned `GpuStats.name` is **overwritten
 with the selected device's display name**, so the monitor shows the familiar Vulkan name
-while the live numbers come from the provider. `Target::First` keeps the provider's name.
-Empty list → `None`. On no match, report no GPU rather than the wrong one. Multiple GPUs
+while the live numbers come from the provider. Empty list → `None`. On no match, report
+no GPU rather than the wrong one. Multiple GPUs
 of the same vendor are matched by name; if names are indistinguishable the first is used
 (documented limitation).
 
@@ -129,11 +131,12 @@ of the same vendor are matched by name; if names are indistinguishable the first
 ## Testing
 
 - **Rust unit tests** (pure functions, no hardware):
-  - `resolve_target`: CPU selection → `None`; valid GPU selection → `Name`; no selection
-    with a GPU present → `First`; no selection, CPU-only → `None`; stale selection follows
-    the GPU-presence rule.
-  - `select_gpu`: `None` → `None`; `Name` matches the right entry in a multi-entry list;
-    `Name` with no match → `None`; `First` → first entry; empty list → `None`.
+  - `resolve_target`: CPU selection → `None`; valid GPU selection → `Name(that name)`; no
+    selection with a GPU present → `Name(first non-CPU device)`; no selection, CPU-only →
+    `None`; stale selection follows the GPU-presence rule.
+  - `select_gpu`: `None` → `None`; `Name` matches the right entry in a multi-entry list and
+    overwrites the returned name with the target; `Name` with no match → `None`; empty
+    list → `None`.
   - `name_matches`: exact, case/whitespace-insensitive, substring either direction,
     non-match.
   - existing CPU/RAM test (`gather` with no providers / empty list) still passes.
