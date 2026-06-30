@@ -120,8 +120,9 @@ pub async fn generate(
     request: GenerationRequest,
 ) -> Result<Vec<GalleryItem>, String> {
     let cfg = state.config.lock().unwrap().clone();
-    // Validate the saved device against the enumerated list (cached); a stale
-    // selection silently falls back to the engine default.
+    // Validate the saved device against the enumerated list (cached) and map it
+    // to a backend; a stale/absent selection falls back to the engine default
+    // when a real GPU exists, or to the CPU backend when none does.
     let binary = resolve_binary(&app, &cfg)
         .ok_or_else(|| "stable-diffusion engine not found. Set its path in Settings.".to_string())?;
     let backend = {
@@ -131,8 +132,7 @@ pub async fn generate(
         let devices = guard
             .get_or_insert_with(|| crate::devices::enumerate(&binary))
             .clone();
-        crate::devices::validate_gpu_selection(cfg.gpu_device.clone(), &devices)
-            .map(|s| format!("vulkan{}", s.index))
+        crate::devices::resolve_backend(cfg.gpu_device.clone(), &devices)
     };
 
     let gallery_dir = PathBuf::from(&cfg.gallery_dir);
