@@ -13,11 +13,14 @@
   import ModelFolders from "$lib/components/ModelFolders.svelte";
   import DevicePicker from "$lib/components/DevicePicker.svelte";
   import ResourceMonitor from "$lib/components/ResourceMonitor.svelte";
+  import ThemeToggle from "$lib/components/ThemeToggle.svelte";
+  import { applyTheme } from "$lib/theme";
 
   onMount(() => {
     (async () => {
       const cfg = await getSettings();
       settings.set(cfg);
+      applyTheme(cfg.theme); // reconcile against the pre-paint localStorage cache
       // seed the form with last-used params + default model if present
       request.set({ ...cfg.last_request, model_path: cfg.default_model_path ?? cfg.last_request.model_path });
       history.set(await listHistory());
@@ -31,7 +34,10 @@
 
 <main class="app">
   <aside class="controls">
-    <h1 class="brand">fridAI</h1>
+    <header class="brandbar">
+      <h1 class="brand">fridAI</h1>
+      <ThemeToggle />
+    </header>
     <ModelLibrary />
     <ModelFolders />
     <DevicePicker />
@@ -54,7 +60,8 @@
   .app { display:flex; height:calc(100vh - 34px); }
   .controls { flex:0 0 340px; display:flex; flex-direction:column; gap:.8rem;
     padding:1rem; border-right:1px solid var(--border); overflow:hidden auto; }
-  .brand { margin:0 0 .5rem; font-size:1.2rem; }
+  .brandbar { display:flex; align-items:center; justify-content:space-between; margin:0 0 .5rem; }
+  .brand { margin:0; font-size:1.2rem; }
   .spacer { flex:1; }
   .stage { flex:1; display:flex; flex-direction:column; padding:1rem; gap:.6rem; min-width:0; }
 </style>
