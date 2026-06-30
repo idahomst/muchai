@@ -66,6 +66,9 @@ export interface AppConfig {
   last_request: GenerationRequest;
   gpu_device: GpuSelection | null;
   params_expanded: boolean;
+  // Wire values MUST match the Rust `Theme` enum's serde snake_case form
+  // (src-tauri/src/types.rs).
+  theme: "dark" | "light";
 }
 
 export const defaultRequest = (): GenerationRequest => ({
