@@ -112,6 +112,30 @@ pub fn validate_gpu_selection(sel: Option<GpuSelection>, devices: &[GpuDevice]) 
         .then_some(sel)
 }
 
+/// Map a (possibly stale) saved selection + the enumerated device list to the
+/// engine `--backend` value. `None` means omit `--backend` (engine default,
+/// i.e. the first Vulkan device). A valid CPU selection, or no valid selection
+/// when there is no real GPU, yields `Some("cpu")` (the auto-fallback).
+pub fn resolve_backend(selection: Option<GpuSelection>, devices: &[GpuDevice]) -> Option<String> {
+    if let Some(sel) = validate_gpu_selection(selection, devices) {
+        // validate_gpu_selection guarantees a matching device exists.
+        let device = devices
+            .iter()
+            .find(|d| d.index == sel.index && d.name == sel.name)
+            .expect("validate_gpu_selection guarantees the device exists");
+        return match device.kind {
+            DeviceKind::Cpu => Some("cpu".into()),
+            _ => Some(format!("vulkan{}", device.index)),
+        };
+    }
+    // No valid selection: auto-fall back to CPU only when there is no real GPU.
+    if devices.iter().any(|d| d.kind != DeviceKind::Cpu) {
+        None
+    } else {
+        Some("cpu".into())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -201,5 +225,42 @@ ggml_vulkan: 1 = NVIDIA GeForce RTX 3060 (NVIDIA) | uma: 0 | fp16: 1 | bf16: 0 |
     #[test]
     fn none_stays_none() {
         assert_eq!(validate_gpu_selection(None, &[dev(0, "Intel")]), None);
+    }
+
+    #[test]
+    fn resolve_backend_valid_gpu_selection_maps_to_vulkan_index() {
+        let devs = vec![dev(0, "Intel"), dev(1, "NVIDIA GeForce RTX 3060"), cpu_device()];
+        let sel = Some(GpuSelection { index: 1, name: "NVIDIA GeForce RTX 3060".into() });
+        assert_eq!(resolve_backend(sel, &devs), Some("vulkan1".to_string()));
+    }
+
+    #[test]
+    fn resolve_backend_cpu_selection_maps_to_cpu() {
+        let devs = vec![dev(0, "Intel"), cpu_device()];
+        let sel = Some(GpuSelection { index: CPU_DEVICE_INDEX, name: "CPU".into() });
+        assert_eq!(resolve_backend(sel, &devs), Some("cpu".to_string()));
+    }
+
+    #[test]
+    fn resolve_backend_no_selection_with_gpu_is_engine_default() {
+        let devs = vec![dev(0, "Intel"), cpu_device()];
+        assert_eq!(resolve_backend(None, &devs), None);
+    }
+
+    #[test]
+    fn resolve_backend_no_selection_without_gpu_falls_back_to_cpu() {
+        let devs = vec![cpu_device()];
+        assert_eq!(resolve_backend(None, &devs), Some("cpu".to_string()));
+    }
+
+    #[test]
+    fn resolve_backend_stale_selection_uses_gpu_presence_rule() {
+        // Stale selection (index 5 absent) + a real GPU present → engine default.
+        let devs = vec![dev(0, "Intel"), cpu_device()];
+        let stale = Some(GpuSelection { index: 5, name: "Ghost".into() });
+        assert_eq!(resolve_backend(stale.clone(), &devs), None);
+        // Stale selection + no real GPU → CPU fallback.
+        let devs_cpu_only = vec![cpu_device()];
+        assert_eq!(resolve_backend(stale, &devs_cpu_only), Some("cpu".to_string()));
     }
 }
