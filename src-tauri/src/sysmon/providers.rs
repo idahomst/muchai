@@ -215,6 +215,26 @@ mod sysfs_tests {
     }
 
     #[test]
+    fn intel_card_reports_vram_and_ignores_busy() {
+        // Intel passes read_busy=false: a present gpu_busy_percent must be ignored
+        // (Intel util needs root/PMU) and reported as 0, with VRAM still parsed.
+        let root = fixture("intel", &[
+            ("vendor", "0x8086\n"),
+            ("gpu_busy_percent", "99\n"),
+            ("mem_info_vram_used", "536870912\n"),   // 512 MiB
+            ("mem_info_vram_total", "8589934592\n"), // 8192 MiB
+        ]);
+        let p = IntelSysfsProvider { root: root.clone() };
+        let gpus = p.probe();
+        assert_eq!(gpus.len(), 1);
+        assert_eq!(gpus[0].name, "Intel");
+        assert_eq!(gpus[0].utilization_pct, 0);
+        assert_eq!(gpus[0].vram_used_mb, 512);
+        assert_eq!(gpus[0].vram_total_mb, 8192);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn missing_sysfs_root_is_empty() {
         let p = AmdSysfsProvider { root: PathBuf::from("/no/such/sysfs") };
         assert!(p.probe().is_empty());
