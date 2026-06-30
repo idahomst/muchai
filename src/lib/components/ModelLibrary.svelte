@@ -1,10 +1,11 @@
 <script lang="ts">
   import { request, models, downloadStatus, cancelActiveDownload } from "../stores";
   import { listModels, deleteModel } from "../api";
-  import { ask } from "@tauri-apps/plugin-dialog";
   import DownloadDialog from "./DownloadDialog.svelte";
 
   let showDownload = $state(false);
+  let confirming = $state(false);
+  let busy = $state(false);
   let error = $state<string | null>(null);
 
   const fmtSize = (b: number) => (b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : `${(b / 1e6).toFixed(0)} MB`);
@@ -30,15 +31,8 @@
 
   async function removeSelected() {
     const path = $request.model_path;
-    if (!path) return;
-    const name = $models.find((m) => m.path === path)?.name ?? path;
-    // Native window.confirm is a no-op in the WebKitGTK webview, so use the
-    // Tauri dialog plugin's ask() to actually prompt before a destructive delete.
-    const ok = await ask(`Permanently delete "${name}"? This cannot be undone.`, {
-      title: "Delete model",
-      kind: "warning",
-    });
-    if (!ok) return;
+    if (!path || busy) return;
+    busy = true;
     error = null;
     try {
       await deleteModel(path);
@@ -46,6 +40,9 @@
       await refresh();
     } catch (e) {
       error = String(e);
+    } finally {
+      busy = false;
+      confirming = false; // close the prompt whether the delete succeeded or failed
     }
   }
 
@@ -84,8 +81,14 @@
     </select>
   </div>
   <div class="row actions">
-    <button class="btn-secondary" onclick={() => (showDownload = true)}>Download…</button>
-    <button class="btn-secondary" disabled={!$request.model_path} onclick={removeSelected}>Delete</button>
+    <button class="btn-secondary" onclick={() => (showDownload = true)} disabled={confirming}>Download…</button>
+    {#if confirming}
+      <span class="ask">Move to trash?</span>
+      <button class="btn-secondary del" onclick={removeSelected} disabled={busy}>Delete</button>
+      <button class="btn-secondary" onclick={() => (confirming = false)} disabled={busy}>Cancel</button>
+    {:else}
+      <button class="btn-secondary" disabled={!$request.model_path} onclick={() => (confirming = true)}>Delete</button>
+    {/if}
   </div>
   {#if $models.length === 0}
     <span class="hint">No models found. Click Download… to get one.</span>
@@ -121,6 +124,8 @@
   select { flex:1; font:inherit; padding:.3rem; min-width:0; }
   button { font:inherit; font-size:.78rem; padding:.3rem .6rem; cursor:pointer; }
   button:disabled { opacity:.5; cursor:default; }
+  .ask { font-size:.72rem; opacity:.85; }
+  .del { background:rgba(180,40,40,.85); color:#fff; border-color:transparent; }
   .hint { font-size:.72rem; opacity:.6; margin-top:.3rem; display:block; }
   .err { font-size:.72rem; color:#ff6b6b; margin-top:.3rem; display:block; }
   .dl { display:flex; align-items:center; gap:.5rem; margin-top:.4rem; flex-wrap:wrap; }
