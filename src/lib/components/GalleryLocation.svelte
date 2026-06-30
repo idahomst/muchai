@@ -51,6 +51,6 @@
     white-space:nowrap; opacity:.9; font-family:monospace; }
   button { flex:0 0 auto; font:inherit; font-size:.72rem; padding:.25rem .55rem; cursor:pointer; }
   button:disabled { opacity:.5; cursor:default; }
-  .err { font-size:.72rem; color:#ff6b6b; padding:.25rem .2rem 0;
+  .err { font-size:.72rem; color:var(--danger); padding:.25rem .2rem 0;
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 </style>

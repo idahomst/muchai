@@ -63,7 +63,7 @@
     width:56px; height:56px; flex:0 0 auto; cursor:pointer; background:none; position:relative; }
   .thumb img { width:100%; height:100%; object-fit:cover; display:block; }
   .thumb.selected { outline:2px solid var(--accent); outline-offset:1px; border-color:var(--accent); }
-  .idx { position:absolute; bottom:1px; left:1px; background:rgba(0,0,0,.6); color:#fff;
+  .idx { position:absolute; bottom:1px; left:1px; background:var(--overlay); color:var(--on-accent);
     font-size:.55rem; line-height:1.3; border-radius:3px; padding:0 .25rem; }
   .empty { opacity:.5; font-size:.8rem; }
 </style>

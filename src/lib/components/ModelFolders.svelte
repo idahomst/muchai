@@ -80,5 +80,5 @@
   button { font:inherit; font-size:.72rem; padding:.2rem .5rem; cursor:pointer; }
   button:disabled { opacity:.5; cursor:default; }
   .open, .x { flex:0 0 auto; padding:.1rem .4rem; background:none; border:none; cursor:pointer; line-height:1; }
-  .err { color:#ff6b6b; opacity:1; }
+  .err { color:var(--danger); opacity:1; }
 </style>

@@ -61,14 +61,14 @@
 
 <style>
   .preview { flex:1; display:flex; align-items:center; justify-content:center; position:relative;
-    background:rgba(0,0,0,.2); border-radius:8px; overflow:hidden; }
+    background:var(--overlay-soft); border-radius:8px; overflow:hidden; }
   img { max-width:100%; max-height:100%; object-fit:contain; }
   .actions { position:absolute; top:.5rem; right:.5rem; display:flex; gap:.4rem; align-items:center; }
   .actions button { font:inherit; font-size:.75rem; padding:.25rem .6rem; cursor:pointer; }
   .actions button:disabled { opacity:.5; cursor:default; }
-  .del { background:rgba(180,40,40,.85); color:#fff; border:none; border-radius:5px; }
-  .ask { font-size:.75rem; background:rgba(0,0,0,.6); color:#fff; padding:.25rem .5rem; border-radius:5px; }
-  .err { position:absolute; bottom:.5rem; left:.5rem; right:.5rem; color:#ffb4b4; font-size:.75rem;
-    background:rgba(0,0,0,.6); padding:.3rem .5rem; border-radius:5px; }
+  .del { background:var(--danger-bg); color:var(--on-accent); border:none; border-radius:5px; }
+  .ask { font-size:.75rem; background:var(--overlay); color:var(--on-accent); padding:.25rem .5rem; border-radius:5px; }
+  .err { position:absolute; bottom:.5rem; left:.5rem; right:.5rem; color:var(--danger-soft); font-size:.75rem;
+    background:var(--overlay); padding:.3rem .5rem; border-radius:5px; }
   .empty { opacity:.5; }
 </style>

@@ -59,10 +59,10 @@
 <style>
   .bar { display:flex; gap:.5rem; align-items:center; }
   .btn-primary { flex:1; padding:.6rem; font-weight:600; }
-  .progress { flex:1; height:12px; background:rgba(255,255,255,.1); border-radius:6px; overflow:hidden; }
+  .progress { flex:1; height:12px; background:var(--border-subtle); border-radius:6px; overflow:hidden; }
   .fill { height:100%; background:var(--accent); transition:width .15s linear; }
-  .error { margin-top:.5rem; padding:.5rem; border-radius:6px; background:rgba(255,80,80,.15);
-    color:#ffb4b4; font-size:.8rem; white-space:pre-wrap; }
-  .cpu-note { margin-top:.5rem; padding:.4rem .5rem; border-radius:6px; background:rgba(255,180,80,.15);
-    color:#ffd9a8; font-size:.75rem; }
+  .error { margin-top:.5rem; padding:.5rem; border-radius:6px; background:var(--danger-tint);
+    color:var(--danger-soft); font-size:.8rem; white-space:pre-wrap; }
+  .cpu-note { margin-top:.5rem; padding:.4rem .5rem; border-radius:6px; background:var(--warn-tint);
+    color:var(--warn); font-size:.75rem; }
 </style>

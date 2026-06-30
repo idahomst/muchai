@@ -125,14 +125,14 @@
   button { font:inherit; font-size:.78rem; padding:.3rem .6rem; cursor:pointer; }
   button:disabled { opacity:.5; cursor:default; }
   .ask { font-size:.72rem; opacity:.85; }
-  .del { background:rgba(180,40,40,.85); color:#fff; border-color:transparent; }
+  .del { background:var(--danger-bg); color:var(--on-accent); border-color:transparent; }
   .hint { font-size:.72rem; opacity:.6; margin-top:.3rem; display:block; }
-  .err { font-size:.72rem; color:#ff6b6b; margin-top:.3rem; display:block; }
+  .err { font-size:.72rem; color:var(--danger); margin-top:.3rem; display:block; }
   .dl { display:flex; align-items:center; gap:.5rem; margin-top:.4rem; flex-wrap:wrap; }
-  .bar { flex:1 1 100%; height:8px; background:rgba(255,255,255,.1); border-radius:4px; overflow:hidden; }
-  .fill { height:100%; background:var(--accent, #6ea8fe); transition:width .15s linear; }
+  .bar { flex:1 1 100%; height:8px; background:var(--border-subtle); border-radius:4px; overflow:hidden; }
+  .fill { height:100%; background:var(--accent, var(--accent-bright)); transition:width .15s linear; }
   .dl-text { font-size:.72rem; opacity:.85; }
-  .dl-text.ok { color:#4caf83; opacity:1; }
-  .dl-text.err { color:#ff6b6b; opacity:1; }
+  .dl-text.ok { color:var(--success); opacity:1; }
+  .dl-text.err { color:var(--danger); opacity:1; }
   .x { background:none; border:none; color:inherit; cursor:pointer; font-size:.75rem; opacity:.7; padding:0 .2rem; }
 </style>
