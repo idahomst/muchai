@@ -51,6 +51,7 @@
         <span class="k">CFG</span><span class="v">{r.cfg_scale}</span>
         <span class="k">Sampler</span><span class="v">{samplerLabel(r.sampler)}</span>
         <span class="k">Size</span><span class="v">{r.width}×{r.height}</span>
+        <span class="k">Format</span><span class="v">{r.output_format.toUpperCase()}</span>
       </div>
       <div class="prompts">
         <div class="pl">Prompt</div>

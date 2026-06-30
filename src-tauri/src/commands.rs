@@ -138,7 +138,8 @@ pub async fn generate(
     let gallery_dir = PathBuf::from(&cfg.gallery_dir);
     std::fs::create_dir_all(&gallery_dir).map_err(|e| e.to_string())?;
     let id = uuid::Uuid::new_v4().to_string();
-    let image_path = gallery_dir.join(format!("{id}.png"));
+    let ext = request.output_format.extension();
+    let image_path = gallery_dir.join(format!("{id}.{ext}"));
 
     let slot = state.child.clone();
     let app2 = app.clone();
@@ -163,7 +164,7 @@ pub async fn generate(
             let batch = request.batch_count.max(1) as usize;
             let mut produced: Vec<(usize, PathBuf)> = Vec::new();
             for i in 0..batch {
-                let p = gallery_dir.join(format!("{id}_{i}.png"));
+                let p = gallery_dir.join(format!("{id}_{i}.{ext}"));
                 if p.exists() {
                     produced.push((i, p));
                 }
