@@ -58,7 +58,6 @@
     <button onclick={addFolder} disabled={!$settings || busy}>Add folder…</button>
   </div>
   <div class="row" title={$settings?.models_dir ?? ""}>
-    <span class="star" title="Primary folder — downloaded models are saved here">★</span>
     <span class="path">{$settings?.models_dir ?? "…"}</span>
     <button class="open" onclick={() => openDir($settings?.models_dir)} disabled={!$settings} aria-label="Open folder" title="Open folder">📂</button>
   </div>
@@ -78,7 +77,6 @@
   .lbl { opacity:.6; }
   .row { display:flex; align-items:center; gap:.4rem; font-family:monospace; opacity:.9; }
   .path { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .star { flex:0 0 auto; font-family:initial; opacity:.85; color:var(--accent, #6ea8fe); }
   button { font:inherit; font-size:.72rem; padding:.2rem .5rem; cursor:pointer; }
   button:disabled { opacity:.5; cursor:default; }
   .open, .x { flex:0 0 auto; padding:.1rem .4rem; background:none; border:none; cursor:pointer; line-height:1; }
