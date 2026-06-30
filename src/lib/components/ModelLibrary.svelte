@@ -50,13 +50,15 @@
 
   // Refresh the model list once when a background download completes, so the new
   // model appears in the dropdown. The active selection (`model_path`) is left
-  // untouched. `handledDone` guards against re-refreshing for the same notice.
+  // untouched. `handledDone` guards against re-refreshing for the same notice;
+  // the `error` state intentionally needs no reset since it's only ever reached
+  // via `active` (which resets) and exits via `idle`/`active` (which reset too).
   let handledDone = $state<string | null>(null);
   $effect(() => {
     const s = $downloadStatus;
     if (s.kind === "done" && handledDone !== s.name) {
       handledDone = s.name;
-      void refresh();
+      refresh().catch((e) => (error = String(e)));
     } else if (s.kind === "idle" || s.kind === "active") {
       handledDone = null;
     }
