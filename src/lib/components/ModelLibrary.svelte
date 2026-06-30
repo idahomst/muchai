@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { request, models } from "../stores";
+  import { request, models, downloadStatus, cancelActiveDownload } from "../stores";
   import { listModels, deleteModel } from "../api";
   import DownloadDialog from "./DownloadDialog.svelte";
 
@@ -42,11 +42,25 @@
     }
   }
 
-  async function onDownloaded(path: string) {
-    await refresh();
-    request.update((r) => ({ ...r, model_path: path }));
-    showDownload = false;
-  }
+  const dlPct = $derived(
+    $downloadStatus.kind === "active" && $downloadStatus.total
+      ? Math.round(($downloadStatus.downloaded / $downloadStatus.total) * 100)
+      : 0,
+  );
+
+  // Refresh the model list once when a background download completes, so the new
+  // model appears in the dropdown. The active selection (`model_path`) is left
+  // untouched. `handledDone` guards against re-refreshing for the same notice.
+  let handledDone = $state<string | null>(null);
+  $effect(() => {
+    const s = $downloadStatus;
+    if (s.kind === "done" && handledDone !== s.name) {
+      handledDone = s.name;
+      void refresh();
+    } else if (s.kind === "idle" || s.kind === "active") {
+      handledDone = null;
+    }
+  });
 </script>
 
 <div class="field">
@@ -68,10 +82,28 @@
     <span class="hint">No models found. Click Download… to get one.</span>
   {/if}
   {#if error}<span class="err">{error}</span>{/if}
+
+  {#if $downloadStatus.kind === "active"}
+    <div class="dl">
+      <div class="bar"><div class="fill" style="width:{dlPct}%"></div></div>
+      <span class="dl-text">⬇ {$downloadStatus.name}… {fmtSize($downloadStatus.downloaded)}{$downloadStatus.total ? ` / ${fmtSize($downloadStatus.total)} (${dlPct}%)` : "…"}</span>
+      <button class="btn-secondary" onclick={cancelActiveDownload}>Cancel</button>
+    </div>
+  {:else if $downloadStatus.kind === "done"}
+    <div class="dl">
+      <span class="dl-text ok">✓ {$downloadStatus.name} ready</span>
+      <button class="x" aria-label="Dismiss" onclick={() => downloadStatus.set({ kind: "idle" })}>✕</button>
+    </div>
+  {:else if $downloadStatus.kind === "error"}
+    <div class="dl">
+      <span class="dl-text err">⚠ {$downloadStatus.name}: {$downloadStatus.message}</span>
+      <button class="x" aria-label="Dismiss" onclick={() => downloadStatus.set({ kind: "idle" })}>✕</button>
+    </div>
+  {/if}
 </div>
 
 {#if showDownload}
-  <DownloadDialog onclose={() => (showDownload = false)} ondownloaded={onDownloaded} />
+  <DownloadDialog onclose={() => (showDownload = false)} />
 {/if}
 
 <style>
@@ -82,4 +114,11 @@
   button:disabled { opacity:.5; cursor:default; }
   .hint { font-size:.72rem; opacity:.6; margin-top:.3rem; display:block; }
   .err { font-size:.72rem; color:#ff6b6b; margin-top:.3rem; display:block; }
+  .dl { display:flex; align-items:center; gap:.5rem; margin-top:.4rem; flex-wrap:wrap; }
+  .bar { flex:1 1 100%; height:8px; background:rgba(255,255,255,.1); border-radius:4px; overflow:hidden; }
+  .fill { height:100%; background:var(--accent, #6ea8fe); transition:width .15s linear; }
+  .dl-text { font-size:.72rem; opacity:.85; }
+  .dl-text.ok { color:#4caf83; opacity:1; }
+  .dl-text.err { color:#ff6b6b; opacity:1; }
+  .x { background:none; border:none; color:inherit; cursor:pointer; font-size:.75rem; opacity:.7; padding:0 .2rem; }
 </style>
