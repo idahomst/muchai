@@ -1,6 +1,7 @@
 <script lang="ts">
   import { request, models, downloadStatus, cancelActiveDownload } from "../stores";
   import { listModels, deleteModel } from "../api";
+  import { ask } from "@tauri-apps/plugin-dialog";
   import DownloadDialog from "./DownloadDialog.svelte";
 
   let showDownload = $state(false);
@@ -31,7 +32,13 @@
     const path = $request.model_path;
     if (!path) return;
     const name = $models.find((m) => m.path === path)?.name ?? path;
-    if (!confirm(`Permanently delete "${name}"? This cannot be undone.`)) return;
+    // Native window.confirm is a no-op in the WebKitGTK webview, so use the
+    // Tauri dialog plugin's ask() to actually prompt before a destructive delete.
+    const ok = await ask(`Permanently delete "${name}"? This cannot be undone.`, {
+      title: "Delete model",
+      kind: "warning",
+    });
+    if (!ok) return;
     error = null;
     try {
       await deleteModel(path);
