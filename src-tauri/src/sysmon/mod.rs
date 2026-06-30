@@ -89,11 +89,18 @@ pub fn gather(sys: &mut System, providers: &[Box<dyn GpuProvider>], target: &Tar
     let cpu_pct = sys.global_cpu_usage();
     let ram_used_mb = sys.used_memory() / 1024 / 1024; // sysinfo 0.30+ returns bytes
     let ram_total_mb = sys.total_memory() / 1024 / 1024;
-    let mut all: Vec<GpuStats> = Vec::new();
-    for p in providers {
-        all.extend(p.probe());
-    }
-    let gpu = select_gpu(&all, target);
+    // Skip probing providers entirely when no GPU is targeted (CPU selected): the
+    // NVML enumeration + sysfs read_dir would just be discarded by select_gpu.
+    let gpu = match target {
+        Target::None => None,
+        _ => {
+            let mut all: Vec<GpuStats> = Vec::new();
+            for p in providers {
+                all.extend(p.probe());
+            }
+            select_gpu(&all, target)
+        }
+    };
     SystemStats {
         gpu,
         cpu_pct,
