@@ -1,6 +1,22 @@
+pub mod providers;
+
 use crate::types::{GpuDevice, GpuSelection, GpuStats, SystemStats};
-use nvml_wrapper::Nvml;
+use providers::NvmlProvider;
 use sysinfo::System;
+
+/// A source of live GPU stats for one vendor/backend. Providers are built and used
+/// entirely inside the stats thread, so no `Send` bound is needed.
+pub trait GpuProvider {
+    /// Return live stats for every GPU this provider can currently see.
+    fn probe(&self) -> Vec<GpuStats>;
+}
+
+/// Build the provider list for this platform. The NVML handle is built once by
+/// the caller (with the `libnvidia-ml.so.1` init fix) and moved in. AMD/Intel
+/// sysfs providers are added in a later change.
+pub fn default_providers(nvml: Option<nvml_wrapper::Nvml>) -> Vec<Box<dyn GpuProvider>> {
+    vec![Box::new(NvmlProvider { nvml })]
+}
 
 /// Which GPU the monitor should report, derived from the user's selection.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,15 +75,19 @@ pub fn select_gpu(gpus: &[GpuStats], target: &Target) -> Option<GpuStats> {
     }
 }
 
-/// Gather CPU/RAM via sysinfo and (optionally) GPU via NVML.
-/// `nvml` = None hides the GPU section (e.g. on non-NVIDIA machines).
-pub fn gather(sys: &mut System, nvml: Option<&Nvml>) -> SystemStats {
+/// Gather CPU/RAM via sysinfo, collect GPU stats from every provider, and pick the
+/// one matching `target`.
+pub fn gather(sys: &mut System, providers: &[Box<dyn GpuProvider>], target: &Target) -> SystemStats {
     sys.refresh_cpu_usage();
     sys.refresh_memory();
     let cpu_pct = sys.global_cpu_usage();
     let ram_used_mb = sys.used_memory() / 1024 / 1024; // sysinfo 0.30+ returns bytes
     let ram_total_mb = sys.total_memory() / 1024 / 1024;
-    let gpu = nvml.and_then(gather_gpu);
+    let mut all: Vec<GpuStats> = Vec::new();
+    for p in providers {
+        all.extend(p.probe());
+    }
+    let gpu = select_gpu(&all, target);
     SystemStats {
         gpu,
         cpu_pct,
@@ -76,27 +96,21 @@ pub fn gather(sys: &mut System, nvml: Option<&Nvml>) -> SystemStats {
     }
 }
 
-fn gather_gpu(nvml: &Nvml) -> Option<GpuStats> {
-    let device = nvml.device_by_index(0).ok()?;
-    let name = device.name().ok()?;
-    let util = device.utilization_rates().ok()?;
-    let mem = device.memory_info().ok()?;
-    Some(GpuStats {
-        name,
-        utilization_pct: util.gpu,
-        vram_used_mb: mem.used / 1024 / 1024,
-        vram_total_mb: mem.total / 1024 / 1024,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn gathers_cpu_and_ram_without_gpu() {
+    fn nvml_provider_without_handle_probes_empty() {
+        let p = crate::sysmon::providers::NvmlProvider { nvml: None };
+        assert!(p.probe().is_empty());
+    }
+
+    #[test]
+    fn gather_with_no_providers_reports_cpu_ram_and_no_gpu() {
         let mut sys = System::new();
-        let stats = gather(&mut sys, None);
+        let providers: Vec<Box<dyn GpuProvider>> = Vec::new();
+        let stats = gather(&mut sys, &providers, &Target::None);
         assert!(stats.gpu.is_none());
         assert!(stats.ram_total_mb > 0);
         assert!(stats.ram_used_mb <= stats.ram_total_mb);

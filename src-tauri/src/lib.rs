@@ -35,7 +35,8 @@ pub fn run() {
             // images load even when it's not the default location.
             let _ = app.asset_protocol_scope().allow_directory(&gallery_dir, true);
 
-            // Background system-stats loop: emit "system:stats" ~every second.
+            // Background system-stats loop: emit "system:stats" ~every second,
+            // keyed to the device the user has selected for generation.
             let handle = app.handle().clone();
             std::thread::spawn(move || {
                 // Many driver installs ship only the versioned NVML
@@ -47,9 +48,18 @@ pub fn run() {
                     .init()
                     .or_else(|_| nvml_wrapper::Nvml::init())
                     .ok();
+                let providers = sysmon::default_providers(nvml);
                 let mut sys = sysinfo::System::new();
                 loop {
-                    let stats = sysmon::gather(&mut sys, nvml.as_ref());
+                    // Re-read the selection each tick so changing the device in the
+                    // UI re-keys the monitor without restarting the thread.
+                    let target = {
+                        let state = handle.state::<AppState>();
+                        let selection = state.config.lock().unwrap().gpu_device.clone();
+                        let devices = state.gpu_devices.lock().unwrap().clone().unwrap_or_default();
+                        sysmon::resolve_target(selection, &devices)
+                    };
+                    let stats = sysmon::gather(&mut sys, &providers, &target);
                     let _ = handle.emit("system:stats", stats);
                     std::thread::sleep(std::time::Duration::from_millis(1000));
                 }
