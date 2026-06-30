@@ -130,7 +130,7 @@
   .err { font-size:.72rem; color:var(--danger); margin-top:.3rem; display:block; }
   .dl { display:flex; align-items:center; gap:.5rem; margin-top:.4rem; flex-wrap:wrap; }
   .bar { flex:1 1 100%; height:8px; background:var(--border-subtle); border-radius:4px; overflow:hidden; }
-  .fill { height:100%; background:var(--accent, var(--accent-bright)); transition:width .15s linear; }
+  .fill { height:100%; background:var(--accent); transition:width .15s linear; }
   .dl-text { font-size:.72rem; opacity:.85; }
   .dl-text.ok { color:var(--success); opacity:1; }
   .dl-text.err { color:var(--danger); opacity:1; }

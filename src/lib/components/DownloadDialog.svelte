@@ -78,7 +78,7 @@
 <style>
   .backdrop { position:fixed; inset:0; background:var(--backdrop); display:flex;
     align-items:center; justify-content:center; z-index:50; }
-  .dialog { background:var(--bg, var(--dialog-bg)); border:1px solid var(--border); border-radius:10px;
+  .dialog { background:var(--dialog-bg); border:1px solid var(--border); border-radius:10px;
     padding:1.2rem; width:min(460px, 92vw); max-height:88vh; overflow-y:auto; display:flex; flex-direction:column; gap:.8rem; }
   h2 { margin:0; font-size:1.05rem; }
   h3 { margin:.2rem 0; font-size:.8rem; opacity:.7; }
