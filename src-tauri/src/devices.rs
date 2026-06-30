@@ -4,6 +4,23 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
+/// Reserved index for the synthetic CPU device. `u32::MAX` never collides with a
+/// real Vulkan device index (those are `0..N`), so a persisted CPU selection
+/// validates by `(index, name)` exactly like any GPU device.
+pub const CPU_DEVICE_INDEX: u32 = u32::MAX;
+
+/// The synthetic "CPU" device. The engine always has a CPU backend, so this is
+/// offered whenever the engine binary exists (appended by `enumerate`). The
+/// `name` is exactly "CPU" for stable validation/persistence; the UI adds the
+/// "(slow)" suffix cosmetically.
+pub fn cpu_device() -> GpuDevice {
+    GpuDevice {
+        index: CPU_DEVICE_INDEX,
+        name: "CPU".into(),
+        kind: DeviceKind::Cpu,
+    }
+}
+
 /// Parse the `ggml_vulkan: N = ...` lines from the engine's stderr into devices.
 /// Order-independent: each device's index comes from the line, not its position.
 pub fn parse_vulkan_devices(stderr: &str) -> Vec<GpuDevice> {
@@ -69,7 +86,9 @@ pub fn enumerate(binary: &Path) -> Vec<GpuDevice> {
     let captured = rx.recv_timeout(Duration::from_secs(15)).unwrap_or_default();
     let _ = child.kill();
     let _ = child.wait();
-    parse_vulkan_devices(&captured)
+    let mut devices = parse_vulkan_devices(&captured);
+    devices.push(cpu_device());
+    devices
 }
 
 /// Strip the trailing " (<driver>)" group. Device names may themselves contain
@@ -112,14 +131,17 @@ mod tests {
     }
 
     #[test]
-    fn enumerate_captures_stderr_from_engine() {
+    fn enumerate_appends_synthetic_cpu_after_probed_devices() {
         // Fake engine ignores args and prints the device banner to stderr.
         let script = "#!/bin/sh\n>&2 echo 'ggml_vulkan: Found 1 Vulkan devices:'\n>&2 echo 'ggml_vulkan: 0 = NVIDIA GeForce RTX 3060 (NVIDIA) | uma: 0 | fp16: 1'\nexit 1\n";
         let bin = write_fake_engine(script);
         let devices = enumerate(&bin);
-        assert_eq!(devices.len(), 1);
+        // Probed GPU first, synthetic CPU appended last.
+        assert_eq!(devices.len(), 2);
         assert_eq!(devices[0].index, 0);
         assert_eq!(devices[0].kind, DeviceKind::Discrete);
+        assert_eq!(devices[1], cpu_device());
+        assert_eq!(devices[1].kind, DeviceKind::Cpu);
         let _ = std::fs::remove_dir_all(bin.parent().unwrap());
     }
 
