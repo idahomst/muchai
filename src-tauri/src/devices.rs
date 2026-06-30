@@ -4,6 +4,23 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
+/// Reserved index for the synthetic CPU device. `u32::MAX` never collides with a
+/// real Vulkan device index (those are `0..N`), so a persisted CPU selection
+/// validates by `(index, name)` exactly like any GPU device.
+pub const CPU_DEVICE_INDEX: u32 = u32::MAX;
+
+/// The synthetic "CPU" device. The engine always has a CPU backend, so this is
+/// offered whenever the engine binary exists (appended by `enumerate`). The
+/// `name` is exactly "CPU" for stable validation/persistence; the UI adds the
+/// "(slow)" suffix cosmetically.
+pub fn cpu_device() -> GpuDevice {
+    GpuDevice {
+        index: CPU_DEVICE_INDEX,
+        name: "CPU".into(),
+        kind: DeviceKind::Cpu,
+    }
+}
+
 /// Parse the `ggml_vulkan: N = ...` lines from the engine's stderr into devices.
 /// Order-independent: each device's index comes from the line, not its position.
 pub fn parse_vulkan_devices(stderr: &str) -> Vec<GpuDevice> {
@@ -69,7 +86,9 @@ pub fn enumerate(binary: &Path) -> Vec<GpuDevice> {
     let captured = rx.recv_timeout(Duration::from_secs(15)).unwrap_or_default();
     let _ = child.kill();
     let _ = child.wait();
-    parse_vulkan_devices(&captured)
+    let mut devices = parse_vulkan_devices(&captured);
+    devices.push(cpu_device());
+    devices
 }
 
 /// Strip the trailing " (<driver>)" group. Device names may themselves contain
@@ -93,6 +112,30 @@ pub fn validate_gpu_selection(sel: Option<GpuSelection>, devices: &[GpuDevice]) 
         .then_some(sel)
 }
 
+/// Map a (possibly stale) saved selection + the enumerated device list to the
+/// engine `--backend` value. `None` means omit `--backend` (engine default,
+/// i.e. the first Vulkan device). A valid CPU selection, or no valid selection
+/// when there is no real GPU, yields `Some("cpu")` (the auto-fallback).
+pub fn resolve_backend(selection: Option<GpuSelection>, devices: &[GpuDevice]) -> Option<String> {
+    if let Some(sel) = validate_gpu_selection(selection, devices) {
+        // validate_gpu_selection guarantees a matching device exists.
+        let device = devices
+            .iter()
+            .find(|d| d.index == sel.index && d.name == sel.name)
+            .expect("validate_gpu_selection guarantees the device exists");
+        return match device.kind {
+            DeviceKind::Cpu => Some("cpu".into()),
+            _ => Some(format!("vulkan{}", device.index)),
+        };
+    }
+    // No valid selection: auto-fall back to CPU only when there is no real GPU.
+    if devices.iter().any(|d| d.kind != DeviceKind::Cpu) {
+        None
+    } else {
+        Some("cpu".into())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -112,14 +155,17 @@ mod tests {
     }
 
     #[test]
-    fn enumerate_captures_stderr_from_engine() {
+    fn enumerate_appends_synthetic_cpu_after_probed_devices() {
         // Fake engine ignores args and prints the device banner to stderr.
         let script = "#!/bin/sh\n>&2 echo 'ggml_vulkan: Found 1 Vulkan devices:'\n>&2 echo 'ggml_vulkan: 0 = NVIDIA GeForce RTX 3060 (NVIDIA) | uma: 0 | fp16: 1'\nexit 1\n";
         let bin = write_fake_engine(script);
         let devices = enumerate(&bin);
-        assert_eq!(devices.len(), 1);
+        // Probed GPU first, synthetic CPU appended last.
+        assert_eq!(devices.len(), 2);
         assert_eq!(devices[0].index, 0);
         assert_eq!(devices[0].kind, DeviceKind::Discrete);
+        assert_eq!(devices[1], cpu_device());
+        assert_eq!(devices[1].kind, DeviceKind::Cpu);
         let _ = std::fs::remove_dir_all(bin.parent().unwrap());
     }
 
@@ -179,5 +225,42 @@ ggml_vulkan: 1 = NVIDIA GeForce RTX 3060 (NVIDIA) | uma: 0 | fp16: 1 | bf16: 0 |
     #[test]
     fn none_stays_none() {
         assert_eq!(validate_gpu_selection(None, &[dev(0, "Intel")]), None);
+    }
+
+    #[test]
+    fn resolve_backend_valid_gpu_selection_maps_to_vulkan_index() {
+        let devs = vec![dev(0, "Intel"), dev(1, "NVIDIA GeForce RTX 3060"), cpu_device()];
+        let sel = Some(GpuSelection { index: 1, name: "NVIDIA GeForce RTX 3060".into() });
+        assert_eq!(resolve_backend(sel, &devs), Some("vulkan1".to_string()));
+    }
+
+    #[test]
+    fn resolve_backend_cpu_selection_maps_to_cpu() {
+        let devs = vec![dev(0, "Intel"), cpu_device()];
+        let sel = Some(GpuSelection { index: CPU_DEVICE_INDEX, name: "CPU".into() });
+        assert_eq!(resolve_backend(sel, &devs), Some("cpu".to_string()));
+    }
+
+    #[test]
+    fn resolve_backend_no_selection_with_gpu_is_engine_default() {
+        let devs = vec![dev(0, "Intel"), cpu_device()];
+        assert_eq!(resolve_backend(None, &devs), None);
+    }
+
+    #[test]
+    fn resolve_backend_no_selection_without_gpu_falls_back_to_cpu() {
+        let devs = vec![cpu_device()];
+        assert_eq!(resolve_backend(None, &devs), Some("cpu".to_string()));
+    }
+
+    #[test]
+    fn resolve_backend_stale_selection_uses_gpu_presence_rule() {
+        // Stale selection (index 5 absent) + a real GPU present → engine default.
+        let devs = vec![dev(0, "Intel"), cpu_device()];
+        let stale = Some(GpuSelection { index: 5, name: "Ghost".into() });
+        assert_eq!(resolve_backend(stale.clone(), &devs), None);
+        // Stale selection + no real GPU → CPU fallback.
+        let devs_cpu_only = vec![cpu_device()];
+        assert_eq!(resolve_backend(stale, &devs_cpu_only), Some("cpu".to_string()));
     }
 }

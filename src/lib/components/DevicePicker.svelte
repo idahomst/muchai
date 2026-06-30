@@ -17,6 +17,7 @@
   const current = $derived(saved && !stale ? String(saved.index) : "default");
 
   function label(d: GpuDevice): string {
+    if (d.kind === "cpu") return "CPU (slow)";
     return `GPU ${d.index} — ${d.name} (${d.kind})`;
   }
 
@@ -41,7 +42,7 @@
 
 <div class="picker">
   <div class="hdr">
-    <span class="lbl">GPU device</span>
+    <span class="lbl">Device</span>
     {#if $gpuDevices.length > 0}
       <select value={current} {onchange} disabled={!$settings || busy}>
         <option value="default">Default (engine picks)</option>
@@ -50,7 +51,7 @@
         {/each}
       </select>
     {:else}
-      <span class="none">No Vulkan devices detected</span>
+      <span class="none">No devices detected — engine not found</span>
     {/if}
   </div>
   {#if stale}
