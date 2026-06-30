@@ -62,6 +62,20 @@ impl Default for OutputFormat {
     }
 }
 
+/// UI color theme. Persisted in `AppConfig`. Defaults to Dark.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Theme {
+    Dark,
+    Light,
+}
+
+impl Default for Theme {
+    fn default() -> Self {
+        Theme::Dark
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GenerationRequest {
     pub model_path: String,
@@ -197,6 +211,10 @@ pub struct AppConfig {
     /// `false` (collapsed) for new and pre-feature config files.
     #[serde(default)]
     pub params_expanded: bool,
+    /// UI color theme. Defaults to Dark; pre-feature config files lack this key
+    /// and deserialize as Dark.
+    #[serde(default)]
+    pub theme: Theme,
     pub last_request: GenerationRequest,
 }
 
@@ -292,5 +310,16 @@ mod tests {
         let json = r#"{"model_path":"","prompt":"","negative_prompt":"","steps":20,"cfg_scale":7.0,"sampler":"euler_a","width":512,"height":512,"seed":-1,"batch_count":1}"#;
         let req: GenerationRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.output_format, OutputFormat::Png);
+    }
+
+    #[test]
+    fn theme_serializes_snake_case() {
+        assert_eq!(serde_json::to_string(&Theme::Dark).unwrap(), "\"dark\"");
+        assert_eq!(serde_json::to_string(&Theme::Light).unwrap(), "\"light\"");
+    }
+
+    #[test]
+    fn theme_defaults_to_dark() {
+        assert_eq!(Theme::default(), Theme::Dark);
     }
 }

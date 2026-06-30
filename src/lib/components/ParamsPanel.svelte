@@ -85,5 +85,5 @@
   .pl { opacity:.55; }
   .pt { white-space:pre-wrap; word-break:break-word; }
   .pt.neg { opacity:.8; }
-  .err { color:#ff6b6b; }
+  .err { color:var(--danger); }
 </style>

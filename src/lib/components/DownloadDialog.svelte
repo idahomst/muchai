@@ -76,14 +76,14 @@
 </div>
 
 <style>
-  .backdrop { position:fixed; inset:0; background:rgba(0,0,0,.5); display:flex;
+  .backdrop { position:fixed; inset:0; background:var(--backdrop); display:flex;
     align-items:center; justify-content:center; z-index:50; }
-  .dialog { background:var(--bg, #1e1e1e); border:1px solid var(--border); border-radius:10px;
+  .dialog { background:var(--dialog-bg); border:1px solid var(--border); border-radius:10px;
     padding:1.2rem; width:min(460px, 92vw); max-height:88vh; overflow-y:auto; display:flex; flex-direction:column; gap:.8rem; }
   h2 { margin:0; font-size:1.05rem; }
   h3 { margin:.2rem 0; font-size:.8rem; opacity:.7; }
   .note { font-size:.78rem; opacity:.85; margin:0; padding:.4rem .5rem;
-    background:rgba(110,168,254,.12); border:1px solid var(--border); border-radius:6px; }
+    background:var(--accent-tint); border:1px solid var(--border); border-radius:6px; }
   .starter { display:flex; align-items:center; justify-content:space-between; gap:.6rem; padding:.35rem 0; }
   .meta { display:flex; flex-direction:column; }
   .name { font-size:.9rem; }

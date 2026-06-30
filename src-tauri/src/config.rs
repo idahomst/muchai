@@ -1,4 +1,4 @@
-use crate::types::{AppConfig, GenerationRequest};
+use crate::types::{AppConfig, GenerationRequest, Theme};
 use directories::ProjectDirs;
 use std::path::{Path, PathBuf};
 
@@ -33,6 +33,7 @@ pub fn default_config() -> AppConfig {
         extra_model_dirs: Vec::new(),
         gpu_device: None,
         params_expanded: false,
+        theme: Theme::Dark,
         last_request: GenerationRequest::default(),
     }
 }
@@ -125,6 +126,37 @@ mod tests {
         save_config_to(&path, &cfg).unwrap();
         let back = load_config_from(&path);
         assert!(back.params_expanded);
+        assert_eq!(back, cfg);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn old_config_without_theme_defaults_to_dark() {
+        use crate::types::Theme;
+        let dir = std::env::temp_dir().join(format!("fridai-cfg-theme-{}", std::process::id()));
+        let path = dir.join("config.json");
+        std::fs::create_dir_all(&dir).unwrap();
+        // A pre-feature config file: no theme key.
+        std::fs::write(
+            &path,
+            r#"{"sd_binary_path":null,"default_model_path":null,"gallery_dir":"/tmp/g","last_request":{"model_path":"","prompt":"","negative_prompt":"","steps":20,"cfg_scale":7.0,"sampler":"euler_a","width":512,"height":512,"seed":-1,"batch_count":1}}"#,
+        )
+        .unwrap();
+        let cfg = load_config_from(&path);
+        assert_eq!(cfg.theme, Theme::Dark, "missing theme must default to Dark");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn theme_round_trips() {
+        use crate::types::Theme;
+        let dir = std::env::temp_dir().join(format!("fridai-cfg-theme2-{}", std::process::id()));
+        let path = dir.join("config.json");
+        let mut cfg = default_config();
+        cfg.theme = Theme::Light;
+        save_config_to(&path, &cfg).unwrap();
+        let back = load_config_from(&path);
+        assert_eq!(back.theme, Theme::Light);
         assert_eq!(back, cfg);
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -68,5 +68,5 @@
   select:disabled { opacity:.5; cursor:default; }
   .none { opacity:.5; }
   .note { opacity:.7; }
-  .err { color:#ff6b6b; }
+  .err { color:var(--danger); }
 </style>
