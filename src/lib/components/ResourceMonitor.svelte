@@ -15,7 +15,7 @@
         <span class="v"><span class="num mem">{gb($sysStats.gpu.vram_used_mb)}</span> / {gb($sysStats.gpu.vram_total_mb)} GB</span>
       </span>
     {:else}
-      <span class="stat">No NVIDIA GPU detected</span>
+      <span class="stat">No GPU stats</span>
     {/if}
     <span class="stat" title="CPU">
       <span class="k">CPU</span>

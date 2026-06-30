@@ -112,10 +112,25 @@ pub fn validate_gpu_selection(sel: Option<GpuSelection>, devices: &[GpuDevice]) 
         .then_some(sel)
 }
 
+/// Pick the device fridAI should default to when the user hasn't made a valid
+/// selection. The ggml-vulkan backend's *own* default is loader-dependent and
+/// not necessarily the first-enumerated device (on a discrete+iGPU box it was
+/// observed to pick the discrete GPU, not banner index 0), so we choose
+/// explicitly instead of trusting it: prefer a discrete GPU, then an integrated
+/// one, then any other non-CPU device. Returns `None` when only the synthetic
+/// CPU device (or nothing) is present.
+pub fn pick_default_device(devices: &[GpuDevice]) -> Option<&GpuDevice> {
+    [DeviceKind::Discrete, DeviceKind::Integrated, DeviceKind::Other]
+        .iter()
+        .find_map(|kind| devices.iter().find(|d| d.kind == *kind))
+}
+
 /// Map a (possibly stale) saved selection + the enumerated device list to the
-/// engine `--backend` value. `None` means omit `--backend` (engine default,
-/// i.e. the first Vulkan device). A valid CPU selection, or no valid selection
-/// when there is no real GPU, yields `Some("cpu")` (the auto-fallback).
+/// engine `--backend` value. A valid GPU selection maps to `vulkan{index}`; a
+/// valid CPU selection (or no real GPU anywhere) yields `Some("cpu")`. With no
+/// valid selection but a real GPU present, fridAI picks the default device
+/// explicitly (`pick_default_device`) and targets it by index rather than
+/// omitting `--backend` and letting the engine's opaque default decide.
 pub fn resolve_backend(selection: Option<GpuSelection>, devices: &[GpuDevice]) -> Option<String> {
     if let Some(sel) = validate_gpu_selection(selection, devices) {
         // validate_gpu_selection guarantees a matching device exists.
@@ -128,11 +143,10 @@ pub fn resolve_backend(selection: Option<GpuSelection>, devices: &[GpuDevice]) -
             _ => Some(format!("vulkan{}", device.index)),
         };
     }
-    // No valid selection: auto-fall back to CPU only when there is no real GPU.
-    if devices.iter().any(|d| d.kind != DeviceKind::Cpu) {
-        None
-    } else {
-        Some("cpu".into())
+    // No valid selection: pick a default GPU explicitly, else fall back to CPU.
+    match pick_default_device(devices) {
+        Some(d) => Some(format!("vulkan{}", d.index)),
+        None => Some("cpu".into()),
     }
 }
 
@@ -204,6 +218,28 @@ ggml_vulkan: 1 = NVIDIA GeForce RTX 3060 (NVIDIA) | uma: 0 | fp16: 1 | bf16: 0 |
         GpuDevice { index, name: name.into(), kind: DeviceKind::Discrete }
     }
 
+    fn dev_kind(index: u32, name: &str, kind: DeviceKind) -> GpuDevice {
+        GpuDevice { index, name: name.into(), kind }
+    }
+
+    #[test]
+    fn pick_default_device_prefers_discrete_over_integrated() {
+        let devs = vec![
+            dev_kind(0, "Intel", DeviceKind::Integrated),
+            dev_kind(1, "NVIDIA", DeviceKind::Discrete),
+            cpu_device(),
+        ];
+        assert_eq!(pick_default_device(&devs).map(|d| d.index), Some(1));
+    }
+
+    #[test]
+    fn pick_default_device_falls_back_to_integrated_then_none() {
+        let igpu_only = vec![dev_kind(0, "Intel", DeviceKind::Integrated), cpu_device()];
+        assert_eq!(pick_default_device(&igpu_only).map(|d| d.index), Some(0));
+        assert_eq!(pick_default_device(&[cpu_device()]), None);
+        assert_eq!(pick_default_device(&[]), None);
+    }
+
     #[test]
     fn valid_selection_passes_through() {
         let devs = vec![dev(0, "Intel"), dev(1, "NVIDIA GeForce RTX 3060")];
@@ -242,9 +278,14 @@ ggml_vulkan: 1 = NVIDIA GeForce RTX 3060 (NVIDIA) | uma: 0 | fp16: 1 | bf16: 0 |
     }
 
     #[test]
-    fn resolve_backend_no_selection_with_gpu_is_engine_default() {
-        let devs = vec![dev(0, "Intel"), cpu_device()];
-        assert_eq!(resolve_backend(None, &devs), None);
+    fn resolve_backend_no_selection_picks_default_discrete_device() {
+        let devs = vec![
+            dev_kind(0, "Intel", DeviceKind::Integrated),
+            dev_kind(1, "NVIDIA GeForce RTX 3060", DeviceKind::Discrete),
+            cpu_device(),
+        ];
+        // Targets the discrete GPU explicitly instead of leaving it to the engine.
+        assert_eq!(resolve_backend(None, &devs), Some("vulkan1".to_string()));
     }
 
     #[test]
@@ -254,11 +295,11 @@ ggml_vulkan: 1 = NVIDIA GeForce RTX 3060 (NVIDIA) | uma: 0 | fp16: 1 | bf16: 0 |
     }
 
     #[test]
-    fn resolve_backend_stale_selection_uses_gpu_presence_rule() {
-        // Stale selection (index 5 absent) + a real GPU present → engine default.
-        let devs = vec![dev(0, "Intel"), cpu_device()];
+    fn resolve_backend_stale_selection_picks_default_or_cpu() {
+        // Stale selection (index 5 absent) + a real GPU present → explicit default device.
+        let devs = vec![dev_kind(0, "Intel", DeviceKind::Integrated), cpu_device()];
         let stale = Some(GpuSelection { index: 5, name: "Ghost".into() });
-        assert_eq!(resolve_backend(stale.clone(), &devs), None);
+        assert_eq!(resolve_backend(stale.clone(), &devs), Some("vulkan0".to_string()));
         // Stale selection + no real GPU → CPU fallback.
         let devs_cpu_only = vec![cpu_device()];
         assert_eq!(resolve_backend(stale, &devs_cpu_only), Some("cpu".to_string()));
