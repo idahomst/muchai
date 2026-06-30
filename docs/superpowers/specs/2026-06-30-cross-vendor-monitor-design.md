@@ -78,12 +78,14 @@ so the Tauri event payload and the Svelte frontend contract stay stable.
 - **`sysmon/providers.rs`** (I/O, thin)
   - `trait GpuProvider { fn probe(&self) -> Vec<GpuStats>; }`
   - `NvmlProvider { nvml: Option<Nvml> }` — enumerates all NVIDIA devices via NVML.
-  - `AmdSysfsProvider { root: PathBuf }` (Linux) — scans `<root>/class/drm/card*/device/`
-    for `amdgpu` cards; `root` is injectable (defaults to `/sys`) so tests run against a
+  - `AmdSysfsProvider { root: PathBuf }` (Linux) — scans `<root>/class/drm/card*/device/`,
+    reading each card's PCI `vendor` id; `0x1002` (AMD) cards report `gpu_busy_percent`
+    + `mem_info_vram_*`. `root` is injectable (defaults to `/sys`) so tests run against a
     fixture tree.
-  - `IntelSysfsProvider { root: PathBuf }` (Linux) — same pattern; reports `mem_info_vram_*`
-    where present, omits util%.
-  - Each provider names its GPUs from the driver/sysfs so `select_gpu` can match them.
+  - `IntelSysfsProvider { root: PathBuf }` (Linux) — same pattern for `0x8086` (Intel);
+    reports `mem_info_vram_*` where present, omits util%.
+  - Each provider names its GPUs by vendor keyword ("AMD"/"Intel") so the tolerant
+    `name_matches` links them to the selected device's Vulkan name.
 - **`lib.rs` stats thread**
   - Build the provider list once (NVML init with the `libnvidia-ml.so.1` fix, as today).
   - Each tick: read `state.config.gpu_device` + the `state.gpu_devices` cache via the
@@ -105,10 +107,13 @@ AppState (config.gpu_device + gpu_devices cache)
 ### Device matching
 
 `select_gpu` uses `name_matches` (case-insensitive, normalized, either-contains-other) so
-a Vulkan name ("Intel(R) UHD Graphics 770 (ADL-S GT1)") matches a provider name ("Intel
-UHD Graphics 770"). `Target::First` → first list entry; empty list → `None`. On no match,
-report no GPU rather than the wrong one. Multiple GPUs of the same vendor are matched by
-name; if names are indistinguishable the first is used (documented limitation).
+a Vulkan name ("Intel(R) UHD Graphics 770 (ADL-S GT1)") matches a vendor-keyword provider
+name ("Intel"). For a `Target::Name` match the returned `GpuStats.name` is **overwritten
+with the selected device's display name**, so the monitor shows the familiar Vulkan name
+while the live numbers come from the provider. `Target::First` keeps the provider's name.
+Empty list → `None`. On no match, report no GPU rather than the wrong one. Multiple GPUs
+of the same vendor are matched by name; if names are indistinguishable the first is used
+(documented limitation).
 
 ## Error handling
 
@@ -133,9 +138,9 @@ name; if names are indistinguishable the first is used (documented limitation).
     non-match.
   - existing CPU/RAM test (`gather` with no providers / empty list) still passes.
 - **sysfs provider tests** against a fixture `<tmp>/class/drm/card0/device/` tree with
-  `gpu_busy_percent`, `mem_info_vram_used`, `mem_info_vram_total`, `uevent` (driver tag):
-  AMD card parsed to `GpuStats`; missing `gpu_busy_percent` omits util; non-amdgpu card
-  skipped.
+  `vendor` (PCI id), `gpu_busy_percent`, `mem_info_vram_used`, `mem_info_vram_total`:
+  AMD card (`0x1002`) parsed to `GpuStats`; missing `gpu_busy_percent` omits util;
+  non-AMD vendor id skipped by the AMD provider.
 - `npm run check` (svelte-check) for the frontend wording change.
 - **E2E** on the dev box: select the NVIDIA GPU → NVIDIA stats; select the Intel iGPU →
   vendor-neutral empty state (documented limitation); select CPU → GPU row hidden;
