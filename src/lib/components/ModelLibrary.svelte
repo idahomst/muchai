@@ -124,7 +124,7 @@
   .lbl-wrap { display:inline-flex; align-items:center; gap:.2rem; }
   .row { display:flex; gap:.5rem; align-items:center; }
   .actions { margin-top:.4rem; }
-  select { flex:1; font:inherit; padding:.3rem; min-width:0; }
+  select { flex:1; font:inherit; font-size:.72rem; padding:.3rem; min-width:0; }
   button { font:inherit; font-size:.78rem; padding:.3rem .6rem; cursor:pointer; }
   button:disabled { opacity:.5; cursor:default; }
   .ask { font-size:.72rem; opacity:.85; }
