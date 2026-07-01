@@ -1,5 +1,8 @@
 <script lang="ts">
   let { onclose }: { onclose: () => void } = $props();
+  let gotItBtn = $state<HTMLButtonElement>();
+
+  $effect(() => { gotItBtn?.focus(); });
 
   function onkeydown(e: KeyboardEvent) {
     if (e.key === "Escape") onclose();
@@ -19,7 +22,7 @@
     </ol>
     <p class="tipnote">Hover the ⓘ icons anytime to learn what each setting does.</p>
     <div class="row">
-      <button class="btn-primary" onclick={onclose}>Got it</button>
+      <button class="btn-primary" bind:this={gotItBtn} onclick={onclose}>Got it</button>
     </div>
   </div>
 </div>
