@@ -12,7 +12,7 @@
   }
 </script>
 
-<span class="wrap" onmouseenter={() => (open = true)} onmouseleave={() => (open = false)} role="presentation">
+<span class="wrap" onmouseenter={() => (open = true)} onmouseleave={(e) => { if (!(e.currentTarget as HTMLElement).contains(document.activeElement)) open = false; }} role="presentation">
   <button
     type="button"
     class="info"
