@@ -24,7 +24,9 @@
 </div>
 
 <style>
-  textarea { width:100%; resize:vertical; font:inherit; padding:.4rem; box-sizing:border-box; }
+  /* Pinned to 16px on purpose: this size reads well and should not scale
+     with the app-wide root font bump (see html font-size in app.css). */
+  textarea { width:100%; resize:vertical; font:inherit; font-size:16px; padding:.4rem; box-sizing:border-box; }
   .row { display:flex; align-items:center; justify-content:space-between; margin-bottom:.2rem; }
   .clear { font:inherit; font-size:.7rem; padding:.1rem .45rem; cursor:pointer; opacity:.8; }
   .clear:disabled { opacity:.35; cursor:default; }

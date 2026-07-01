@@ -49,6 +49,10 @@
   color-scheme: light;
 }
 
+/* App-wide readability bump: all rem-based sizes scale off this root.
+   The prompt/negative-prompt textareas are pinned to 16px in PromptPanel
+   so they keep their preferred size regardless of this value. */
+html { font-size: 18px; }
 body { margin:0; background:var(--bg); color:var(--text); font-family: system-ui, sans-serif; }
 button { cursor:pointer; border-radius:6px; border:1px solid var(--border); background:var(--surface); color:inherit; }
 .btn-primary { background:var(--accent); border-color:var(--accent); color:var(--on-accent); }
