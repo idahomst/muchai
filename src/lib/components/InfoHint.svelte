@@ -17,7 +17,6 @@
     type="button"
     class="info"
     aria-label={label}
-    aria-expanded={open}
     aria-describedby={open ? tipId : undefined}
     onclick={() => (open = !open)}
     onfocus={() => (open = true)}
