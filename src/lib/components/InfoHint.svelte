@@ -6,15 +6,26 @@
   let { text, label = "More info" }: { text: string; label?: string } = $props();
   let open = $state(false);
   let btn = $state<HTMLButtonElement>();
+  let tip = $state<HTMLElement>();
   let tipX = $state(0);
   let tipY = $state(0);
   const tipId = `hint-${counter++}`;
 
-  // The tooltip is position:fixed so it escapes the settings sidebar's
-  // `overflow:hidden auto` clip — otherwise it gets cut off at the panel edge
-  // and neighbouring inputs paint over it. Placed just under the trigger and
-  // clamped to the viewport so it never runs off the right edge.
+  // The tooltip is position:fixed AND portalled to <body> (see `portal`), so it
+  // escapes both the settings sidebar's `overflow:hidden auto` clip and every
+  // ancestor stacking context (e.g. labels with opacity < 1) that would
+  // otherwise let the resource monitor / stage / neighbouring inputs paint over
+  // it. Placed just under the trigger and clamped to the viewport.
   const MAX_W = 220;
+
+  // Move the popover to the end of <body> so it is a top-level layer, then put
+  // it back / drop it on teardown. Scoped styles still apply — the node keeps
+  // its Svelte scoping attribute and the stylesheet lives in <head>.
+  function portal(node: HTMLElement) {
+    document.body.appendChild(node);
+    return { destroy() { node.remove(); } };
+  }
+
   function place() {
     if (!btn) return;
     const r = btn.getBoundingClientRect();
@@ -23,7 +34,11 @@
     if (x + MAX_W + margin > window.innerWidth) x = window.innerWidth - MAX_W - margin;
     if (x < margin) x = margin;
     tipX = x;
-    tipY = r.bottom + 4;
+    // Open below the trigger; flip above if the popover would run off the
+    // bottom of the viewport (e.g. the Seed control at the panel's foot).
+    const h = tip?.offsetHeight ?? 0;
+    const below = r.bottom + 4;
+    tipY = h && below + h + margin > window.innerHeight ? Math.max(margin, r.top - h - 4) : below;
   }
 
   function show() {
@@ -67,7 +82,7 @@
     {onkeydown}
   >ⓘ</button>
   {#if open}
-    <span class="tip" role="tooltip" id={tipId} style="left:{tipX}px; top:{tipY}px;">{text}</span>
+    <span class="tip" role="tooltip" id={tipId} bind:this={tip} use:portal style="left:{tipX}px; top:{tipY}px;">{text}</span>
   {/if}
 </span>
 
