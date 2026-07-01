@@ -13,7 +13,7 @@
 
 <div class="backdrop" onclick={(e) => { if (e.target === e.currentTarget) onclose(); }} role="presentation">
   <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="welcome-title">
-    <h2 id="welcome-title">Welcome to fridAI 👋</h2>
+    <h2 id="welcome-title">Welcome to FridAI 👋</h2>
     <p class="intro">Make images from text in three steps:</p>
     <ol class="steps">
       <li><strong>Download a model</strong> — the AI that creates images. Use the <em>Download…</em> button under "Model".</li>

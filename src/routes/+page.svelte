@@ -55,7 +55,7 @@
 <main class="app">
   <aside class="controls">
     <header class="brandbar">
-      <h1 class="brand">fridAI</h1>
+      <h1 class="brand">FridAI</h1>
       <div class="hdr-actions">
         <button class="help-btn" aria-label="Help" title="Help" onclick={() => (showWelcome = true)}>?</button>
         <ThemeToggle />
