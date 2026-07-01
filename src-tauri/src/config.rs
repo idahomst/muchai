@@ -3,7 +3,10 @@ use directories::ProjectDirs;
 use std::path::{Path, PathBuf};
 
 fn project_dirs() -> Option<ProjectDirs> {
-    ProjectDirs::from("eu", "livesport", "fridai")
+    // On Linux the qualifier/organization are ignored — XDG paths use only the
+    // app name ("fridai"), so ~/.config/fridai and ~/.local/share/fridai are
+    // stable regardless of the qualifier/org values passed here.
+    ProjectDirs::from("cz", "mst", "fridai")
 }
 
 pub fn default_gallery_dir() -> PathBuf {

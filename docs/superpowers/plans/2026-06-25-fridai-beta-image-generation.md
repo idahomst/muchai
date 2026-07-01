@@ -72,7 +72,7 @@ Each Rust module has one responsibility and pure-logic modules (`command_builder
 ```bash
 rm -rf /tmp/fridai-scaffold
 npm create tauri-app@latest /tmp/fridai-scaffold -- \
-  --manager npm --template svelte-ts --identifier eu.livesport.fridai --yes
+  --manager npm --template svelte-ts --identifier cz.mst.fridai --yes
 ```
 Expected: a new project under `/tmp/fridai-scaffold` containing `src/`, `src-tauri/`, `package.json`, etc.
 
@@ -609,7 +609,7 @@ use directories::ProjectDirs;
 use std::path::{Path, PathBuf};
 
 fn project_dirs() -> Option<ProjectDirs> {
-    ProjectDirs::from("eu", "livesport", "fridai")
+    ProjectDirs::from("cz", "mst", "fridai")
 }
 
 pub fn default_gallery_dir() -> PathBuf {
