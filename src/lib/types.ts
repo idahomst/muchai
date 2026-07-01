@@ -69,6 +69,9 @@ export interface AppConfig {
   // Wire values MUST match the Rust `Theme` enum's serde snake_case form
   // (src-tauri/src/types.rs).
   theme: "dark" | "light";
+  // Whether the one-time welcome dialog has been dismissed. Mirrors the Rust
+  // AppConfig.onboarded (#[serde(default)] → false for old configs).
+  onboarded: boolean;
 }
 
 export const defaultRequest = (): GenerationRequest => ({
