@@ -1,5 +1,6 @@
 <script lang="ts">
   import { sysStats } from "../stores";
+  import { version } from "../../../package.json";
   const gb = (v: number) => (v / 1024).toFixed(1);
 </script>
 
@@ -28,6 +29,7 @@
   {:else}
     <span class="stat">reading system…</span>
   {/if}
+  <span class="ver" title="App version">v{version}</span>
 </div>
 
 <style>
@@ -35,6 +37,8 @@
     border-top:1px solid var(--border); white-space:nowrap; overflow-x:auto; }
   .stat { display:inline-flex; gap:.4rem; align-items:baseline; }
   .k { opacity:.7; }
+  /* Pushed to the far right of the bar; unobtrusive. */
+  .ver { margin-left:auto; opacity:.55; padding-left:1rem; }
   /* Only the changing number gets a fixed-width, right-aligned box so the unit
      (% / GB) and everything after it never reflow when the digit count changes
      (e.g. 96%→100%, 9.8→10.1 GB). The unit stays glued to the number's right
