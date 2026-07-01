@@ -2,6 +2,8 @@
   import { settings, gpuDevices } from "$lib/stores";
   import { setSettings } from "$lib/api";
   import type { GpuDevice } from "$lib/types";
+  import InfoHint from "./InfoHint.svelte";
+  import { HELP } from "../helpText";
 
   let busy = $state(false);
   let error = $state<string | null>(null);
@@ -42,7 +44,7 @@
 
 <div class="picker">
   <div class="hdr">
-    <span class="lbl">Device</span>
+    <span class="lbl-wrap"><span class="lbl">Device</span><InfoHint text={HELP.device} label="About the device" /></span>
     {#if $gpuDevices.length > 0}
       <select value={current} {onchange} disabled={!$settings || busy}>
         <option value="default">Default (engine picks)</option>
@@ -63,6 +65,7 @@
 <style>
   .picker { font-size:.75rem; border-top:1px solid var(--border); padding:.45rem .2rem 0; display:flex; flex-direction:column; gap:.25rem; }
   .hdr { display:flex; align-items:center; justify-content:space-between; gap:.4rem; }
+  .lbl-wrap { display:inline-flex; align-items:center; gap:.2rem; }
   .lbl { opacity:.6; }
   select { font:inherit; font-size:.72rem; padding:.2rem .4rem; cursor:pointer; flex:1; min-width:0; }
   select:disabled { opacity:.5; cursor:default; }

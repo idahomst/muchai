@@ -2,6 +2,8 @@
   import { request, models, downloadStatus, cancelActiveDownload } from "../stores";
   import { listModels, deleteModel } from "../api";
   import DownloadDialog from "./DownloadDialog.svelte";
+  import InfoHint from "./InfoHint.svelte";
+  import { HELP } from "../helpText";
 
   let showDownload = $state(false);
   let confirming = $state(false);
@@ -70,7 +72,7 @@
 </script>
 
 <div class="field">
-  <span class="label">Model</span>
+  <span class="label lbl-wrap">Model <InfoHint text={HELP.model} label="About models" /></span>
   <div class="row">
     <select value={$request.model_path} onchange={onSelect}>
       {#if !$request.model_path}<option value="" disabled selected>Select a model…</option>{/if}
@@ -119,6 +121,7 @@
 {/if}
 
 <style>
+  .lbl-wrap { display:inline-flex; align-items:center; gap:.2rem; }
   .row { display:flex; gap:.5rem; align-items:center; }
   .actions { margin-top:.4rem; }
   select { flex:1; font:inherit; padding:.3rem; min-width:0; }

@@ -55,7 +55,10 @@
     </div>
     {#if error}<span class="err">{error}</span>{/if}
   {:else}
-    <p class="empty">Your generated image will appear here.</p>
+    <div class="empty">
+      <p class="empty-title">Your image will appear here.</p>
+      <p class="empty-sub">Pick a model, write a prompt, then press Generate.</p>
+    </div>
   {/if}
 </div>
 
@@ -70,5 +73,7 @@
   .ask { font-size:.75rem; background:var(--overlay); color:var(--on-accent); padding:.25rem .5rem; border-radius:5px; }
   .err { position:absolute; bottom:.5rem; left:.5rem; right:.5rem; color:var(--danger-soft); font-size:.75rem;
     background:var(--overlay); padding:.3rem .5rem; border-radius:5px; }
-  .empty { opacity:.5; }
+  .empty { opacity:.55; text-align:center; padding:1rem; }
+  .empty-title { margin:0 0 .3rem; font-size:.95rem; }
+  .empty-sub { margin:0; font-size:.8rem; opacity:.85; }
 </style>

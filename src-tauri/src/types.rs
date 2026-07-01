@@ -215,6 +215,10 @@ pub struct AppConfig {
     /// and deserialize as Dark.
     #[serde(default)]
     pub theme: Theme,
+    /// Whether the user has dismissed the one-time welcome dialog. Defaults to
+    /// `false`; pre-feature config files lack this key and deserialize as false.
+    #[serde(default)]
+    pub onboarded: bool,
     pub last_request: GenerationRequest,
 }
 
