@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { settings, request, history, sysStats, models, gpuDevices } from "$lib/stores";
+  import { settings, request, history, sysStats, models, gpuDevices, definitions } from "$lib/stores";
   import { getSettings, setSettings, listHistory, onSystemStats, listModels, listGpuDevices } from "$lib/api";
   import ModelLibrary from "$lib/components/ModelLibrary.svelte";
   import PromptPanel from "$lib/components/PromptPanel.svelte";
@@ -41,8 +41,15 @@
       settings.set(cfg);
       applyTheme(cfg.theme); // reconcile against the pre-paint localStorage cache
       showWelcome = !cfg.onboarded;
-      // seed the form with last-used params + default model if present
-      request.set({ ...cfg.last_request, model_path: cfg.default_model_path ?? cfg.last_request.model_path });
+      // Seed the saved multi-file library.
+      definitions.set(cfg.model_definitions ?? []);
+      // Build the active model: prefer last_request.model; if it's an empty
+      // single-file and a legacy default_model_path exists, use that.
+      let model = cfg.last_request.model;
+      if (model.type === "single_file" && model.path === "" && cfg.default_model_path) {
+        model = { type: "single_file", path: cfg.default_model_path };
+      }
+      request.set({ ...cfg.last_request, model });
       history.set(await listHistory());
       models.set(await listModels());
       gpuDevices.set(await listGpuDevices());

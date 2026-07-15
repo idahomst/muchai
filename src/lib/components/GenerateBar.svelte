@@ -3,10 +3,11 @@
   import { onMount } from "svelte";
   import { request, genStatus, history, currentImage, currentItem, settings, gpuDevices } from "../stores";
   import { generate, cancelGeneration, imageSrc, listHistory, onProgress } from "../api";
+  import { modelIsSet } from "../types";
 
   async function run() {
     const req = get(request);
-    if (!req.model_path) { genStatus.set({ kind: "error", message: "Select a model first." }); return; }
+    if (!modelIsSet(req.model)) { genStatus.set({ kind: "error", message: "Select a model first." }); return; }
     if (!req.prompt.trim()) { genStatus.set({ kind: "error", message: "Enter a prompt." }); return; }
     genStatus.set({ kind: "running", progress: null });
     try {
