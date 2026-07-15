@@ -27,7 +27,7 @@ export const ROLE_LABELS: Record<ComponentRole, string> = {
 export const VAE_FORMATS = ["", "auto", "flux", "sd3", "flux2"] as const;
 export const PREDICTIONS = ["", "eps", "v", "edm_v", "sd3_flow", "flux_flow", "flux2_flow"] as const;
 
-// Mirrors Rust `ModelComponents`. Optional roles are omitted or null.
+// Mirrors Rust `ModelComponents`. Optional fields are omitted or null.
 export interface ModelComponents {
   diffusion_model: string;
   vae?: string | null;
@@ -59,9 +59,10 @@ export function modelIsSet(m: ModelRef): boolean {
 
 /** A short label for a model reference (single-file basename or definition name). */
 export function modelLabel(m: ModelRef, definitions: ModelDefinition[] = []): string {
-  if (m.type === "single_file") return m.path.split("/").pop() ?? m.path;
+  // Split on both separators so basenames are correct on Windows paths too.
+  if (m.type === "single_file") return m.path.split(/[\\/]/).pop() || m.path;
   const def = definitions.find((d) => d.components.diffusion_model === m.diffusion_model);
-  return def?.name ?? (m.diffusion_model.split("/").pop() ?? "multi-file model");
+  return def?.name ?? (m.diffusion_model.split(/[\\/]/).pop() || "multi-file model");
 }
 
 export interface GenerationRequest {
