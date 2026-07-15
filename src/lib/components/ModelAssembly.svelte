@@ -48,7 +48,7 @@
   }
 
   function startManual() {
-    applyFamily(family === "custom" ? "custom" : family);
+    applyFamily(family);
     slots = {};
     mode = "manual";
   }
