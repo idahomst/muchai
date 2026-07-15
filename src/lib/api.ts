@@ -40,7 +40,6 @@ export const onDownloadProgress = (cb: (p: DownloadProgress) => void): Promise<U
 
 export const listRecipes = () => invoke<RecipeInfo[]>("list_recipes");
 export const detectFolder = (dir: string) => invoke<DetectionResult>("detect_folder", { dir });
-export const pickModelFiles = () => invoke<string[]>("pick_model_files");
 export const multifileCatalog = (vramTotalMb: number | null) =>
   invoke<RatedMultiFile[]>("multifile_catalog", { vramTotalMb });
 export const downloadMultifile = (entryId: string, token: string) =>

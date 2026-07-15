@@ -86,7 +86,6 @@ pub fn run() {
             commands::delete_image,
             commands::list_recipes,
             commands::detect_folder,
-            commands::pick_model_files,
             commands::save_model_definition,
             commands::delete_model_definition,
             commands::multifile_catalog,

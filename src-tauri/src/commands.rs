@@ -586,20 +586,6 @@ pub fn detect_folder(dir: String) -> DetectionResult {
     }
 }
 
-/// Multi-select model file picker (for manual role assignment).
-#[tauri::command]
-pub async fn pick_model_files(app: AppHandle) -> Vec<String> {
-    use tauri_plugin_dialog::DialogExt;
-    let files = app
-        .dialog()
-        .file()
-        .add_filter("Models", &["safetensors"])
-        .blocking_pick_files();
-    files
-        .map(|v| v.into_iter().filter_map(|f| f.into_path().ok()).map(|p| p.to_string_lossy().into_owned()).collect())
-        .unwrap_or_default()
-}
-
 /// Validate a definition before persisting: id must be non-blank and all
 /// required roles for the family must be filled.
 fn validate_model_definition(def: &ModelDefinition) -> Result<(), String> {
