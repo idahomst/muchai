@@ -73,8 +73,8 @@ export function cancelActiveDownload(): void {
 
 /**
  * Start a curated multi-file download in the background (single-flight, like
- * startDownload). Resolves the returned definition into the `definitions` store
- * and selects it. No-op if a download is already active.
+ * startDownload). Upserts the returned definition into the `definitions` store
+ * and returns it (the caller selects it). No-op if a download is already active.
  */
 export async function startMultiFileDownload(entryId: string, token: string, name: string): Promise<ModelDefinition | null> {
   if (get(downloadStatus).kind === "active") return null;
@@ -90,8 +90,12 @@ export async function startMultiFileDownload(entryId: string, token: string, nam
   try {
     const def = await downloadMultifile(entryId, token);
     definitions.update((d) => {
-      const rest = d.filter((x) => x.id !== def.id);
-      return [...rest, def];
+      // Upsert in place so an existing definition keeps its list position.
+      const i = d.findIndex((x) => x.id === def.id);
+      if (i === -1) return [...d, def];
+      const next = d.slice();
+      next[i] = def;
+      return next;
     });
     downloadStatus.set({ kind: "done", name });
     return def;
