@@ -611,6 +611,18 @@ pub fn save_model_definition(state: State<AppState>, def: ModelDefinition) -> Re
     config::save_config_to(&config::config_file_path(), &cfg).map_err(|e| e.to_string())
 }
 
+/// Returns the ids of saved model definitions that reference missing files, so
+/// the UI can flag them. Filesystem check lives in `missing_components`.
+#[tauri::command]
+pub fn broken_definitions(state: State<'_, AppState>) -> Vec<String> {
+    let cfg = state.config.lock().unwrap();
+    cfg.model_definitions
+        .iter()
+        .filter(|d| !crate::types::missing_components(&d.components).is_empty())
+        .map(|d| d.id.clone())
+        .collect()
+}
+
 /// Delete a definition and move its per-model folder to trash. The shared pool
 /// is left intact (other models may use it).
 #[tauri::command]
