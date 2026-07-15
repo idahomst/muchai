@@ -449,7 +449,6 @@ pub async fn download_multifile(
         (PathBuf::from(&cfg.models_dir), entry, recipe)
     };
 
-    let model_dir = models_dir.join(&entry.id);
     let plan = catalog::plan_downloads(&entry, &recipe, &models_dir, &|p| p.exists());
     let file_count = plan.len() as u32;
 
@@ -517,18 +516,13 @@ pub async fn download_multifile(
             Ok(def)
         }
         Err(e) => {
-            // Roll back the per-model folder; leave the shared pool intact.
-            // Guard: only ever delete a genuine direct subfolder of models_dir
-            // (never the shared pool or models_dir itself), in case a future
-            // catalog id is empty, "shared", or contains a path separator.
-            let safe_to_remove = !entry.id.trim().is_empty()
-                && entry.id != "shared"
-                && !entry.id.contains('/')
-                && !entry.id.contains('\\')
-                && model_dir.parent() == Some(models_dir.as_path())
-                && model_dir.is_dir();
-            if safe_to_remove {
-                let _ = std::fs::remove_dir_all(&model_dir);
+            // Roll back the per-model folder; leave the shared pool intact. The
+            // shared guard (`safe_model_dir`) only ever yields a genuine direct
+            // subfolder of models_dir — never the shared pool or models_dir
+            // itself — in case a future catalog id is empty, "shared", or bears
+            // a path separator.
+            if let Some(folder) = safe_model_dir(&models_dir, &entry.id) {
+                let _ = std::fs::remove_dir_all(&folder);
             }
             Err(e)
         }
@@ -649,6 +643,19 @@ pub fn broken_definitions(state: State<'_, AppState>) -> Vec<String> {
         .collect()
 }
 
+/// The per-model folder `<models_dir>/<id>`, but only when `id` names a safe,
+/// direct child that actually exists as a directory: non-blank, not the shared
+/// pool, and free of path separators. Returns `None` otherwise so callers can
+/// never trash the shared pool or escape `models_dir` via a crafted id. Shared
+/// by both the delete and the download-rollback paths so they guard identically.
+fn safe_model_dir(models_dir: &std::path::Path, id: &str) -> Option<PathBuf> {
+    if id.trim().is_empty() || id == "shared" || id.contains('/') || id.contains('\\') {
+        return None;
+    }
+    let folder = models_dir.join(id);
+    (folder.parent() == Some(models_dir) && folder.is_dir()).then_some(folder)
+}
+
 /// Delete a definition and move its per-model folder to trash. The shared pool
 /// is left intact (other models may use it).
 #[tauri::command]
@@ -659,10 +666,9 @@ pub fn delete_model_definition(state: State<AppState>, id: String) -> Result<(),
     };
     let def = cfg.model_definitions.remove(pos);
     // Per-model folder = models_dir/<id>. Trash it if present (ignore if absent).
-    // Guard against a blank id, which would make `join` resolve back to the
-    // models_dir root — never trash the whole pool.
-    let folder = PathBuf::from(&cfg.models_dir).join(&def.id);
-    if !def.id.trim().is_empty() && folder.is_dir() && folder != PathBuf::from(&cfg.models_dir) {
+    // The guard refuses a blank id, "shared", or a separator-bearing id so a
+    // crafted definition can never trash the pool or escape models_dir.
+    if let Some(folder) = safe_model_dir(std::path::Path::new(&cfg.models_dir), &def.id) {
         let _ = trash::delete(&folder);
     }
     config::save_config_to(&config::config_file_path(), &cfg).map_err(|e| e.to_string())
@@ -719,6 +725,25 @@ mod tests {
         let models = scan_single_file_models(&[root.clone()], &HashSet::new(), &root);
         let names: Vec<&str> = models.iter().map(|m| m.name.as_str()).collect();
         assert_eq!(names, vec!["realmodel"], "shared-pool component must be excluded, real model kept");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn safe_model_dir_guards_shared_and_separators() {
+        let root = std::env::temp_dir().join(format!("fridai-safedir-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("shared")).unwrap();
+        std::fs::create_dir_all(root.join("good")).unwrap();
+
+        // Valid id → the real per-model folder.
+        assert_eq!(safe_model_dir(&root, "good"), Some(root.join("good")));
+        // Dangerous ids → refused, even though <root>/shared exists on disk.
+        assert!(safe_model_dir(&root, "shared").is_none(), "must never target the shared pool");
+        assert!(safe_model_dir(&root, "a/b").is_none(), "no forward-slash escape");
+        assert!(safe_model_dir(&root, "a\\b").is_none(), "no backslash escape");
+        assert!(safe_model_dir(&root, "").is_none());
+        assert!(safe_model_dir(&root, "   ").is_none());
 
         let _ = std::fs::remove_dir_all(&root);
     }
