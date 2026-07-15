@@ -467,10 +467,12 @@ pub async fn pick_model_files(app: AppHandle) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Insert or update a definition (matched by id) and persist. Validates that
-/// required roles for the family are filled before saving.
-#[tauri::command]
-pub fn save_model_definition(state: State<AppState>, def: ModelDefinition) -> Result<(), String> {
+/// Validate a definition before persisting: id must be non-blank and all
+/// required roles for the family must be filled.
+fn validate_model_definition(def: &ModelDefinition) -> Result<(), String> {
+    if def.id.trim().is_empty() {
+        return Err("Model id must not be empty.".into());
+    }
     if let Some(recipe) = recipes::recipe_for(&def.family) {
         let missing = recipe.missing_required_roles(&def.components);
         if !missing.is_empty() {
@@ -479,6 +481,14 @@ pub fn save_model_definition(state: State<AppState>, def: ModelDefinition) -> Re
     } else {
         return Err(format!("Unknown model family: {}", def.family));
     }
+    Ok(())
+}
+
+/// Insert or update a definition (matched by id) and persist. Validates that
+/// the id is non-blank and required roles for the family are filled before saving.
+#[tauri::command]
+pub fn save_model_definition(state: State<AppState>, def: ModelDefinition) -> Result<(), String> {
+    validate_model_definition(&def)?;
     let mut cfg = state.config.lock().unwrap();
     if let Some(existing) = cfg.model_definitions.iter_mut().find(|d| d.id == def.id) {
         *existing = def;
@@ -498,9 +508,48 @@ pub fn delete_model_definition(state: State<AppState>, id: String) -> Result<(),
     };
     let def = cfg.model_definitions.remove(pos);
     // Per-model folder = models_dir/<id>. Trash it if present (ignore if absent).
+    // Guard against a blank id, which would make `join` resolve back to the
+    // models_dir root — never trash the whole pool.
     let folder = PathBuf::from(&cfg.models_dir).join(&def.id);
-    if folder.is_dir() {
+    if !def.id.trim().is_empty() && folder.is_dir() && folder != PathBuf::from(&cfg.models_dir) {
         let _ = trash::delete(&folder);
     }
     config::save_config_to(&config::config_file_path(), &cfg).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::ModelComponents;
+
+    fn flux_def(id: &str) -> ModelDefinition {
+        ModelDefinition {
+            id: id.into(),
+            name: "Test".into(),
+            family: "flux1".into(),
+            components: ModelComponents {
+                diffusion_model: "flux1-schnell.safetensors".into(),
+                clip_l: Some("clip_l.safetensors".into()),
+                t5xxl: Some("t5xxl_fp16.safetensors".into()),
+                vae: Some("ae.safetensors".into()),
+                ..Default::default()
+            },
+        }
+    }
+
+    #[test]
+    fn rejects_empty_definition_id() {
+        let err = validate_model_definition(&flux_def("")).unwrap_err();
+        assert_eq!(err, "Model id must not be empty.");
+    }
+
+    #[test]
+    fn rejects_blank_definition_id() {
+        assert!(validate_model_definition(&flux_def("   ")).is_err());
+    }
+
+    #[test]
+    fn accepts_valid_definition() {
+        assert!(validate_model_definition(&flux_def("flux1-schnell")).is_ok());
+    }
 }
