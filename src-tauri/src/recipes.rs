@@ -200,6 +200,36 @@ pub fn recipe_for(family: &str) -> Option<ModelRecipe> {
     recipes().into_iter().find(|r| r.family == family)
 }
 
+/// A recipe flattened for the frontend: roles with labels + defaulted flags.
+#[derive(Debug, Clone, Serialize)]
+pub struct RoleInfo {
+    pub role: ComponentRole,
+    pub required: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RecipeInfo {
+    pub family: String,
+    pub name: String,
+    pub roles: Vec<RoleInfo>,
+    pub vae_format: Option<String>,
+    pub prediction: Option<String>,
+}
+
+/// All recipes as frontend DTOs (drives the family picker + role slots).
+pub fn recipe_infos() -> Vec<RecipeInfo> {
+    recipes()
+        .into_iter()
+        .map(|r| RecipeInfo {
+            family: r.family.to_string(),
+            name: r.name.to_string(),
+            roles: r.roles.iter().map(|s| RoleInfo { role: s.role, required: s.required }).collect(),
+            vae_format: r.vae_format.map(|s| s.to_string()),
+            prediction: r.prediction.map(|s| s.to_string()),
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,11 +1,28 @@
 use crate::engine::{self, ChildSlot, GenError};
 use crate::types::{AppConfig, DownloadProgress, GalleryItem, GenerationRequest, GpuDevice, ModelInfo};
+use crate::recipes::{self, ComponentRole};
+use crate::types::{ModelDefinition, ModelRef};
 use crate::{catalog, config, downloader, gallery, models};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, State};
+
+/// One detected role → absolute path, for the folder auto-detect flow.
+#[derive(serde::Serialize)]
+pub struct DetectedSlot {
+    pub role: ComponentRole,
+    pub path: String,
+}
+
+/// Result of point-at-a-folder detection: best-matching family + pre-filled slots.
+#[derive(serde::Serialize)]
+pub struct DetectionResult {
+    pub family: String,
+    pub name: String,
+    pub slots: Vec<DetectedSlot>,
+}
 
 pub struct AppState {
     pub config: Mutex<AppConfig>,
@@ -120,6 +137,16 @@ pub async fn generate(
     request: GenerationRequest,
 ) -> Result<Vec<GalleryItem>, String> {
     let cfg = state.config.lock().unwrap().clone();
+    if let ModelRef::MultiFile(c) = &request.model {
+        let missing = crate::types::missing_components(c);
+        if !missing.is_empty() {
+            let roles: Vec<String> = missing.iter().map(|(r, _)| format!("{r:?}")).collect();
+            return Err(format!(
+                "This model is missing component files ({}). Re-assemble or re-download it.",
+                roles.join(", ")
+            ));
+        }
+    }
     // Validate the saved device against the enumerated list (cached) and map it
     // to a backend; a stale/absent selection falls back to the engine default
     // when a real GPU exists, or to the CPU backend when none does.
@@ -260,10 +287,35 @@ fn model_dirs(cfg: &AppConfig) -> Vec<PathBuf> {
     dirs
 }
 
+/// Every component file path owned by a saved definition (canonicalized the
+/// same way `models::scan_models_excluding` matches internally, so the exclusion
+/// isn't silently a no-op).
+fn referenced_paths(cfg: &AppConfig) -> std::collections::HashSet<PathBuf> {
+    let mut set = std::collections::HashSet::new();
+    for def in &cfg.model_definitions {
+        let c = &def.components;
+        for p in [
+            Some(&c.diffusion_model),
+            c.vae.as_ref(),
+            c.clip_l.as_ref(),
+            c.clip_g.as_ref(),
+            c.t5xxl.as_ref(),
+            c.llm.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let pb = PathBuf::from(p);
+            set.insert(pb.canonicalize().unwrap_or(pb));
+        }
+    }
+    set
+}
+
 #[tauri::command]
 pub fn list_models(state: State<AppState>) -> Vec<ModelInfo> {
     let cfg = state.config.lock().unwrap().clone();
-    models::scan_models(&model_dirs(&cfg))
+    models::scan_models_excluding(&model_dirs(&cfg), &referenced_paths(&cfg))
 }
 
 #[tauri::command]
@@ -350,4 +402,105 @@ pub async fn pick_folder(app: AppHandle) -> Option<String> {
     use tauri_plugin_dialog::DialogExt;
     let dir = app.dialog().file().blocking_pick_folder();
     dir.and_then(|d| d.into_path().ok()).map(|p| p.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+pub fn list_recipes() -> Vec<recipes::RecipeInfo> {
+    recipes::recipe_infos()
+}
+
+/// Run filename detection over the files in a folder; return the best-matching
+/// family with pre-filled absolute-path slots. Falls back to "custom" (no slots)
+/// when nothing matches — never a dead end.
+#[tauri::command]
+pub fn detect_folder(dir: String) -> DetectionResult {
+    let dir = PathBuf::from(&dir);
+    let mut entries: Vec<PathBuf> = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(&dir) {
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_file()
+                && p.extension().and_then(|x| x.to_str()).map(|x| x.eq_ignore_ascii_case("safetensors")).unwrap_or(false)
+            {
+                entries.push(p);
+            }
+        }
+    }
+    let names: Vec<String> = entries
+        .iter()
+        .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .collect();
+
+    match recipes::detect_best(&names) {
+        Some((recipe, detected)) => {
+            let slots = detected
+                .assignments
+                .iter()
+                .filter_map(|(role, fname)| {
+                    entries
+                        .iter()
+                        .find(|p| p.file_name().map(|n| n.to_string_lossy() == *fname.as_str()).unwrap_or(false))
+                        .map(|p| DetectedSlot { role: *role, path: p.to_string_lossy().into_owned() })
+                })
+                .collect();
+            DetectionResult { family: recipe.family.to_string(), name: recipe.name.to_string(), slots }
+        }
+        None => DetectionResult {
+            family: "custom".into(),
+            name: "Custom (assign files manually)".into(),
+            slots: Vec::new(),
+        },
+    }
+}
+
+/// Multi-select model file picker (for manual role assignment).
+#[tauri::command]
+pub async fn pick_model_files(app: AppHandle) -> Vec<String> {
+    use tauri_plugin_dialog::DialogExt;
+    let files = app
+        .dialog()
+        .file()
+        .add_filter("Models", &["safetensors"])
+        .blocking_pick_files();
+    files
+        .map(|v| v.into_iter().filter_map(|f| f.into_path().ok()).map(|p| p.to_string_lossy().into_owned()).collect())
+        .unwrap_or_default()
+}
+
+/// Insert or update a definition (matched by id) and persist. Validates that
+/// required roles for the family are filled before saving.
+#[tauri::command]
+pub fn save_model_definition(state: State<AppState>, def: ModelDefinition) -> Result<(), String> {
+    if let Some(recipe) = recipes::recipe_for(&def.family) {
+        let missing = recipe.missing_required_roles(&def.components);
+        if !missing.is_empty() {
+            return Err(format!("Missing required components: {missing:?}"));
+        }
+    } else {
+        return Err(format!("Unknown model family: {}", def.family));
+    }
+    let mut cfg = state.config.lock().unwrap();
+    if let Some(existing) = cfg.model_definitions.iter_mut().find(|d| d.id == def.id) {
+        *existing = def;
+    } else {
+        cfg.model_definitions.push(def);
+    }
+    config::save_config_to(&config::config_file_path(), &cfg).map_err(|e| e.to_string())
+}
+
+/// Delete a definition and move its per-model folder to trash. The shared pool
+/// is left intact (other models may use it).
+#[tauri::command]
+pub fn delete_model_definition(state: State<AppState>, id: String) -> Result<(), String> {
+    let mut cfg = state.config.lock().unwrap();
+    let Some(pos) = cfg.model_definitions.iter().position(|d| d.id == id) else {
+        return Err("That model is no longer in the library.".into());
+    };
+    let def = cfg.model_definitions.remove(pos);
+    // Per-model folder = models_dir/<id>. Trash it if present (ignore if absent).
+    let folder = PathBuf::from(&cfg.models_dir).join(&def.id);
+    if folder.is_dir() {
+        let _ = trash::delete(&folder);
+    }
+    config::save_config_to(&config::config_file_path(), &cfg).map_err(|e| e.to_string())
 }

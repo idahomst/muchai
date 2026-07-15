@@ -84,6 +84,11 @@ pub fn run() {
             commands::pick_folder,
             commands::list_gpu_devices,
             commands::delete_image,
+            commands::list_recipes,
+            commands::detect_folder,
+            commands::pick_model_files,
+            commands::save_model_definition,
+            commands::delete_model_definition,
         ])
         .run(tauri::generate_context!())
         .expect("error while running fridAI");
