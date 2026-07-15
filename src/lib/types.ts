@@ -10,8 +10,62 @@ export type Sampler =
   | "dpm_pp2s_a" | "dpm_pp2m" | "dpm_pp2m_v2"
   | "ipndm" | "ipndm_v" | "lcm";
 
+// Wire values MUST match the Rust `ComponentRole` enum's serde snake_case form
+// (src-tauri/src/recipes.rs).
+export type ComponentRole = "diffusion" | "vae" | "clip_l" | "clip_g" | "t5xxl" | "llm";
+
+export const ROLE_LABELS: Record<ComponentRole, string> = {
+  diffusion: "Diffusion model",
+  vae: "VAE",
+  clip_l: "CLIP-L text encoder",
+  clip_g: "CLIP-G text encoder",
+  t5xxl: "T5-XXL text encoder",
+  llm: "LLM text encoder",
+};
+
+// Engine enums, from src-tauri/fixtures/sd-help.txt. Empty = let engine auto-detect.
+export const VAE_FORMATS = ["", "auto", "flux", "sd3", "flux2"] as const;
+export const PREDICTIONS = ["", "eps", "v", "edm_v", "sd3_flow", "flux_flow", "flux2_flow"] as const;
+
+// Mirrors Rust `ModelComponents`. Optional roles are omitted or null.
+export interface ModelComponents {
+  diffusion_model: string;
+  vae?: string | null;
+  clip_l?: string | null;
+  clip_g?: string | null;
+  t5xxl?: string | null;
+  llm?: string | null;
+  vae_format?: string | null;
+  prediction?: string | null;
+}
+
+// Mirrors Rust `ModelRef` (internally tagged, snake_case). The multi_file variant
+// flattens ModelComponents fields alongside `type`.
+export type ModelRef =
+  | { type: "single_file"; path: string }
+  | ({ type: "multi_file" } & ModelComponents);
+
+export interface ModelDefinition {
+  id: string;
+  name: string;
+  family: string;
+  components: ModelComponents;
+}
+
+/** True when the model is selectable/usable (path or diffusion set). */
+export function modelIsSet(m: ModelRef): boolean {
+  return m.type === "single_file" ? m.path.trim() !== "" : m.diffusion_model.trim() !== "";
+}
+
+/** A short label for a model reference (single-file basename or definition name). */
+export function modelLabel(m: ModelRef, definitions: ModelDefinition[] = []): string {
+  if (m.type === "single_file") return m.path.split("/").pop() ?? m.path;
+  const def = definitions.find((d) => d.components.diffusion_model === m.diffusion_model);
+  return def?.name ?? (m.diffusion_model.split("/").pop() ?? "multi-file model");
+}
+
 export interface GenerationRequest {
-  model_path: string;
+  model: ModelRef;
   prompt: string;
   negative_prompt: string;
   steps: number;
@@ -64,6 +118,7 @@ export interface AppConfig {
   models_dir: string;
   extra_model_dirs: string[];
   last_request: GenerationRequest;
+  model_definitions: ModelDefinition[];
   gpu_device: GpuSelection | null;
   params_expanded: boolean;
   // Wire values MUST match the Rust `Theme` enum's serde snake_case form
@@ -75,7 +130,7 @@ export interface AppConfig {
 }
 
 export const defaultRequest = (): GenerationRequest => ({
-  model_path: "", prompt: "", negative_prompt: "",
+  model: { type: "single_file", path: "" }, prompt: "", negative_prompt: "",
   steps: 20, cfg_scale: 7.0, sampler: "euler_a",
   width: 512, height: 512, seed: -1, batch_count: 1,
   output_format: "png",
@@ -110,4 +165,30 @@ export interface RatedModel {
   suitability: Suitability;
 }
 
-export interface DownloadProgress { downloaded: number; total: number | null; }
+export interface DownloadProgress {
+  downloaded: number;
+  total: number | null;
+  // Multi-file context (0-based). Absent on single-file downloads.
+  file_index?: number;
+  file_count?: number;
+  file_name?: string;
+}
+
+export interface RoleInfo { role: ComponentRole; required: boolean; }
+export interface RecipeInfo {
+  family: string;
+  name: string;
+  roles: RoleInfo[];
+  vae_format: string | null;
+  prediction: string | null;
+}
+
+export interface DetectedSlot { role: ComponentRole; path: string; }
+export interface DetectionResult { family: string; name: string; slots: DetectedSlot[]; }
+
+export interface RatedMultiFile {
+  id: string; name: string; family: string;
+  diffusion_url: string; diffusion_size_bytes: number;
+  overrides: unknown[]; min_vram_mb: number; recommended_vram_mb: number;
+  suitability: Suitability;
+}
