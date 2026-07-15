@@ -492,7 +492,16 @@ pub async fn download_multifile(
         }
         Err(e) => {
             // Roll back the per-model folder; leave the shared pool intact.
-            if model_dir.is_dir() {
+            // Guard: only ever delete a genuine direct subfolder of models_dir
+            // (never the shared pool or models_dir itself), in case a future
+            // catalog id is empty, "shared", or contains a path separator.
+            let safe_to_remove = !entry.id.trim().is_empty()
+                && entry.id != "shared"
+                && !entry.id.contains('/')
+                && !entry.id.contains('\\')
+                && model_dir.parent() == Some(models_dir.as_path())
+                && model_dir.is_dir();
+            if safe_to_remove {
                 let _ = std::fs::remove_dir_all(&model_dir);
             }
             Err(e)
