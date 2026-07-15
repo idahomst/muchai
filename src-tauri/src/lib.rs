@@ -8,6 +8,7 @@ mod engine;
 mod gallery;
 mod models;
 mod progress_parser;
+mod recipes;
 mod sysmon;
 mod types;
 

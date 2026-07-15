@@ -1,5 +1,32 @@
 use serde::{Deserialize, Serialize};
 
+/// Typed component files of a split model, each wired to a specific engine flag.
+///
+/// NOTE: this is a minimal stub landed by Task 1 (recipe table + filename
+/// detection) solely so `recipes.rs`'s tests compile — `recipes::detect`
+/// takes filenames only and `ModelRecipe::missing_required_roles` needs this
+/// shape. Task 2 owns this type; it adds `ModelRef`, `ModelDefinition`, and
+/// `missing_components` alongside it and should treat this struct as already
+/// in place rather than redefining it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelComponents {
+    pub diffusion_model: String, // --diffusion-model (required)
+    #[serde(default)]
+    pub vae: Option<String>, // --vae
+    #[serde(default)]
+    pub clip_l: Option<String>, // --clip_l
+    #[serde(default)]
+    pub clip_g: Option<String>, // --clip_g
+    #[serde(default)]
+    pub t5xxl: Option<String>, // --t5xxl
+    #[serde(default)]
+    pub llm: Option<String>, // --llm
+    #[serde(default)]
+    pub vae_format: Option<String>, // --vae-format
+    #[serde(default)]
+    pub prediction: Option<String>, // --prediction
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Sampler {
