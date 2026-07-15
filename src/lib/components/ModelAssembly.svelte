@@ -1,12 +1,18 @@
 <script lang="ts">
-  import { listRecipes, detectFolder, pickFolder, pickModelFile, saveModelDefinition } from "../api";
+  import { listRecipes, detectFolder, pickFolder, pickModelFile, saveModelDefinition, multifileCatalog } from "../api";
+  import { startMultiFileDownload, downloadStatus } from "../stores";
   import { ROLE_LABELS, VAE_FORMATS, PREDICTIONS } from "../types";
-  import type { RecipeInfo, ComponentRole, ModelComponents, ModelDefinition } from "../types";
+  import type { RecipeInfo, ComponentRole, ModelComponents, ModelDefinition, RatedMultiFile } from "../types";
   import { onMount } from "svelte";
+  import { get } from "svelte/store";
 
-  let { onclose, onsaved }: { onclose: () => void; onsaved: (def: ModelDefinition) => void } = $props();
+  let { onclose, onsaved, edit = null }: {
+    onclose: () => void;
+    onsaved: (def: ModelDefinition) => void;
+    edit?: ModelDefinition | null;
+  } = $props();
 
-  type Mode = "choose" | "folder" | "manual";
+  type Mode = "choose" | "folder" | "manual" | "catalog";
   let mode = $state<Mode>("choose");
 
   let recipes = $state<RecipeInfo[]>([]);
@@ -18,12 +24,34 @@
   let error = $state<string | null>(null);
   let busy = $state(false);
 
+  // Catalog flow state.
+  let catalog = $state<RatedMultiFile[]>([]);
+  let catalogLoading = $state(false);
+  let selectedEntry = $state<RatedMultiFile | null>(null);
+  let token = $state("");
+
   const recipe = $derived(recipes.find((r) => r.family === family));
   const basename = (p: string) => p.split(/[\\/]/).pop() || p;
+  const fmtSize = (b: number) => (b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : `${(b / 1e6).toFixed(0)} MB`);
 
   onMount(() => {
     (async () => {
       recipes = await listRecipes();
+      if (edit) {
+        family = edit.family;
+        name = edit.name;
+        const c = edit.components;
+        const seeded: Partial<Record<ComponentRole, string>> = { diffusion: c.diffusion_model };
+        if (c.vae) seeded.vae = c.vae;
+        if (c.clip_l) seeded.clip_l = c.clip_l;
+        if (c.clip_g) seeded.clip_g = c.clip_g;
+        if (c.t5xxl) seeded.t5xxl = c.t5xxl;
+        if (c.llm) seeded.llm = c.llm;
+        slots = seeded;
+        vaeFormat = c.vae_format ?? "";
+        prediction = c.prediction ?? "";
+        mode = "manual";
+      }
     })();
   });
 
@@ -53,6 +81,44 @@
     mode = "manual";
   }
 
+  async function openCatalog() {
+    error = null;
+    mode = "catalog";
+    catalogLoading = true;
+    try {
+      catalog = await multifileCatalog(null);
+    } catch (e) {
+      error = String(e);
+    } finally {
+      catalogLoading = false;
+    }
+  }
+
+  async function downloadEntry() {
+    if (!selectedEntry || busy) return;
+    if (get(downloadStatus).kind === "active") {
+      error = "Another download is already in progress.";
+      return;
+    }
+    busy = true;
+    error = null;
+    try {
+      // The download resolves shared encoders/VAE once and returns the saved
+      // definition (already persisted by the backend).
+      const def = await startMultiFileDownload(selectedEntry.id, token.trim(), selectedEntry.name);
+      if (def) {
+        onsaved(def);
+        onclose();
+      } else {
+        error = "Download did not complete.";
+      }
+    } catch (e) {
+      error = String(e);
+    } finally {
+      busy = false;
+    }
+  }
+
   async function assignSlot(role: ComponentRole) {
     const path = await pickModelFile();
     if (path) slots = { ...slots, [role]: path };
@@ -79,7 +145,7 @@
     busy = true;
     error = null;
     const def: ModelDefinition = {
-      id: crypto.randomUUID(),
+      id: edit?.id ?? crypto.randomUUID(),
       name: name.trim(),
       family,
       components: buildComponents(),
@@ -97,14 +163,41 @@
 </script>
 
 <div class="backdrop" onclick={(e) => { if (e.target === e.currentTarget) onclose(); }} role="presentation">
-  <div class="dialog" role="dialog" aria-modal="true" aria-label="New multi-file model">
-    <h2>New multi-file model</h2>
+  <div class="dialog" role="dialog" aria-modal="true" aria-label={edit ? "Edit multi-file model" : "New multi-file model"}>
+    <h2>{edit ? "Edit multi-file model" : "New multi-file model"}</h2>
 
     {#if mode === "choose"}
       <p class="lead">How would you like to set up this split model?</p>
       <button class="btn-primary" onclick={chooseFolder}>From a folder I have (auto-detect)</button>
       <button class="btn-secondary" onclick={startManual}>Assign files manually</button>
+      <button class="btn-secondary" onclick={openCatalog}>Download from catalog</button>
       <button class="btn-secondary" onclick={onclose}>Cancel</button>
+    {:else if mode === "catalog"}
+      {#if catalogLoading}
+        <p class="lead">Loading catalog…</p>
+      {:else}
+        <p class="lead">Pick a model. Shared encoders/VAE are downloaded once and reused.</p>
+        <div class="cat">
+          {#each catalog as c (c.id)}
+            <button
+              class="cat-row"
+              class:sel={selectedEntry?.id === c.id}
+              onclick={() => (selectedEntry = c)}
+            >
+              <span class="cat-name">{c.name}</span>
+              <span class="cat-meta">{c.family} · {fmtSize(c.diffusion_size_bytes)} · needs ~{Math.round(c.recommended_vram_mb / 1024)} GB VRAM · {c.suitability}</span>
+            </button>
+          {/each}
+        </div>
+        <label class="fld"><span>HF access token (optional, for gated models)</span>
+          <input class="in" type="password" bind:value={token} placeholder="hf_…" />
+        </label>
+        {#if error}<p class="err">{error}</p>{/if}
+        <div class="row">
+          <button class="btn-primary" disabled={!selectedEntry || busy} onclick={downloadEntry}>Download</button>
+          <button class="btn-secondary" onclick={onclose} disabled={busy}>Cancel</button>
+        </div>
+      {/if}
     {:else}
       <label class="fld"><span>Name</span>
         <input class="in" type="text" bind:value={name} placeholder="My FLUX model" />
@@ -174,4 +267,10 @@
   .err { font-size:.72rem; color:var(--danger); margin:0; }
   button { font:inherit; font-size:.8rem; padding:.4rem .7rem; cursor:pointer; }
   button:disabled { opacity:.5; cursor:default; }
+  .cat { display:flex; flex-direction:column; gap:.35rem; max-height:44vh; overflow-y:auto; }
+  .cat-row { display:flex; flex-direction:column; align-items:flex-start; gap:.15rem; text-align:left;
+    padding:.5rem; border:1px solid var(--border-subtle); border-radius:6px; background:var(--dialog-bg); color:inherit; }
+  .cat-row.sel { border-color:var(--accent); }
+  .cat-name { font-size:.82rem; }
+  .cat-meta { font-size:.7rem; opacity:.7; }
 </style>

@@ -1,11 +1,12 @@
 <script lang="ts">
   import { request, models, definitions, downloadStatus, cancelActiveDownload } from "../stores";
-  import { listModels, deleteModel, deleteModelDefinition } from "../api";
+  import { listModels, deleteModel, deleteModelDefinition, brokenDefinitions } from "../api";
   import DownloadDialog from "./DownloadDialog.svelte";
   import ModelAssembly from "./ModelAssembly.svelte";
   import InfoHint from "./InfoHint.svelte";
   import { HELP } from "../helpText";
   import type { ModelDefinition } from "../types";
+  import { onMount } from "svelte";
 
   let showDownload = $state(false);
   let showAssembly = $state(false);
@@ -18,6 +19,13 @@
   // diffusion checkpoint but differ in encoders. Null after a reload (we then
   // fall back to matching on diffusion path for display only).
   let selectedDefId = $state<string | null>(null);
+
+  let brokenIds = $state<Set<string>>(new Set());
+  let editing = $state<ModelDefinition | null>(null);
+
+  async function refreshBroken() {
+    brokenIds = new Set(await brokenDefinitions());
+  }
 
   const NEW = "__new_multifile__";
   const fmtSize = (b: number) => (b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : `${(b / 1e6).toFixed(0)} MB`);
@@ -50,6 +58,7 @@
 
   async function refresh() {
     models.set(await listModels());
+    await refreshBroken();
   }
 
   function selectDefinition(def: ModelDefinition) {
@@ -84,6 +93,8 @@
       return next;
     });
     selectDefinition(def);
+    editing = null;
+    refreshBroken().catch((e) => (error = String(e)));
   }
 
   async function removeSelected() {
@@ -133,6 +144,8 @@
       handledDone = null;
     }
   });
+
+  onMount(() => { refreshBroken().catch((e) => (error = String(e))); });
 </script>
 
 <div class="field">
@@ -144,7 +157,7 @@
       {#if $definitions.length > 0}
         <optgroup label="Multi-file models">
           {#each $definitions as d (d.id)}
-            <option value={`mf:${d.id}`}>{d.name} — multi-file</option>
+            <option value={`mf:${d.id}`}>{brokenIds.has(d.id) ? "⚠ " : ""}{d.name} — multi-file</option>
           {/each}
         </optgroup>
       {/if}
@@ -163,6 +176,9 @@
       <button class="btn-secondary del" onclick={removeSelected} disabled={busy}>Delete</button>
       <button class="btn-secondary" onclick={() => (confirming = false)} disabled={busy}>Cancel</button>
     {:else}
+      {#if selectedDef}
+        <button class="btn-secondary" onclick={() => (editing = selectedDef)}>Edit…</button>
+      {/if}
       <button class="btn-secondary" disabled={!hasSelection} onclick={() => (confirming = true)}>Delete</button>
     {/if}
   </div>
@@ -170,6 +186,9 @@
     <span class="hint">No models found. Click Download… or add a multi-file model.</span>
   {/if}
   {#if error}<span class="err">{error}</span>{/if}
+  {#if selectedDef && brokenIds.has(selectedDef.id)}
+    <span class="err">⚠ Some component files are missing. Edit to re-assign, or delete.</span>
+  {/if}
 
   {#if $downloadStatus.kind === "active"}
     <div class="dl">
@@ -194,8 +213,12 @@
   <DownloadDialog onclose={() => (showDownload = false)} />
 {/if}
 
-{#if showAssembly}
-  <ModelAssembly onclose={() => (showAssembly = false)} onsaved={onAssembled} />
+{#if showAssembly || editing}
+  <ModelAssembly
+    edit={editing}
+    onclose={() => { showAssembly = false; editing = null; }}
+    onsaved={onAssembled}
+  />
 {/if}
 
 <style>

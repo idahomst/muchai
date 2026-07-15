@@ -49,3 +49,4 @@ export const saveModelDefinition = (def: ModelDefinition) =>
   invoke<void>("save_model_definition", { def });
 export const deleteModelDefinition = (id: string) =>
   invoke<void>("delete_model_definition", { id });
+export const brokenDefinitions = () => invoke<string[]>("broken_definitions");
