@@ -12,7 +12,7 @@ fn is_model_file(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-fn collect(dir: &Path, out: &mut Vec<ModelInfo>, seen: &mut HashSet<PathBuf>) {
+fn collect(dir: &Path, out: &mut Vec<ModelInfo>, seen: &mut HashSet<PathBuf>, exclude: &HashSet<PathBuf>) {
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return, // missing / unreadable dirs are skipped
@@ -20,9 +20,12 @@ fn collect(dir: &Path, out: &mut Vec<ModelInfo>, seen: &mut HashSet<PathBuf>) {
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            collect(&path, out, seen);
+            collect(&path, out, seen, exclude);
         } else if is_model_file(&path) {
             let canon = path.canonicalize().unwrap_or_else(|_| path.clone());
+            if exclude.contains(&canon) {
+                continue; // referenced by a saved multi-file definition
+            }
             if !seen.insert(canon.clone()) {
                 continue; // already found via another watched dir
             }
@@ -40,13 +43,19 @@ fn collect(dir: &Path, out: &mut Vec<ModelInfo>, seen: &mut HashSet<PathBuf>) {
     }
 }
 
-/// Scan every directory (recursively), returning unique model files sorted by
-/// name. Missing/unreadable directories are skipped silently.
+/// Scan every directory (recursively) for unique model files, sorted by name.
+/// Missing/unreadable directories are skipped silently.
 pub fn scan_models(dirs: &[PathBuf]) -> Vec<ModelInfo> {
+    scan_models_excluding(dirs, &HashSet::new())
+}
+
+/// Like `scan_models`, but skips any file whose canonical path is in `exclude`
+/// (used to hide component files owned by a saved multi-file definition).
+pub fn scan_models_excluding(dirs: &[PathBuf], exclude: &HashSet<PathBuf>) -> Vec<ModelInfo> {
     let mut out: Vec<ModelInfo> = Vec::new();
     let mut seen: HashSet<PathBuf> = HashSet::new();
     for dir in dirs {
-        collect(dir, &mut out, &mut seen);
+        collect(dir, &mut out, &mut seen, exclude);
     }
     out.sort_by_key(|m| m.name.to_lowercase());
     out
@@ -94,6 +103,25 @@ mod tests {
         // Scan the parent AND the child: x is reachable from both.
         let models = scan_models(&[root.clone(), root.join("models")]);
         assert_eq!(models.len(), 1, "same file must appear once");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn excludes_paths_referenced_by_definitions() {
+        let root = std::env::temp_dir().join(format!("fridai-excl-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        touch(&root.join("loose.safetensors"), 10);
+        touch(&root.join("flux1/flux1-dev.safetensors"), 20);
+        touch(&root.join("flux1/t5xxl.safetensors"), 30);
+
+        // Canonicalize the two component paths the way scan does.
+        let diff = root.join("flux1/flux1-dev.safetensors").canonicalize().unwrap();
+        let t5 = root.join("flux1/t5xxl.safetensors").canonicalize().unwrap();
+        let exclude: HashSet<PathBuf> = [diff, t5].into_iter().collect();
+
+        let models = scan_models_excluding(&[root.clone()], &exclude);
+        let names: Vec<&str> = models.iter().map(|m| m.name.as_str()).collect();
+        assert_eq!(names, vec!["loose"], "only the unreferenced file remains");
         let _ = fs::remove_dir_all(&root);
     }
 }
