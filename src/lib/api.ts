@@ -1,6 +1,6 @@
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { AppConfig, GalleryItem, GenerationRequest, ProgressUpdate, SystemStats, ModelInfo, RatedModel, DownloadProgress, GpuDevice } from "./types";
+import type { AppConfig, GalleryItem, GenerationRequest, ProgressUpdate, SystemStats, ModelInfo, RatedModel, DownloadProgress, GpuDevice, RecipeInfo, DetectionResult, RatedMultiFile, ModelDefinition } from "./types";
 
 export const getSettings = () => invoke<AppConfig>("get_settings");
 /** Enumerate Vulkan devices the engine can target (cached server-side). */
@@ -37,3 +37,15 @@ export const pickFolder = () => invoke<string | null>("pick_folder");
 
 export const onDownloadProgress = (cb: (p: DownloadProgress) => void): Promise<UnlistenFn> =>
   listen<DownloadProgress>("model:download:progress", (e) => cb(e.payload));
+
+export const listRecipes = () => invoke<RecipeInfo[]>("list_recipes");
+export const detectFolder = (dir: string) => invoke<DetectionResult>("detect_folder", { dir });
+export const pickModelFiles = () => invoke<string[]>("pick_model_files");
+export const multifileCatalog = (vramTotalMb: number | null) =>
+  invoke<RatedMultiFile[]>("multifile_catalog", { vramTotalMb });
+export const downloadMultifile = (entryId: string, token: string) =>
+  invoke<ModelDefinition>("download_multifile", { entryId, token });
+export const saveModelDefinition = (def: ModelDefinition) =>
+  invoke<void>("save_model_definition", { def });
+export const deleteModelDefinition = (id: string) =>
+  invoke<void>("delete_model_definition", { id });
