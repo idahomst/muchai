@@ -306,6 +306,41 @@ mod tests {
     }
 
     #[test]
+    fn assemble_components_paths_match_plan_downloads() {
+        // Enforces the comment-only invariant that assemble_components derives the
+        // same per-file destinations as plan_downloads. With an empty pool every
+        // file is planned, so every assembled role has a corresponding dest.
+        let entry = &multi_file_catalog()[0];
+        let recipe = crate::recipes::recipe_for("flux1").unwrap();
+        let root = Path::new("/models");
+        let plan = plan_downloads(entry, &recipe, root, &|_| false);
+        let comps = assemble_components(entry, &recipe, root);
+
+        let planned = |role: ComponentRole| plan.iter().find(|p| p.role == role).map(|p| p.dest.clone());
+
+        // Diffusion is always present in both.
+        assert_eq!(Some(PathBuf::from(&comps.diffusion_model)), planned(ComponentRole::Diffusion));
+
+        // Every shared role the recipe defines must assemble to its planned dest.
+        for shared in &recipe.shared {
+            let assembled = match shared.role {
+                ComponentRole::Vae => comps.vae.clone(),
+                ComponentRole::ClipL => comps.clip_l.clone(),
+                ComponentRole::ClipG => comps.clip_g.clone(),
+                ComponentRole::T5xxl => comps.t5xxl.clone(),
+                ComponentRole::Llm => comps.llm.clone(),
+                ComponentRole::Diffusion => continue,
+            };
+            assert_eq!(
+                assembled.map(PathBuf::from),
+                planned(shared.role),
+                "{:?} assembled path must equal its planned download dest",
+                shared.role
+            );
+        }
+    }
+
+    #[test]
     fn plan_puts_overrides_in_model_folder() {
         let mut entry = multi_file_catalog()[0].clone();
         entry.overrides = vec![SharedComponent {
