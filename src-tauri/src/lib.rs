@@ -89,6 +89,8 @@ pub fn run() {
             commands::pick_model_files,
             commands::save_model_definition,
             commands::delete_model_definition,
+            commands::multifile_catalog,
+            commands::download_multifile,
         ])
         .run(tauri::generate_context!())
         .expect("error while running fridAI");

@@ -1,4 +1,5 @@
 use crate::recipes::{ComponentRole, ModelRecipe, SharedComponent};
+use crate::types::ModelComponents;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
@@ -157,7 +158,14 @@ pub fn plan_downloads(
         role: ComponentRole::Diffusion,
     });
 
+    // NOTE: the shared-path joins below MUST stay in lockstep with
+    // `assemble_components` (same model_dir/shared_dir + override resolution).
     for shared in &recipe.shared {
+        if shared.role == ComponentRole::Diffusion {
+            // Diffusion is always the per-model file fetched above; never
+            // double-fetch it even if a recipe lists it under `shared`.
+            continue;
+        }
         if let Some(ov) = entry.overrides.iter().find(|o| o.role == shared.role) {
             // Model ships its own copy → per-model folder, always fetched.
             plan.push(PlannedDownload {
@@ -177,6 +185,48 @@ pub fn plan_downloads(
         }
     }
     plan
+}
+
+/// Final absolute component paths for a fully-downloaded entry (independent of
+/// which files actually needed fetching), plus the recipe's format defaults.
+///
+/// INVARIANT: the per-file destinations here MUST match `plan_downloads` above
+/// (same `model_dir`/`shared_dir` joins + `derive_filename(None, diffusion_url)`).
+/// If you change path derivation in one, change it in the other — otherwise a
+/// model can download successfully yet its saved definition points at wrong paths.
+pub fn assemble_components(
+    entry: &MultiFileCatalogEntry,
+    recipe: &ModelRecipe,
+    models_dir: &Path,
+) -> ModelComponents {
+    let model_dir = models_dir.join(&entry.id);
+    let shared_dir = models_dir.join("shared").join(&entry.family);
+    let diff_name = crate::downloader::derive_filename(None, &entry.diffusion_url);
+
+    let mut c = ModelComponents {
+        diffusion_model: model_dir.join(diff_name).to_string_lossy().into_owned(),
+        vae_format: recipe.vae_format.map(|s| s.to_string()),
+        prediction: recipe.prediction.map(|s| s.to_string()),
+        ..Default::default()
+    };
+    for shared in &recipe.shared {
+        let path = if let Some(ov) = entry.overrides.iter().find(|o| o.role == shared.role) {
+            model_dir.join(ov.filename)
+        } else {
+            shared_dir.join(shared.filename)
+        }
+        .to_string_lossy()
+        .into_owned();
+        match shared.role {
+            ComponentRole::Vae => c.vae = Some(path),
+            ComponentRole::ClipL => c.clip_l = Some(path),
+            ComponentRole::ClipG => c.clip_g = Some(path),
+            ComponentRole::T5xxl => c.t5xxl = Some(path),
+            ComponentRole::Llm => c.llm = Some(path),
+            ComponentRole::Diffusion => {}
+        }
+    }
+    c
 }
 
 #[derive(Debug, Clone, Serialize)]

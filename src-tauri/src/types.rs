@@ -255,10 +255,17 @@ pub struct ModelInfo {
     pub size_bytes: u64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DownloadProgress {
     pub downloaded: u64,
     pub total: Option<u64>,
+    /// Multi-file context (0-based). Absent/None on single-file downloads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_index: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_count: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
