@@ -149,7 +149,26 @@ pub fn recipes() -> Vec<ModelRecipe> {
             ],
             vae_format: Some("flux"),
             prediction: Some("flux_flow"),
-            shared: vec![],
+            shared: vec![
+                SharedComponent {
+                    role: ComponentRole::T5xxl,
+                    url: "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/t5xxl_fp16.safetensors",
+                    size_bytes: 9_787_841_024,
+                    filename: "t5xxl_fp16.safetensors",
+                },
+                SharedComponent {
+                    role: ComponentRole::ClipL,
+                    url: "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/clip_l.safetensors",
+                    size_bytes: 246_144_152,
+                    filename: "clip_l.safetensors",
+                },
+                SharedComponent {
+                    role: ComponentRole::Vae,
+                    url: "https://huggingface.co/black-forest-labs/FLUX.1-schnell/resolve/main/ae.safetensors",
+                    size_bytes: 335_304_388,
+                    filename: "ae.safetensors",
+                },
+            ],
         },
         ModelRecipe {
             family: "sd3",
