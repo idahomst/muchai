@@ -146,7 +146,7 @@ pub fn missing_components(c: &ModelComponents) -> Vec<(ComponentRole, String)> {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GenerationRequest {
-    pub model_path: String,
+    pub model: ModelRef,
     pub prompt: String,
     pub negative_prompt: String,
     pub steps: u32,
@@ -165,7 +165,7 @@ pub struct GenerationRequest {
 impl Default for GenerationRequest {
     fn default() -> Self {
         Self {
-            model_path: String::new(),
+            model: ModelRef::default(),
             prompt: String::new(),
             negative_prompt: String::new(),
             steps: 20,
@@ -287,6 +287,9 @@ pub struct AppConfig {
     /// `false`; pre-feature config files lack this key and deserialize as false.
     #[serde(default)]
     pub onboarded: bool,
+    /// Saved multi-file model library. Empty on pre-feature configs.
+    #[serde(default)]
+    pub model_definitions: Vec<ModelDefinition>,
     pub last_request: GenerationRequest,
 }
 
@@ -352,9 +355,16 @@ mod tests {
     #[test]
     fn app_config_defaults_gpu_device_to_none_when_absent() {
         // Config JSON missing the gpu_device key must still deserialize.
-        let json = r#"{"sd_binary_path":null,"default_model_path":null,"gallery_dir":"/tmp/g","models_dir":"/tmp/m","extra_model_dirs":[],"last_request":{"model_path":"","prompt":"","negative_prompt":"","steps":20,"cfg_scale":7.0,"sampler":"euler_a","width":512,"height":512,"seed":-1,"batch_count":1}}"#;
+        let json = r#"{"sd_binary_path":null,"default_model_path":null,"gallery_dir":"/tmp/g","models_dir":"/tmp/m","extra_model_dirs":[],"last_request":{"model":{"type":"single_file","path":""},"prompt":"","negative_prompt":"","steps":20,"cfg_scale":7.0,"sampler":"euler_a","width":512,"height":512,"seed":-1,"batch_count":1}}"#;
         let cfg: AppConfig = serde_json::from_str(json).unwrap();
         assert!(cfg.gpu_device.is_none());
+    }
+
+    #[test]
+    fn app_config_without_model_definitions_defaults_empty() {
+        let json = r#"{"sd_binary_path":null,"default_model_path":null,"gallery_dir":"/tmp/g","models_dir":"/tmp/m","extra_model_dirs":[],"last_request":{"model":{"type":"single_file","path":""},"prompt":"","negative_prompt":"","steps":20,"cfg_scale":7.0,"sampler":"euler_a","width":512,"height":512,"seed":-1,"batch_count":1}}"#;
+        let cfg: AppConfig = serde_json::from_str(json).unwrap();
+        assert!(cfg.model_definitions.is_empty());
     }
 
     #[test]
@@ -379,7 +389,7 @@ mod tests {
     #[test]
     fn generation_request_without_output_format_defaults_to_png() {
         // A pre-feature request/sidecar lacks the output_format key.
-        let json = r#"{"model_path":"","prompt":"","negative_prompt":"","steps":20,"cfg_scale":7.0,"sampler":"euler_a","width":512,"height":512,"seed":-1,"batch_count":1}"#;
+        let json = r#"{"model":{"type":"single_file","path":""},"prompt":"","negative_prompt":"","steps":20,"cfg_scale":7.0,"sampler":"euler_a","width":512,"height":512,"seed":-1,"batch_count":1}"#;
         let req: GenerationRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.output_format, OutputFormat::Png);
     }

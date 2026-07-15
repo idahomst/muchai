@@ -1,4 +1,4 @@
-use crate::types::GenerationRequest;
+use crate::types::{GenerationRequest, ModelRef};
 
 /// Build the argument vector for stable-diffusion.cpp's CLI.
 /// Pure function (no I/O) so it is fully unit-testable.
@@ -11,7 +11,33 @@ pub fn build_args(req: &GenerationRequest, output_path: &str, backend: Option<&s
         a.push(flag.to_string());
         a.push(val);
     };
-    push("-m", req.model_path.clone());
+    match &req.model {
+        ModelRef::SingleFile { path } => push("-m", path.clone()),
+        ModelRef::MultiFile(c) => {
+            push("--diffusion-model", c.diffusion_model.clone());
+            if let Some(v) = &c.vae {
+                push("--vae", v.clone());
+            }
+            if let Some(v) = &c.clip_l {
+                push("--clip_l", v.clone());
+            }
+            if let Some(v) = &c.clip_g {
+                push("--clip_g", v.clone());
+            }
+            if let Some(v) = &c.t5xxl {
+                push("--t5xxl", v.clone());
+            }
+            if let Some(v) = &c.llm {
+                push("--llm", v.clone());
+            }
+            if let Some(v) = &c.vae_format {
+                push("--vae-format", v.clone());
+            }
+            if let Some(v) = &c.prediction {
+                push("--prediction", v.clone());
+            }
+        }
+    }
     push("-p", req.prompt.clone());
     if !req.negative_prompt.is_empty() {
         push("-n", req.negative_prompt.clone());
@@ -39,7 +65,7 @@ mod tests {
 
     fn sample() -> GenerationRequest {
         GenerationRequest {
-            model_path: "/m/model.safetensors".into(),
+            model: ModelRef::SingleFile { path: "/m/model.safetensors".into() },
             prompt: "a cat".into(),
             negative_prompt: "blurry".into(),
             steps: 25,
@@ -98,6 +124,55 @@ mod tests {
     fn omits_backend_when_none() {
         let args = build_args(&sample(), "/out/x.png", None);
         assert!(!args.iter().any(|x| x == "--backend"));
+    }
+
+    #[test]
+    fn single_file_emits_dash_m_and_no_diffusion_model() {
+        let args = build_args(&sample(), "/out/x.png", None);
+        assert_eq!(val_after(&args, "-m"), Some("/m/model.safetensors"));
+        assert!(!args.iter().any(|x| x == "--diffusion-model"));
+    }
+
+    #[test]
+    fn multi_file_maps_each_role_to_its_flag() {
+        use crate::types::ModelComponents;
+        let mut req = sample();
+        req.model = ModelRef::MultiFile(ModelComponents {
+            diffusion_model: "/m/flux1-dev.safetensors".into(),
+            t5xxl: Some("/m/t5xxl.safetensors".into()),
+            clip_l: Some("/m/clip_l.safetensors".into()),
+            clip_g: Some("/m/clip_g.safetensors".into()),
+            llm: Some("/m/llm.safetensors".into()),
+            vae: Some("/m/ae.safetensors".into()),
+            vae_format: Some("flux".into()),
+            prediction: Some("flux_flow".into()),
+            ..Default::default()
+        });
+        let args = build_args(&req, "/out/x.png", None);
+        assert_eq!(val_after(&args, "--diffusion-model"), Some("/m/flux1-dev.safetensors"));
+        assert_eq!(val_after(&args, "--t5xxl"), Some("/m/t5xxl.safetensors"));
+        assert_eq!(val_after(&args, "--clip_l"), Some("/m/clip_l.safetensors"));
+        assert_eq!(val_after(&args, "--clip_g"), Some("/m/clip_g.safetensors"));
+        assert_eq!(val_after(&args, "--llm"), Some("/m/llm.safetensors"));
+        assert_eq!(val_after(&args, "--vae"), Some("/m/ae.safetensors"));
+        assert_eq!(val_after(&args, "--vae-format"), Some("flux"));
+        assert_eq!(val_after(&args, "--prediction"), Some("flux_flow"));
+        assert!(!args.iter().any(|x| x == "-m"), "multi-file must not emit -m");
+    }
+
+    #[test]
+    fn multi_file_omits_absent_optional_roles() {
+        use crate::types::ModelComponents;
+        let mut req = sample();
+        req.model = ModelRef::MultiFile(ModelComponents {
+            diffusion_model: "/m/d.safetensors".into(),
+            ..Default::default()
+        });
+        let args = build_args(&req, "/out/x.png", None);
+        assert_eq!(val_after(&args, "--diffusion-model"), Some("/m/d.safetensors"));
+        for flag in ["--vae", "--clip_l", "--clip_g", "--t5xxl", "--llm", "--vae-format", "--prediction"] {
+            assert!(!args.iter().any(|x| x == flag), "{flag} must be absent");
+        }
     }
 
     #[test]
