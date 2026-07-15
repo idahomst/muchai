@@ -27,17 +27,37 @@ impl DownloadError {
     }
 }
 
-/// Download `url` into `dest_dir`, streaming to a `.part` file and renaming on
-/// success. Calls `on_progress(downloaded, total)` as bytes arrive (`total` is
-/// None when the server omits Content-Length). Aborts promptly when `cancel`
-/// flips to true, removing the partial file.
+/// Download `url` into `dest_dir`, choosing the filename from headers/URL and
+/// de-duplicating on collision. Thin wrapper over `download_to`.
 pub fn download_model<F: FnMut(u64, Option<u64>)>(
     url: &str,
     token: &str,
     dest_dir: &Path,
-    mut on_progress: F,
+    on_progress: F,
     cancel: &AtomicBool,
 ) -> Result<PathBuf, DownloadError> {
+    // We need the filename before the request to compute the unique path, but the
+    // server's Content-Disposition may refine it. Derive from the URL up front for
+    // the unique-path base; `download_to` streams to exactly the path we choose.
+    let filename = derive_filename(None, url);
+    let dest = unique_path(dest_dir, &filename);
+    download_to(url, token, &dest, on_progress, cancel)?;
+    Ok(dest)
+}
+
+/// Download `url` to exactly `dest_path`, streaming to a sibling `.part` file and
+/// renaming on success. Calls `on_progress(downloaded, total)` as bytes arrive.
+/// Aborts promptly when `cancel` flips to true, removing the partial file.
+pub fn download_to<F: FnMut(u64, Option<u64>)>(
+    url: &str,
+    token: &str,
+    dest_path: &Path,
+    mut on_progress: F,
+    cancel: &AtomicBool,
+) -> Result<(), DownloadError> {
+    if let Some(parent) = dest_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| DownloadError::Io(e.to_string()))?;
+    }
     let mut req = ureq::get(url);
     if !token.is_empty() {
         req = req.set("Authorization", &format!("Bearer {token}"));
@@ -54,14 +74,10 @@ pub fn download_model<F: FnMut(u64, Option<u64>)>(
         Err(ureq::Error::Transport(t)) => return Err(DownloadError::Network(t.to_string())),
     };
 
-    let total: Option<u64> = resp
-        .header("Content-Length")
-        .and_then(|s| s.parse::<u64>().ok());
-    let filename = derive_filename(resp.header("Content-Disposition"), url);
-    let final_path = unique_path(dest_dir, &filename);
-    let part_path = final_path.with_extension(format!(
+    let total: Option<u64> = resp.header("Content-Length").and_then(|s| s.parse::<u64>().ok());
+    let part_path = dest_path.with_extension(format!(
         "{}part",
-        final_path
+        dest_path
             .extension()
             .and_then(|e| e.to_str())
             .map(|e| format!("{e}."))
@@ -102,11 +118,11 @@ pub fn download_model<F: FnMut(u64, Option<u64>)>(
         DownloadError::Io(e.to_string())
     })?;
     drop(file);
-    std::fs::rename(&part_path, &final_path).map_err(|e| {
+    std::fs::rename(&part_path, dest_path).map_err(|e| {
         let _ = std::fs::remove_file(&part_path);
         DownloadError::Io(e.to_string())
     })?;
-    Ok(final_path)
+    Ok(())
 }
 
 /// Strip any directory components and control chars; fall back to a default.
