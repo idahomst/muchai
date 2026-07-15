@@ -312,10 +312,36 @@ fn referenced_paths(cfg: &AppConfig) -> std::collections::HashSet<PathBuf> {
     set
 }
 
+/// Single-file model list for the UI: scan every watched dir, then drop both the
+/// definition-owned component files AND the entire shared component pool under
+/// `<models_dir>/shared`. The pool exclusion is belt-and-suspenders alongside the
+/// `exclude` set: shared encoder/VAE files are never valid standalone models, so
+/// even when orphaned — the last model of a family is deleted (the pool is left
+/// intact), or a catalog download is cancelled after some shared files landed —
+/// they must not reappear as bogus, ungeneratable single-file models.
+fn scan_single_file_models(
+    dirs: &[PathBuf],
+    exclude: &std::collections::HashSet<PathBuf>,
+    models_dir: &std::path::Path,
+) -> Vec<ModelInfo> {
+    let mut models = models::scan_models_excluding(dirs, exclude);
+    // Canonicalize the shared dir the same way scan canonicalizes file paths so
+    // the prefix test isn't silently a no-op. When it doesn't exist there are no
+    // files under it to filter anyway, so the fallback is harmless.
+    let shared = models_dir.join("shared");
+    let shared = shared.canonicalize().unwrap_or(shared);
+    models.retain(|m| !std::path::Path::new(&m.path).starts_with(&shared));
+    models
+}
+
 #[tauri::command]
 pub fn list_models(state: State<AppState>) -> Vec<ModelInfo> {
     let cfg = state.config.lock().unwrap().clone();
-    models::scan_models_excluding(&model_dirs(&cfg), &referenced_paths(&cfg))
+    scan_single_file_models(
+        &model_dirs(&cfg),
+        &referenced_paths(&cfg),
+        std::path::Path::new(&cfg.models_dir),
+    )
 }
 
 #[tauri::command]
@@ -676,5 +702,24 @@ mod tests {
     #[test]
     fn accepts_valid_definition() {
         assert!(validate_model_definition(&flux_def("flux1-schnell")).is_ok());
+    }
+
+    #[test]
+    fn scan_excludes_shared_pool_but_keeps_real_models() {
+        use std::collections::HashSet;
+        let root = std::env::temp_dir().join(format!("fridai-shared-excl-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let real = root.join("realmodel.safetensors");
+        let shared = root.join("shared/flux1/t5xxl.safetensors");
+        for p in [&real, &shared] {
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, b"x").unwrap();
+        }
+
+        let models = scan_single_file_models(&[root.clone()], &HashSet::new(), &root);
+        let names: Vec<&str> = models.iter().map(|m| m.name.as_str()).collect();
+        assert_eq!(names, vec!["realmodel"], "shared-pool component must be excluded, real model kept");
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
