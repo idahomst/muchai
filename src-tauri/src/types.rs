@@ -297,6 +297,14 @@ pub struct AppConfig {
     /// Saved multi-file model library. Empty on pre-feature configs.
     #[serde(default)]
     pub model_definitions: Vec<ModelDefinition>,
+    /// HuggingFace access token for gated/large downloads. Plaintext; pre-feature
+    /// configs lack this key and deserialize as None.
+    #[serde(default)]
+    pub hf_token: Option<String>,
+    /// Civitai access token. Plaintext; stored now, consumed by the multi-file
+    /// download rework. Pre-feature configs deserialize as None.
+    #[serde(default)]
+    pub civitai_token: Option<String>,
     pub last_request: GenerationRequest,
 }
 
@@ -478,5 +486,78 @@ mod tests {
         assert_eq!(missing.len(), 1);
         assert_eq!(missing[0].0, ComponentRole::T5xxl);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn app_config_round_trips_tokens() {
+        // A config JSON that includes both tokens deserializes with them set,
+        // and re-serializing preserves them.
+        let json = r#"{
+            "sd_binary_path": null,
+            "default_model_path": null,
+            "gallery_dir": "/g",
+            "models_dir": "/m",
+            "extra_model_dirs": [],
+            "gpu_device": null,
+            "params_expanded": false,
+            "theme": "dark",
+            "onboarded": false,
+            "model_definitions": [],
+            "hf_token": "hf_abc123",
+            "civitai_token": "civ_xyz",
+            "last_request": {
+                "model": { "type": "single_file", "path": "" },
+                "prompt": "",
+                "negative_prompt": "",
+                "steps": 20,
+                "cfg_scale": 7.0,
+                "sampler": "euler_a",
+                "width": 512,
+                "height": 512,
+                "seed": -1,
+                "batch_count": 1
+            }
+        }"#;
+        let cfg: AppConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.hf_token.as_deref(), Some("hf_abc123"));
+        assert_eq!(cfg.civitai_token.as_deref(), Some("civ_xyz"));
+
+        let round: AppConfig =
+            serde_json::from_str(&serde_json::to_string(&cfg).unwrap()).unwrap();
+        assert_eq!(round.hf_token.as_deref(), Some("hf_abc123"));
+        assert_eq!(round.civitai_token.as_deref(), Some("civ_xyz"));
+    }
+
+    #[test]
+    fn app_config_defaults_tokens_to_none_for_old_config() {
+        // A pre-feature config JSON lacking the token keys must deserialize with
+        // both tokens as None (serde default), not error.
+        let json = r#"{
+            "sd_binary_path": null,
+            "default_model_path": null,
+            "gallery_dir": "/g",
+            "models_dir": "/m",
+            "extra_model_dirs": [],
+            "gpu_device": null,
+            "params_expanded": false,
+            "theme": "dark",
+            "onboarded": false,
+            "model_definitions": [],
+            "last_request": {
+                "model": { "type": "single_file", "path": "" },
+                "prompt": "",
+                "negative_prompt": "",
+                "steps": 20,
+                "cfg_scale": 7.0,
+                "sampler": "euler_a",
+                "width": 512,
+                "height": 512,
+                "seed": -1,
+                "batch_count": 1
+            }
+        }"#;
+        let cfg: AppConfig = serde_json::from_str(json).unwrap();
+        assert!(cfg.hf_token.is_none());
+        assert!(cfg.civitai_token.is_none());
     }
 }

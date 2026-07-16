@@ -39,6 +39,8 @@ pub fn default_config() -> AppConfig {
         theme: Theme::Dark,
         onboarded: false,
         model_definitions: Vec::new(),
+        hf_token: None,
+        civitai_token: None,
         last_request: GenerationRequest::default(),
     }
 }
