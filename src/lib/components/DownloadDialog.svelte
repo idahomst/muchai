@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { sysStats, downloadStatus, startDownload } from "../stores";
+  import { sysStats, downloadStatus, startDownload, settings } from "../stores";
   import { starterModels } from "../api";
   import type { RatedModel, Suitability } from "../types";
   import { onMount } from "svelte";
@@ -8,7 +8,6 @@
 
   let starters = $state<RatedModel[]>([]);
   let url = $state("");
-  let token = $state("");
 
   const fmt = (b: number) => (b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : `${(b / 1e6).toFixed(0)} MB`);
   const active = $derived($downloadStatus.kind === "active");
@@ -37,7 +36,7 @@
   // inline in the Model panel. No-op while a download is already active.
   function start(downloadUrl: string, name: string) {
     if (active || !downloadUrl) return;
-    void startDownload(downloadUrl, token.trim(), name);
+    void startDownload(downloadUrl, $settings?.hf_token ?? "", name);
     onclose();
   }
 </script>
@@ -66,7 +65,7 @@
     <section>
       <h3>Or paste a URL</h3>
       <input class="in" type="text" placeholder="https://…/model.safetensors" bind:value={url} />
-      <input class="in" type="password" placeholder="Access token (optional, for gated/civitai)" bind:value={token} />
+      <p class="tokhint">Gated downloads use your HuggingFace token from Preferences (⚙).</p>
       <div class="row">
         <button class="btn-primary" disabled={active || !url.trim()} onclick={() => start(url.trim(), nameFromUrl(url.trim()))}>Download</button>
         <button class="btn-secondary" onclick={onclose}>Close</button>
@@ -89,6 +88,7 @@
   .name { font-size:.9rem; }
   .sub { font-size:.72rem; opacity:.7; }
   .in { width:100%; font:inherit; padding:.4rem; box-sizing:border-box; margin-bottom:.4rem; }
+  .tokhint { font-size:.72rem; opacity:.6; margin:0 0 .2rem; }
   .row { display:flex; gap:.5rem; }
   button { font:inherit; font-size:.8rem; padding:.35rem .7rem; cursor:pointer; }
   button:disabled { opacity:.5; cursor:default; }

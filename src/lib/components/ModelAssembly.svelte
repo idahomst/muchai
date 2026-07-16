@@ -1,6 +1,6 @@
 <script lang="ts">
   import { listRecipes, detectFolder, pickFolder, pickModelFile, saveModelDefinition, multifileCatalog } from "../api";
-  import { startMultiFileDownload, downloadStatus } from "../stores";
+  import { startMultiFileDownload, downloadStatus, settings } from "../stores";
   import { ROLE_LABELS, VAE_FORMATS, PREDICTIONS } from "../types";
   import type { RecipeInfo, ComponentRole, ModelComponents, ModelDefinition, RatedMultiFile } from "../types";
   import { onMount } from "svelte";
@@ -28,7 +28,6 @@
   let catalog = $state<RatedMultiFile[]>([]);
   let catalogLoading = $state(false);
   let selectedEntry = $state<RatedMultiFile | null>(null);
-  let token = $state("");
 
   const recipe = $derived(recipes.find((r) => r.family === family));
   const basename = (p: string) => p.split(/[\\/]/).pop() || p;
@@ -105,7 +104,7 @@
     try {
       // The download resolves shared encoders/VAE once and returns the saved
       // definition (already persisted by the backend).
-      const def = await startMultiFileDownload(selectedEntry.id, token.trim(), selectedEntry.name);
+      const def = await startMultiFileDownload(selectedEntry.id, $settings?.hf_token ?? "", selectedEntry.name);
       if (def) {
         onsaved(def);
         onclose();
@@ -189,9 +188,7 @@
             </button>
           {/each}
         </div>
-        <label class="fld"><span>HF access token (optional, for gated models)</span>
-          <input class="in" type="password" bind:value={token} placeholder="hf_…" />
-        </label>
+        <p class="hint">Gated downloads use your HuggingFace token from Preferences (⚙).</p>
         {#if error}<p class="err">{error}</p>{/if}
         <div class="row">
           <button class="btn-primary" disabled={!selectedEntry || busy} onclick={downloadEntry}>Download</button>
