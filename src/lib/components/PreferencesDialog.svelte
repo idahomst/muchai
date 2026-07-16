@@ -14,31 +14,37 @@
   let showHf = $state(false);
   let showCivitai = $state(false);
   let error = $state<string | null>(null);
-  let saving = $state(false);
 
-  // Persist one token field. Empty string is stored as null so "is it set?" is a
-  // simple null check. Optimistic with rollback, matching the other controls.
-  // `saving` serializes writes so overlapping saves can't clobber each other, and
-  // the local input state is re-seeded from the store on rollback so the field
-  // never shows a value that wasn't actually persisted.
-  async function saveToken(field: "hf_token" | "civitai_token", value: string) {
+  // Writes are serialized through this promise chain so two token fields saved in
+  // quick succession (the first-run case: entering HF + Civitai together) can't
+  // race the config file or clobber each other, and no save is silently dropped.
+  let saveChain: Promise<void> = Promise.resolve();
+
+  // Queue a save for one token field. Empty string is stored as null so "is it
+  // set?" is a simple null check.
+  function saveToken(field: "hf_token" | "civitai_token", value: string) {
+    saveChain = saveChain.then(() => persistToken(field, value));
+  }
+
+  // Persist one token field. Optimistic with per-field rollback: on failure only
+  // the affected field reverts (preserving any other field edited meanwhile) and
+  // its local input is re-seeded so it never shows a value that wasn't persisted.
+  async function persistToken(field: "hf_token" | "civitai_token", value: string) {
     const cur = $settings;
-    if (!cur || saving) return;
+    if (!cur) return;
     const normalized = value.trim() === "" ? null : value.trim();
     if (cur[field] === normalized) return;
-    saving = true;
     const next = { ...cur, [field]: normalized };
     settings.set(next);
     error = null;
     try {
       await setSettings(next);
     } catch (e) {
-      settings.set(cur); // roll back the optimistic write
-      hf = $settings?.hf_token ?? ""; // resync local inputs with the store
-      civitai = $settings?.civitai_token ?? "";
+      // revert only this field, preserving any other field's concurrent edit
+      settings.set({ ...($settings ?? cur), [field]: cur[field] });
+      if (field === "hf_token") hf = cur.hf_token ?? "";
+      else civitai = cur.civitai_token ?? "";
       error = String(e);
-    } finally {
-      saving = false;
     }
   }
 </script>
@@ -56,9 +62,9 @@
           <input class="in" type={showHf ? "text" : "password"} value={hf}
             oninput={(e) => (hf = e.currentTarget.value)}
             onchange={() => saveToken("hf_token", hf)}
-            disabled={!$settings || saving}
+            disabled={!$settings}
             placeholder="hf_…" autocomplete="off" spellcheck="false" />
-          <button class="reveal" type="button" disabled={saving} onclick={() => (showHf = !showHf)}>{showHf ? "hide" : "show"}</button>
+          <button class="reveal" type="button" onclick={() => (showHf = !showHf)}>{showHf ? "hide" : "show"}</button>
         </div>
         <span class="hint">For gated / large models. Create at huggingface.co/settings/tokens</span>
       </label>
@@ -68,9 +74,9 @@
           <input class="in" type={showCivitai ? "text" : "password"} value={civitai}
             oninput={(e) => (civitai = e.currentTarget.value)}
             onchange={() => saveToken("civitai_token", civitai)}
-            disabled={!$settings || saving}
+            disabled={!$settings}
             placeholder="not set" autocomplete="off" spellcheck="false" />
-          <button class="reveal" type="button" disabled={saving} onclick={() => (showCivitai = !showCivitai)}>{showCivitai ? "hide" : "show"}</button>
+          <button class="reveal" type="button" onclick={() => (showCivitai = !showCivitai)}>{showCivitai ? "hide" : "show"}</button>
         </div>
         <span class="hint">Used for Civitai downloads. Create at civitai.com/user/account (API Keys)</span>
       </label>
