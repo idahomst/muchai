@@ -38,6 +38,7 @@ pub fn default_config() -> AppConfig {
         params_expanded: false,
         theme: Theme::Dark,
         onboarded: false,
+        model_definitions: Vec::new(),
         last_request: GenerationRequest::default(),
     }
 }
@@ -113,7 +114,7 @@ mod tests {
         // A pre-feature config file: no params_expanded key.
         std::fs::write(
             &path,
-            r#"{"sd_binary_path":null,"default_model_path":null,"gallery_dir":"/tmp/g","last_request":{"model_path":"","prompt":"","negative_prompt":"","steps":20,"cfg_scale":7.0,"sampler":"euler_a","width":512,"height":512,"seed":-1,"batch_count":1}}"#,
+            r#"{"sd_binary_path":null,"default_model_path":null,"gallery_dir":"/tmp/g","last_request":{"model":{"type":"single_file","path":""},"prompt":"","negative_prompt":"","steps":20,"cfg_scale":7.0,"sampler":"euler_a","width":512,"height":512,"seed":-1,"batch_count":1}}"#,
         )
         .unwrap();
         let cfg = load_config_from(&path);
@@ -143,7 +144,7 @@ mod tests {
         // A pre-feature config file: no theme key.
         std::fs::write(
             &path,
-            r#"{"sd_binary_path":null,"default_model_path":null,"gallery_dir":"/tmp/g","last_request":{"model_path":"","prompt":"","negative_prompt":"","steps":20,"cfg_scale":7.0,"sampler":"euler_a","width":512,"height":512,"seed":-1,"batch_count":1}}"#,
+            r#"{"sd_binary_path":null,"default_model_path":null,"gallery_dir":"/tmp/g","last_request":{"model":{"type":"single_file","path":""},"prompt":"","negative_prompt":"","steps":20,"cfg_scale":7.0,"sampler":"euler_a","width":512,"height":512,"seed":-1,"batch_count":1}}"#,
         )
         .unwrap();
         let cfg = load_config_from(&path);
@@ -173,7 +174,7 @@ mod tests {
         // A pre-feature config file: no onboarded key.
         std::fs::write(
             &path,
-            r#"{"sd_binary_path":null,"default_model_path":null,"gallery_dir":"/tmp/g","last_request":{"model_path":"","prompt":"","negative_prompt":"","steps":20,"cfg_scale":7.0,"sampler":"euler_a","width":512,"height":512,"seed":-1,"batch_count":1}}"#,
+            r#"{"sd_binary_path":null,"default_model_path":null,"gallery_dir":"/tmp/g","last_request":{"model":{"type":"single_file","path":""},"prompt":"","negative_prompt":"","steps":20,"cfg_scale":7.0,"sampler":"euler_a","width":512,"height":512,"seed":-1,"batch_count":1}}"#,
         )
         .unwrap();
         let cfg = load_config_from(&path);
@@ -202,7 +203,7 @@ mod tests {
         // A pre-feature config file: no models_dir / extra_model_dirs keys.
         std::fs::write(
             &path,
-            r#"{"sd_binary_path":null,"default_model_path":null,"gallery_dir":"/tmp/g","last_request":{"model_path":"","prompt":"","negative_prompt":"","steps":20,"cfg_scale":7.0,"sampler":"euler_a","width":512,"height":512,"seed":-1,"batch_count":1}}"#,
+            r#"{"sd_binary_path":null,"default_model_path":null,"gallery_dir":"/tmp/g","last_request":{"model":{"type":"single_file","path":""},"prompt":"","negative_prompt":"","steps":20,"cfg_scale":7.0,"sampler":"euler_a","width":512,"height":512,"seed":-1,"batch_count":1}}"#,
         )
         .unwrap();
         let cfg = load_config_from(&path);

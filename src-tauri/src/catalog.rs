@@ -1,4 +1,7 @@
+use crate::recipes::{ComponentRole, ModelRecipe, SharedComponent};
+use crate::types::ModelComponents;
 use serde::Serialize;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -93,9 +96,166 @@ pub fn rated_catalog(vram_total_mb: Option<u64>) -> Vec<RatedModel> {
         .collect()
 }
 
+/// A curated multi-file catalog entry — one downloadable split model.
+#[derive(Debug, Clone, Serialize)]
+pub struct MultiFileCatalogEntry {
+    pub id: String,
+    pub name: String,
+    pub family: String,
+    pub diffusion_url: String,
+    pub diffusion_size_bytes: u64,
+    /// Roles this model ships its OWN copy of (downloaded into the model folder,
+    /// not the shared pool). Usually empty.
+    pub overrides: Vec<SharedComponent>,
+    pub min_vram_mb: u64,
+    pub recommended_vram_mb: u64,
+}
+
+/// Built-in curated multi-file models.
+pub fn multi_file_catalog() -> Vec<MultiFileCatalogEntry> {
+    vec![MultiFileCatalogEntry {
+        id: "flux1-schnell".into(),
+        name: "FLUX.1 schnell".into(),
+        family: "flux1".into(),
+        diffusion_url:
+            "https://huggingface.co/black-forest-labs/FLUX.1-schnell/resolve/main/flux1-schnell.safetensors"
+                .into(),
+        diffusion_size_bytes: 23_782_506_688,
+        overrides: vec![],
+        min_vram_mb: 8192,
+        recommended_vram_mb: 16384,
+    }]
+}
+
+/// One file to fetch during multi-file download.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlannedDownload {
+    pub url: String,
+    pub dest: PathBuf,
+    pub role: ComponentRole,
+}
+
+/// Resolve an entry + its recipe into the exact files to download.
+/// - Diffusion → always the entry's URL → `models_dir/<id>/<filename>`.
+/// - Each family-shared role → into `models_dir/shared/<family>/<filename>`,
+///   skipped when `exists(dest)` (already pooled). If the entry OVERRIDES the
+///   role, download the override into the model folder instead.
+pub fn plan_downloads(
+    entry: &MultiFileCatalogEntry,
+    recipe: &ModelRecipe,
+    models_dir: &Path,
+    exists: &dyn Fn(&Path) -> bool,
+) -> Vec<PlannedDownload> {
+    let model_dir = models_dir.join(&entry.id);
+    let shared_dir = models_dir.join("shared").join(&entry.family);
+    let mut plan = Vec::new();
+
+    // Diffusion: always fetched into the per-model folder.
+    let diff_name = crate::downloader::derive_filename(None, &entry.diffusion_url);
+    plan.push(PlannedDownload {
+        url: entry.diffusion_url.clone(),
+        dest: model_dir.join(diff_name),
+        role: ComponentRole::Diffusion,
+    });
+
+    // NOTE: the shared-path joins below MUST stay in lockstep with
+    // `assemble_components` (same model_dir/shared_dir + override resolution).
+    for shared in &recipe.shared {
+        if shared.role == ComponentRole::Diffusion {
+            // Diffusion is always the per-model file fetched above; never
+            // double-fetch it even if a recipe lists it under `shared`.
+            continue;
+        }
+        if let Some(ov) = entry.overrides.iter().find(|o| o.role == shared.role) {
+            // Model ships its own copy → per-model folder, always fetched.
+            plan.push(PlannedDownload {
+                url: ov.url.to_string(),
+                dest: model_dir.join(ov.filename),
+                role: ov.role,
+            });
+        } else {
+            let dest = shared_dir.join(shared.filename);
+            if !exists(&dest) {
+                plan.push(PlannedDownload {
+                    url: shared.url.to_string(),
+                    dest,
+                    role: shared.role,
+                });
+            }
+        }
+    }
+    plan
+}
+
+/// Final absolute component paths for a fully-downloaded entry (independent of
+/// which files actually needed fetching), plus the recipe's format defaults.
+///
+/// INVARIANT: the per-file destinations here MUST match `plan_downloads` above
+/// (same `model_dir`/`shared_dir` joins + `derive_filename(None, diffusion_url)`).
+/// If you change path derivation in one, change it in the other — otherwise a
+/// model can download successfully yet its saved definition points at wrong paths.
+pub fn assemble_components(
+    entry: &MultiFileCatalogEntry,
+    recipe: &ModelRecipe,
+    models_dir: &Path,
+) -> ModelComponents {
+    let model_dir = models_dir.join(&entry.id);
+    let shared_dir = models_dir.join("shared").join(&entry.family);
+    let diff_name = crate::downloader::derive_filename(None, &entry.diffusion_url);
+
+    let mut c = ModelComponents {
+        diffusion_model: model_dir.join(diff_name).to_string_lossy().into_owned(),
+        vae_format: recipe.vae_format.map(|s| s.to_string()),
+        prediction: recipe.prediction.map(|s| s.to_string()),
+        ..Default::default()
+    };
+    for shared in &recipe.shared {
+        let path = if let Some(ov) = entry.overrides.iter().find(|o| o.role == shared.role) {
+            model_dir.join(ov.filename)
+        } else {
+            shared_dir.join(shared.filename)
+        }
+        .to_string_lossy()
+        .into_owned();
+        match shared.role {
+            ComponentRole::Vae => c.vae = Some(path),
+            ComponentRole::ClipL => c.clip_l = Some(path),
+            ComponentRole::ClipG => c.clip_g = Some(path),
+            ComponentRole::T5xxl => c.t5xxl = Some(path),
+            ComponentRole::Llm => c.llm = Some(path),
+            ComponentRole::Diffusion => {}
+        }
+    }
+    c
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RatedMultiFile {
+    #[serde(flatten)]
+    pub entry: MultiFileCatalogEntry,
+    pub suitability: Suitability,
+}
+
+/// The multi-file catalog rated against the given VRAM.
+pub fn rated_multi_file_catalog(vram_total_mb: Option<u64>) -> Vec<RatedMultiFile> {
+    multi_file_catalog()
+        .into_iter()
+        .map(|entry| {
+            let suitability = match vram_total_mb {
+                None => Suitability::Unknown,
+                Some(v) if v >= entry.recommended_vram_mb => Suitability::Recommended,
+                Some(v) if v >= entry.min_vram_mb => Suitability::Tight,
+                Some(_) => Suitability::TooBig,
+            };
+            RatedMultiFile { entry, suitability }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     #[test]
     fn catalog_is_non_empty_and_well_formed() {
@@ -118,5 +278,81 @@ mod tests {
         assert_eq!(rate(&sdxl, Some(sdxl.recommended_vram_mb + 4096)), Suitability::Recommended);
         assert_eq!(rate(&sdxl, Some(sdxl.min_vram_mb)), Suitability::Tight);
         assert_eq!(rate(&sdxl, Some(sdxl.min_vram_mb - 1)), Suitability::TooBig);
+    }
+
+    #[test]
+    fn plan_includes_diffusion_and_all_shared_when_pool_empty() {
+        let entry = &multi_file_catalog()[0];
+        let recipe = crate::recipes::recipe_for("flux1").unwrap();
+        let root = Path::new("/models");
+        let plan = plan_downloads(entry, &recipe, root, &|_| false);
+        // diffusion + 3 shared (t5xxl, clip_l, vae)
+        assert_eq!(plan.len(), 4);
+        let diff = plan.iter().find(|p| p.role == ComponentRole::Diffusion).unwrap();
+        assert_eq!(diff.dest, root.join("flux1-schnell").join("flux1-schnell.safetensors"));
+        let t5 = plan.iter().find(|p| p.role == ComponentRole::T5xxl).unwrap();
+        assert_eq!(t5.dest, root.join("shared").join("flux1").join("t5xxl_fp16.safetensors"));
+    }
+
+    #[test]
+    fn plan_skips_shared_files_already_in_pool() {
+        let entry = &multi_file_catalog()[0];
+        let recipe = crate::recipes::recipe_for("flux1").unwrap();
+        let root = Path::new("/models");
+        // Pretend everything under shared/ already exists → only diffusion planned.
+        let plan = plan_downloads(entry, &recipe, root, &|p| p.starts_with(root.join("shared")));
+        assert_eq!(plan.len(), 1);
+        assert_eq!(plan[0].role, ComponentRole::Diffusion);
+    }
+
+    #[test]
+    fn assemble_components_paths_match_plan_downloads() {
+        // Enforces the comment-only invariant that assemble_components derives the
+        // same per-file destinations as plan_downloads. With an empty pool every
+        // file is planned, so every assembled role has a corresponding dest.
+        let entry = &multi_file_catalog()[0];
+        let recipe = crate::recipes::recipe_for("flux1").unwrap();
+        let root = Path::new("/models");
+        let plan = plan_downloads(entry, &recipe, root, &|_| false);
+        let comps = assemble_components(entry, &recipe, root);
+
+        let planned = |role: ComponentRole| plan.iter().find(|p| p.role == role).map(|p| p.dest.clone());
+
+        // Diffusion is always present in both.
+        assert_eq!(Some(PathBuf::from(&comps.diffusion_model)), planned(ComponentRole::Diffusion));
+
+        // Every shared role the recipe defines must assemble to its planned dest.
+        for shared in &recipe.shared {
+            let assembled = match shared.role {
+                ComponentRole::Vae => comps.vae.clone(),
+                ComponentRole::ClipL => comps.clip_l.clone(),
+                ComponentRole::ClipG => comps.clip_g.clone(),
+                ComponentRole::T5xxl => comps.t5xxl.clone(),
+                ComponentRole::Llm => comps.llm.clone(),
+                ComponentRole::Diffusion => continue,
+            };
+            assert_eq!(
+                assembled.map(PathBuf::from),
+                planned(shared.role),
+                "{:?} assembled path must equal its planned download dest",
+                shared.role
+            );
+        }
+    }
+
+    #[test]
+    fn plan_puts_overrides_in_model_folder() {
+        let mut entry = multi_file_catalog()[0].clone();
+        entry.overrides = vec![SharedComponent {
+            role: ComponentRole::Vae,
+            url: "https://example/ae-custom.safetensors",
+            size_bytes: 1,
+            filename: "ae-custom.safetensors",
+        }];
+        let recipe = crate::recipes::recipe_for("flux1").unwrap();
+        let root = Path::new("/models");
+        let plan = plan_downloads(&entry, &recipe, root, &|_| false);
+        let vae = plan.iter().find(|p| p.role == ComponentRole::Vae).unwrap();
+        assert_eq!(vae.dest, root.join("flux1-schnell").join("ae-custom.safetensors"));
     }
 }

@@ -1,11 +1,28 @@
 use crate::engine::{self, ChildSlot, GenError};
 use crate::types::{AppConfig, DownloadProgress, GalleryItem, GenerationRequest, GpuDevice, ModelInfo};
+use crate::recipes::{self, ComponentRole};
+use crate::types::{ModelDefinition, ModelRef};
 use crate::{catalog, config, downloader, gallery, models};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, State};
+
+/// One detected role → absolute path, for the folder auto-detect flow.
+#[derive(serde::Serialize)]
+pub struct DetectedSlot {
+    pub role: ComponentRole,
+    pub path: String,
+}
+
+/// Result of point-at-a-folder detection: best-matching family + pre-filled slots.
+#[derive(serde::Serialize)]
+pub struct DetectionResult {
+    pub family: String,
+    pub name: String,
+    pub slots: Vec<DetectedSlot>,
+}
 
 pub struct AppState {
     pub config: Mutex<AppConfig>,
@@ -120,6 +137,16 @@ pub async fn generate(
     request: GenerationRequest,
 ) -> Result<Vec<GalleryItem>, String> {
     let cfg = state.config.lock().unwrap().clone();
+    if let ModelRef::MultiFile(c) = &request.model {
+        let missing = crate::types::missing_components(c);
+        if !missing.is_empty() {
+            let roles: Vec<String> = missing.iter().map(|(r, _)| format!("{r:?}")).collect();
+            return Err(format!(
+                "This model is missing component files ({}). Re-assemble or re-download it.",
+                roles.join(", ")
+            ));
+        }
+    }
     // Validate the saved device against the enumerated list (cached) and map it
     // to a backend; a stale/absent selection falls back to the engine default
     // when a real GPU exists, or to the CPU backend when none does.
@@ -260,10 +287,61 @@ fn model_dirs(cfg: &AppConfig) -> Vec<PathBuf> {
     dirs
 }
 
+/// Every component file path owned by a saved definition (canonicalized the
+/// same way `models::scan_models_excluding` matches internally, so the exclusion
+/// isn't silently a no-op).
+fn referenced_paths(cfg: &AppConfig) -> std::collections::HashSet<PathBuf> {
+    let mut set = std::collections::HashSet::new();
+    for def in &cfg.model_definitions {
+        let c = &def.components;
+        for p in [
+            Some(&c.diffusion_model),
+            c.vae.as_ref(),
+            c.clip_l.as_ref(),
+            c.clip_g.as_ref(),
+            c.t5xxl.as_ref(),
+            c.llm.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let pb = PathBuf::from(p);
+            set.insert(pb.canonicalize().unwrap_or(pb));
+        }
+    }
+    set
+}
+
+/// Single-file model list for the UI: scan every watched dir, then drop both the
+/// definition-owned component files AND the entire shared component pool under
+/// `<models_dir>/shared`. The pool exclusion is belt-and-suspenders alongside the
+/// `exclude` set: shared encoder/VAE files are never valid standalone models, so
+/// even when orphaned — the last model of a family is deleted (the pool is left
+/// intact), or a catalog download is cancelled after some shared files landed —
+/// they must not reappear as bogus, ungeneratable single-file models.
+fn scan_single_file_models(
+    dirs: &[PathBuf],
+    exclude: &std::collections::HashSet<PathBuf>,
+    models_dir: &std::path::Path,
+) -> Vec<ModelInfo> {
+    let mut models = models::scan_models_excluding(dirs, exclude);
+    // Canonicalize the shared dir the same way scan canonicalizes file paths so
+    // the prefix test isn't silently a no-op. When it doesn't exist there are no
+    // files under it to filter anyway, so the fallback is harmless.
+    let shared = models_dir.join("shared");
+    let shared = shared.canonicalize().unwrap_or(shared);
+    models.retain(|m| !std::path::Path::new(&m.path).starts_with(&shared));
+    models
+}
+
 #[tauri::command]
 pub fn list_models(state: State<AppState>) -> Vec<ModelInfo> {
     let cfg = state.config.lock().unwrap().clone();
-    models::scan_models(&model_dirs(&cfg))
+    scan_single_file_models(
+        &model_dirs(&cfg),
+        &referenced_paths(&cfg),
+        std::path::Path::new(&cfg.models_dir),
+    )
 }
 
 #[tauri::command]
@@ -317,8 +395,10 @@ pub async fn download_model(
             move |downloaded, total| {
                 if downloaded.saturating_sub(last_emit) >= 4 << 20 || Some(downloaded) == total {
                     last_emit = downloaded;
-                    let _ = app2
-                        .emit("model:download:progress", DownloadProgress { downloaded, total });
+                    let _ = app2.emit(
+                        "model:download:progress",
+                        DownloadProgress { downloaded, total, file_index: None, file_count: None, file_name: None },
+                    );
                 }
             },
             &cancel,
@@ -344,10 +424,313 @@ pub async fn download_model(
     }
 }
 
+#[tauri::command]
+pub fn multifile_catalog(vram_total_mb: Option<u64>) -> Vec<catalog::RatedMultiFile> {
+    catalog::rated_multi_file_catalog(vram_total_mb)
+}
+
+/// Download a curated multi-file model: fetch diffusion + any missing shared
+/// components sequentially, assemble + persist a definition, return it.
+/// On cancel/failure: remove the partial per-model folder, persist nothing.
+#[tauri::command]
+pub async fn download_multifile(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    entry_id: String,
+    token: String,
+) -> Result<ModelDefinition, String> {
+    let (models_dir, entry, recipe) = {
+        let cfg = state.config.lock().unwrap();
+        let entry = catalog::multi_file_catalog()
+            .into_iter()
+            .find(|e| e.id == entry_id)
+            .ok_or_else(|| "Unknown catalog model.".to_string())?;
+        let recipe = recipes::recipe_for(&entry.family).ok_or_else(|| "Unknown family.".to_string())?;
+        (PathBuf::from(&cfg.models_dir), entry, recipe)
+    };
+
+    let plan = catalog::plan_downloads(&entry, &recipe, &models_dir, &|p| p.exists());
+    let file_count = plan.len() as u32;
+
+    let cancel = state.download_cancel.clone();
+    cancel.store(false, Ordering::SeqCst);
+    let app2 = app.clone();
+    let entry2 = entry.clone();
+    let recipe2 = recipe.clone();
+    let models_dir2 = models_dir.clone();
+
+    let result = tauri::async_runtime::spawn_blocking(move || -> Result<ModelDefinition, String> {
+        for (i, item) in plan.iter().enumerate() {
+            let name = item
+                .dest
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let mut last_emit: u64 = 0;
+            let app3 = app2.clone();
+            let name2 = name.clone();
+            downloader::download_to(
+                &item.url,
+                &token,
+                &item.dest,
+                move |downloaded, total| {
+                    if downloaded.saturating_sub(last_emit) >= 4 << 20 || Some(downloaded) == total {
+                        last_emit = downloaded;
+                        let _ = app3.emit(
+                            "model:download:progress",
+                            DownloadProgress {
+                                downloaded,
+                                total,
+                                file_index: Some(i as u32),
+                                file_count: Some(file_count),
+                                file_name: Some(name2.clone()),
+                            },
+                        );
+                    }
+                },
+                &cancel,
+            )
+            .map_err(|e| e.message())?;
+        }
+        let components = catalog::assemble_components(&entry2, &recipe2, &models_dir2);
+        Ok(ModelDefinition {
+            id: entry2.id.clone(),
+            name: entry2.name.clone(),
+            family: entry2.family.clone(),
+            components,
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+
+    match result {
+        Ok(def) => {
+            // Persist (upsert by id).
+            let mut cfg = state.config.lock().unwrap();
+            if let Some(existing) = cfg.model_definitions.iter_mut().find(|d| d.id == def.id) {
+                *existing = def.clone();
+            } else {
+                cfg.model_definitions.push(def.clone());
+            }
+            config::save_config_to(&config::config_file_path(), &cfg).map_err(|e| e.to_string())?;
+            Ok(def)
+        }
+        Err(e) => {
+            // Roll back the per-model folder; leave the shared pool intact. The
+            // shared guard (`safe_model_dir`) only ever yields a genuine direct
+            // subfolder of models_dir — never the shared pool or models_dir
+            // itself — in case a future catalog id is empty, "shared", or bears
+            // a path separator.
+            if let Some(folder) = safe_model_dir(&models_dir, &entry.id) {
+                let _ = std::fs::remove_dir_all(&folder);
+            }
+            Err(e)
+        }
+    }
+}
+
 /// Pick a folder (used for adding watched model folders / changing the primary).
 #[tauri::command]
 pub async fn pick_folder(app: AppHandle) -> Option<String> {
     use tauri_plugin_dialog::DialogExt;
     let dir = app.dialog().file().blocking_pick_folder();
     dir.and_then(|d| d.into_path().ok()).map(|p| p.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+pub fn list_recipes() -> Vec<recipes::RecipeInfo> {
+    recipes::recipe_infos()
+}
+
+/// Run filename detection over the files in a folder; return the best-matching
+/// family with pre-filled absolute-path slots. Falls back to "custom" (no slots)
+/// when nothing matches — never a dead end.
+#[tauri::command]
+pub fn detect_folder(dir: String) -> DetectionResult {
+    let dir = PathBuf::from(&dir);
+    let mut entries: Vec<PathBuf> = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(&dir) {
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_file()
+                && p.extension().and_then(|x| x.to_str()).map(|x| x.eq_ignore_ascii_case("safetensors")).unwrap_or(false)
+            {
+                entries.push(p);
+            }
+        }
+    }
+    let names: Vec<String> = entries
+        .iter()
+        .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .collect();
+
+    match recipes::detect_best(&names) {
+        Some((recipe, detected)) => {
+            let slots = detected
+                .assignments
+                .iter()
+                .filter_map(|(role, fname)| {
+                    entries
+                        .iter()
+                        .find(|p| p.file_name().map(|n| n.to_string_lossy() == *fname.as_str()).unwrap_or(false))
+                        .map(|p| DetectedSlot { role: *role, path: p.to_string_lossy().into_owned() })
+                })
+                .collect();
+            DetectionResult { family: recipe.family.to_string(), name: recipe.name.to_string(), slots }
+        }
+        None => DetectionResult {
+            family: "custom".into(),
+            name: "Custom (assign files manually)".into(),
+            slots: Vec::new(),
+        },
+    }
+}
+
+/// Validate a definition before persisting: id must be non-blank and all
+/// required roles for the family must be filled.
+fn validate_model_definition(def: &ModelDefinition) -> Result<(), String> {
+    if def.id.trim().is_empty() {
+        return Err("Model id must not be empty.".into());
+    }
+    if let Some(recipe) = recipes::recipe_for(&def.family) {
+        let missing = recipe.missing_required_roles(&def.components);
+        if !missing.is_empty() {
+            return Err(format!("Missing required components: {missing:?}"));
+        }
+    } else {
+        return Err(format!("Unknown model family: {}", def.family));
+    }
+    Ok(())
+}
+
+/// Insert or update a definition (matched by id) and persist. Validates that
+/// the id is non-blank and required roles for the family are filled before saving.
+#[tauri::command]
+pub fn save_model_definition(state: State<AppState>, def: ModelDefinition) -> Result<(), String> {
+    validate_model_definition(&def)?;
+    let mut cfg = state.config.lock().unwrap();
+    if let Some(existing) = cfg.model_definitions.iter_mut().find(|d| d.id == def.id) {
+        *existing = def;
+    } else {
+        cfg.model_definitions.push(def);
+    }
+    config::save_config_to(&config::config_file_path(), &cfg).map_err(|e| e.to_string())
+}
+
+/// Returns the ids of saved model definitions that reference missing files, so
+/// the UI can flag them. Filesystem check lives in `missing_components`.
+#[tauri::command]
+pub fn broken_definitions(state: State<'_, AppState>) -> Vec<String> {
+    let cfg = state.config.lock().unwrap();
+    cfg.model_definitions
+        .iter()
+        .filter(|d| !crate::types::missing_components(&d.components).is_empty())
+        .map(|d| d.id.clone())
+        .collect()
+}
+
+/// The per-model folder `<models_dir>/<id>`, but only when `id` names a safe,
+/// direct child that actually exists as a directory: non-blank, not the shared
+/// pool, and free of path separators. Returns `None` otherwise so callers can
+/// never trash the shared pool or escape `models_dir` via a crafted id. Shared
+/// by both the delete and the download-rollback paths so they guard identically.
+fn safe_model_dir(models_dir: &std::path::Path, id: &str) -> Option<PathBuf> {
+    if id.trim().is_empty() || id == "shared" || id.contains('/') || id.contains('\\') {
+        return None;
+    }
+    let folder = models_dir.join(id);
+    (folder.parent() == Some(models_dir) && folder.is_dir()).then_some(folder)
+}
+
+/// Delete a definition and move its per-model folder to trash. The shared pool
+/// is left intact (other models may use it).
+#[tauri::command]
+pub fn delete_model_definition(state: State<AppState>, id: String) -> Result<(), String> {
+    let mut cfg = state.config.lock().unwrap();
+    let Some(pos) = cfg.model_definitions.iter().position(|d| d.id == id) else {
+        return Err("That model is no longer in the library.".into());
+    };
+    let def = cfg.model_definitions.remove(pos);
+    // Per-model folder = models_dir/<id>. Trash it if present (ignore if absent).
+    // The guard refuses a blank id, "shared", or a separator-bearing id so a
+    // crafted definition can never trash the pool or escape models_dir.
+    if let Some(folder) = safe_model_dir(std::path::Path::new(&cfg.models_dir), &def.id) {
+        let _ = trash::delete(&folder);
+    }
+    config::save_config_to(&config::config_file_path(), &cfg).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::ModelComponents;
+
+    fn flux_def(id: &str) -> ModelDefinition {
+        ModelDefinition {
+            id: id.into(),
+            name: "Test".into(),
+            family: "flux1".into(),
+            components: ModelComponents {
+                diffusion_model: "flux1-schnell.safetensors".into(),
+                clip_l: Some("clip_l.safetensors".into()),
+                t5xxl: Some("t5xxl_fp16.safetensors".into()),
+                vae: Some("ae.safetensors".into()),
+                ..Default::default()
+            },
+        }
+    }
+
+    #[test]
+    fn rejects_empty_definition_id() {
+        let err = validate_model_definition(&flux_def("")).unwrap_err();
+        assert_eq!(err, "Model id must not be empty.");
+    }
+
+    #[test]
+    fn rejects_blank_definition_id() {
+        assert!(validate_model_definition(&flux_def("   ")).is_err());
+    }
+
+    #[test]
+    fn accepts_valid_definition() {
+        assert!(validate_model_definition(&flux_def("flux1-schnell")).is_ok());
+    }
+
+    #[test]
+    fn scan_excludes_shared_pool_but_keeps_real_models() {
+        use std::collections::HashSet;
+        let root = std::env::temp_dir().join(format!("fridai-shared-excl-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let real = root.join("realmodel.safetensors");
+        let shared = root.join("shared/flux1/t5xxl.safetensors");
+        for p in [&real, &shared] {
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, b"x").unwrap();
+        }
+
+        let models = scan_single_file_models(&[root.clone()], &HashSet::new(), &root);
+        let names: Vec<&str> = models.iter().map(|m| m.name.as_str()).collect();
+        assert_eq!(names, vec!["realmodel"], "shared-pool component must be excluded, real model kept");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn safe_model_dir_guards_shared_and_separators() {
+        let root = std::env::temp_dir().join(format!("fridai-safedir-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("shared")).unwrap();
+        std::fs::create_dir_all(root.join("good")).unwrap();
+
+        // Valid id → the real per-model folder.
+        assert_eq!(safe_model_dir(&root, "good"), Some(root.join("good")));
+        // Dangerous ids → refused, even though <root>/shared exists on disk.
+        assert!(safe_model_dir(&root, "shared").is_none(), "must never target the shared pool");
+        assert!(safe_model_dir(&root, "a/b").is_none(), "no forward-slash escape");
+        assert!(safe_model_dir(&root, "a\\b").is_none(), "no backslash escape");
+        assert!(safe_model_dir(&root, "").is_none());
+        assert!(safe_model_dir(&root, "   ").is_none());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }

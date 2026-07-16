@@ -1,12 +1,13 @@
 import { writable, get } from "svelte/store";
-import { downloadModel, cancelDownload, onDownloadProgress } from "./api";
-import type { GenerationRequest, GalleryItem, SystemStats, AppConfig, ProgressUpdate, ModelInfo, GpuDevice } from "./types";
+import { downloadModel, downloadMultifile, cancelDownload, onDownloadProgress } from "./api";
+import type { GenerationRequest, GalleryItem, SystemStats, AppConfig, ProgressUpdate, ModelInfo, GpuDevice, ModelDefinition } from "./types";
 import { defaultRequest } from "./types";
 
 export const request = writable<GenerationRequest>(defaultRequest());
 export const settings = writable<AppConfig | null>(null);
 export const history = writable<GalleryItem[]>([]);
 export const models = writable<ModelInfo[]>([]);
+export const definitions = writable<ModelDefinition[]>([]);
 export const gpuDevices = writable<GpuDevice[]>([]);
 export const currentImage = writable<string | null>(null); // converted asset src
 export const currentItem = writable<GalleryItem | null>(null); // params behind the previewed image
@@ -21,7 +22,15 @@ export const genStatus = writable<GenStatus>({ kind: "idle" });
 
 export type DownloadStatus =
   | { kind: "idle" }
-  | { kind: "active"; name: string; downloaded: number; total: number | null }
+  | {
+      kind: "active";
+      name: string;
+      downloaded: number;
+      total: number | null;
+      fileIndex?: number;
+      fileCount?: number;
+      fileName?: string;
+    }
   | { kind: "done"; name: string }                    // dismissible notice
   | { kind: "error"; name: string; message: string }; // dismissible notice
 
@@ -39,7 +48,9 @@ export async function startDownload(url: string, token: string, name: string): P
   downloadStatus.set({ kind: "active", name, downloaded: 0, total: null });
   const unlisten = await onDownloadProgress((p) => {
     downloadStatus.update((s) =>
-      s.kind === "active" ? { ...s, downloaded: p.downloaded, total: p.total } : s,
+      s.kind === "active"
+        ? { ...s, downloaded: p.downloaded, total: p.total, fileIndex: p.file_index, fileCount: p.file_count, fileName: p.file_name }
+        : s,
     );
   });
   try {
@@ -58,4 +69,40 @@ export async function startDownload(url: string, token: string, name: string): P
 export function cancelActiveDownload(): void {
   cancelRequested = true;
   void cancelDownload();
+}
+
+/**
+ * Start a curated multi-file download in the background (single-flight, like
+ * startDownload). Upserts the returned definition into the `definitions` store
+ * and returns it (the caller selects it). No-op if a download is already active.
+ */
+export async function startMultiFileDownload(entryId: string, token: string, name: string): Promise<ModelDefinition | null> {
+  if (get(downloadStatus).kind === "active") return null;
+  cancelRequested = false;
+  downloadStatus.set({ kind: "active", name, downloaded: 0, total: null, fileIndex: 0 });
+  const unlisten = await onDownloadProgress((p) => {
+    downloadStatus.update((s) =>
+      s.kind === "active"
+        ? { ...s, downloaded: p.downloaded, total: p.total, fileIndex: p.file_index, fileCount: p.file_count, fileName: p.file_name }
+        : s,
+    );
+  });
+  try {
+    const def = await downloadMultifile(entryId, token);
+    definitions.update((d) => {
+      // Upsert in place so an existing definition keeps its list position.
+      const i = d.findIndex((x) => x.id === def.id);
+      if (i === -1) return [...d, def];
+      const next = d.slice();
+      next[i] = def;
+      return next;
+    });
+    downloadStatus.set({ kind: "done", name });
+    return def;
+  } catch (e) {
+    downloadStatus.set(cancelRequested ? { kind: "idle" } : { kind: "error", name, message: String(e) });
+    return null;
+  } finally {
+    unlisten();
+  }
 }

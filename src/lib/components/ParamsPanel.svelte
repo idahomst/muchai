@@ -1,12 +1,11 @@
 <script lang="ts">
-  import { currentItem, settings } from "$lib/stores";
+  import { currentItem, settings, definitions } from "$lib/stores";
   import { setSettings } from "$lib/api";
-  import { SAMPLERS } from "$lib/types";
+  import { SAMPLERS, modelLabel } from "$lib/types";
 
   let busy = $state(false);
   let error = $state<string | null>(null);
 
-  const basename = (p: string) => p.split(/[\\/]/).pop() || p;
   const samplerLabel = (v: string) =>
     SAMPLERS.find((s) => s.value === v)?.label ?? v;
 
@@ -45,7 +44,7 @@
     </button>
     {#if expanded}
       <div class="grid">
-        <span class="k">Model</span><span class="v" title={r.model_path}>{basename(r.model_path)}</span>
+        <span class="k">Model</span><span class="v" title={modelLabel(r.model, $definitions)}>{modelLabel(r.model, $definitions)}</span>
         <span class="k">Seed</span><span class="v">{r.seed}</span>
         <span class="k">Steps</span><span class="v">{r.steps}</span>
         <span class="k">CFG</span><span class="v">{r.cfg_scale}</span>

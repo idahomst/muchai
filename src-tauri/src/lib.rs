@@ -8,6 +8,7 @@ mod engine;
 mod gallery;
 mod models;
 mod progress_parser;
+mod recipes;
 mod sysmon;
 mod types;
 
@@ -83,6 +84,13 @@ pub fn run() {
             commands::pick_folder,
             commands::list_gpu_devices,
             commands::delete_image,
+            commands::list_recipes,
+            commands::detect_folder,
+            commands::save_model_definition,
+            commands::delete_model_definition,
+            commands::multifile_catalog,
+            commands::download_multifile,
+            commands::broken_definitions,
         ])
         .run(tauri::generate_context!())
         .expect("error while running fridAI");
