@@ -128,6 +128,10 @@ export interface AppConfig {
   // Whether the one-time welcome dialog has been dismissed. Mirrors the Rust
   // AppConfig.onboarded (#[serde(default)] → false for old configs).
   onboarded: boolean;
+  // HuggingFace / Civitai access tokens. Plaintext in config.json. Mirrors the
+  // Rust AppConfig fields (#[serde(default)] → null for old configs). null = unset.
+  hf_token: string | null;
+  civitai_token: string | null;
 }
 
 export const defaultRequest = (): GenerationRequest => ({
