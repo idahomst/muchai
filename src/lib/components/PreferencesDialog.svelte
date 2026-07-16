@@ -14,14 +14,19 @@
   let showHf = $state(false);
   let showCivitai = $state(false);
   let error = $state<string | null>(null);
+  let saving = $state(false);
 
   // Persist one token field. Empty string is stored as null so "is it set?" is a
   // simple null check. Optimistic with rollback, matching the other controls.
+  // `saving` serializes writes so overlapping saves can't clobber each other, and
+  // the local input state is re-seeded from the store on rollback so the field
+  // never shows a value that wasn't actually persisted.
   async function saveToken(field: "hf_token" | "civitai_token", value: string) {
     const cur = $settings;
-    if (!cur) return;
+    if (!cur || saving) return;
     const normalized = value.trim() === "" ? null : value.trim();
     if (cur[field] === normalized) return;
+    saving = true;
     const next = { ...cur, [field]: normalized };
     settings.set(next);
     error = null;
@@ -29,7 +34,11 @@
       await setSettings(next);
     } catch (e) {
       settings.set(cur); // roll back the optimistic write
+      hf = $settings?.hf_token ?? ""; // resync local inputs with the store
+      civitai = $settings?.civitai_token ?? "";
       error = String(e);
+    } finally {
+      saving = false;
     }
   }
 </script>
@@ -47,8 +56,9 @@
           <input class="in" type={showHf ? "text" : "password"} value={hf}
             oninput={(e) => (hf = e.currentTarget.value)}
             onchange={() => saveToken("hf_token", hf)}
+            disabled={!$settings || saving}
             placeholder="hf_…" autocomplete="off" spellcheck="false" />
-          <button class="reveal" type="button" onclick={() => (showHf = !showHf)}>{showHf ? "hide" : "show"}</button>
+          <button class="reveal" type="button" disabled={saving} onclick={() => (showHf = !showHf)}>{showHf ? "hide" : "show"}</button>
         </div>
         <span class="hint">For gated / large models. Create at huggingface.co/settings/tokens</span>
       </label>
@@ -58,8 +68,9 @@
           <input class="in" type={showCivitai ? "text" : "password"} value={civitai}
             oninput={(e) => (civitai = e.currentTarget.value)}
             onchange={() => saveToken("civitai_token", civitai)}
+            disabled={!$settings || saving}
             placeholder="not set" autocomplete="off" spellcheck="false" />
-          <button class="reveal" type="button" onclick={() => (showCivitai = !showCivitai)}>{showCivitai ? "hide" : "show"}</button>
+          <button class="reveal" type="button" disabled={saving} onclick={() => (showCivitai = !showCivitai)}>{showCivitai ? "hide" : "show"}</button>
         </div>
         <span class="hint">Used for Civitai downloads. Create at civitai.com/user/account (API Keys)</span>
       </label>
