@@ -9,15 +9,14 @@
   import ImagePreview from "$lib/components/ImagePreview.svelte";
   import ParamsPanel from "$lib/components/ParamsPanel.svelte";
   import HistoryStrip from "$lib/components/HistoryStrip.svelte";
-  import GalleryLocation from "$lib/components/GalleryLocation.svelte";
-  import ModelFolders from "$lib/components/ModelFolders.svelte";
-  import DevicePicker from "$lib/components/DevicePicker.svelte";
   import ResourceMonitor from "$lib/components/ResourceMonitor.svelte";
   import ThemeToggle from "$lib/components/ThemeToggle.svelte";
   import WelcomeDialog from "$lib/components/WelcomeDialog.svelte";
+  import PreferencesDialog from "$lib/components/PreferencesDialog.svelte";
   import { applyTheme } from "$lib/theme";
 
   let showWelcome = $state(false);
+  let showPrefs = $state(false);
 
   // Persist dismissal optimistically; the dialog stays closed this session even
   // if the write fails (onboarding is non-critical — worst case it shows once
@@ -65,12 +64,11 @@
       <h1 class="brand">FridAI</h1>
       <div class="hdr-actions">
         <button class="help-btn" aria-label="Help" title="Help" onclick={() => (showWelcome = true)}>?</button>
+        <button class="help-btn" aria-label="Preferences" title="Preferences" onclick={() => (showPrefs = true)}>⚙</button>
         <ThemeToggle />
       </div>
     </header>
     <ModelLibrary />
-    <ModelFolders />
-    <DevicePicker />
     <PromptPanel />
     <SettingsPanel />
     <div class="spacer"></div>
@@ -81,13 +79,16 @@
     <ImagePreview />
     <ParamsPanel />
     <HistoryStrip />
-    <GalleryLocation />
   </section>
 </main>
 <ResourceMonitor />
 
 {#if showWelcome}
   <WelcomeDialog onclose={dismissWelcome} />
+{/if}
+
+{#if showPrefs}
+  <PreferencesDialog onclose={() => (showPrefs = false)} />
 {/if}
 
 <style>
