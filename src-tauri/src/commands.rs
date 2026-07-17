@@ -434,7 +434,7 @@ pub fn multifile_catalog(vram_total_mb: Option<u64>) -> Vec<catalog::RatedMultiF
 /// verdict against the given VRAM. Repo URLs enumerate the tree; a direct file
 /// URL yields a single-row picker (size unknown until download).
 #[tauri::command]
-pub fn list_hf_variants(
+pub async fn list_hf_variants(
     url: String,
     token: String,
     vram_total_mb: Option<u64>,
@@ -454,10 +454,15 @@ pub fn list_hf_variants(
             Ok(vec![hf::rate_variant(&repo, &variant, vram_total_mb)])
         }
         hf::HfUrl::Repo(repo) => {
-            let entries = hf::fetch_tree(&repo, &token)?;
+            // Network I/O runs off the main thread (mirrors download_model /
+            // download_multifile) so a slow or hung HF request can't freeze the UI.
+            let repo_for_fetch = repo.clone();
+            let entries = tauri::async_runtime::spawn_blocking(move || hf::fetch_tree(&repo_for_fetch, &token))
+                .await
+                .map_err(|e| e.to_string())??;
             let variants = hf::classify_variants(&entries);
             if variants.is_empty() {
-                return Err("No .safetensors models found in that repo. Paste a direct file URL instead.".into());
+                return Err("No downloadable diffusion model found in that repo. Paste a direct file URL instead.".into());
             }
             Ok(variants.iter().map(|v| hf::rate_variant(&repo, v, vram_total_mb)).collect())
         }

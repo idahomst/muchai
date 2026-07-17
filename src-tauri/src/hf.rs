@@ -249,14 +249,22 @@ pub fn fetch_tree(repo: &HfRepoRef, token: &str) -> Result<Vec<HfTreeEntry>, Str
         "https://huggingface.co/api/models/{}/{}/tree/{}?recursive=true",
         repo.org, repo.repo, repo.revision
     );
-    let mut req = ureq::get(&url);
+    // Bounded timeouts so a hung/slow HF connection can't stall the lookup.
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(std::time::Duration::from_secs(10))
+        .timeout_read(std::time::Duration::from_secs(30))
+        .build();
+    let mut req = agent.get(&url);
     if !token.is_empty() {
         req = req.set("Authorization", &format!("Bearer {token}"));
     }
     match req.call() {
         Ok(resp) => {
-            let body = resp.into_string().map_err(|e| e.to_string())?;
+            let body = resp
+                .into_string()
+                .map_err(|_| "Couldn't read the file list from HuggingFace (unexpected response).".to_string())?;
             parse_tree_json(&body)
+                .map_err(|_| "Couldn't read the file list from HuggingFace (unexpected response).".to_string())
         }
         Err(ureq::Error::Status(401, _)) | Err(ureq::Error::Status(403, _)) => {
             Err("This repo is gated — add a HuggingFace token in Preferences (⚙).".into())
