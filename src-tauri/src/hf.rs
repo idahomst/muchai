@@ -54,6 +54,9 @@ pub fn parse_hf_url(url: &str) -> Option<HfUrl> {
     }
     match segs[2] {
         "tree" => {
+            // A tree URL may point at a subdirectory (segs[4..]); we intentionally
+            // classify it as the whole repo and enumerate from the root — subtree
+            // scoping is not supported. (blob/resolve DO preserve their file path.)
             let revision = segs.get(3).map(|s| s.to_string()).unwrap_or_else(main);
             Some(HfUrl::Repo(HfRepoRef { org, repo, revision }))
         }
@@ -111,6 +114,24 @@ mod tests {
                 path: "flux1-dev.safetensors".into(),
             }
         );
+    }
+
+    #[test]
+    fn parses_blob_file_url() {
+        let u = parse_hf_url("https://huggingface.co/org/repo/blob/main/model.safetensors").unwrap();
+        assert_eq!(
+            u,
+            HfUrl::File {
+                repo: HfRepoRef { org: "org".into(), repo: "repo".into(), revision: "main".into() },
+                path: "model.safetensors".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn strips_query_and_fragment() {
+        let u = parse_hf_url("https://huggingface.co/org/repo?download=true#section").unwrap();
+        assert_eq!(u, HfUrl::Repo(HfRepoRef { org: "org".into(), repo: "repo".into(), revision: "main".into() }));
     }
 
     #[test]
