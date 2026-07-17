@@ -1,8 +1,10 @@
 # Multi-file (split) model support — design
 
-**Date:** 2026-07-13
-**Status:** approved (brainstorm), pending implementation plan
-**Milestone:** this is the **v1.0 gate**. Ships on branch `feat/multi-file-models`.
+**Date:** 2026-07-13 (amended 2026-07-17)
+**Status:** core implemented & merged to `main`. **Amended 2026-07-17** with two direction
+decisions — platform/distribution and recipe source (Draw Things catalog) — that guide the
+multi-file UX rework.
+**Milestone:** this is the **v1.0 gate**.
 
 ## Problem
 
@@ -37,6 +39,29 @@ auto-assembly so the common case is "point at it, done" rather than hand-wiring 
 
 **Compatibility:** we are in beta; no config/gallery backward-compat is required. We take
 the cleaner data model.
+
+## Platform & distribution (amendment — 2026-07-17)
+
+**Target: Linux-only.** macOS and Windows are dropped as targets — Draw Things already serves
+those platforms well; the gap fridAI fills is a native, DrawThings-class image-generation app
+for Linux, which is missing today. Narrowing to Linux removes macOS notarization, Windows code
+signing, and cross-compilation from the picture.
+
+**Stack unchanged: Tauri + Svelte + `stable-diffusion.cpp` (CLI).** The heavy lifting is the
+sd.cpp CLI; the Tauri/Svelte layer is a thin shell over it, so no GUI-framework change is
+warranted (a rewrite to GTK4/Qt/egui would be pure cost). The one Linux fragility to watch is
+**WebKitGTK** (`webkit2gtk-4.1`), Tauri's Linux webview — behavior can vary across distros.
+
+**Distribution:**
+- **AppImage** — current artifact; remains the dev/test build and a portable "download and run"
+  option throughout the rework.
+- **Flatpak / Flathub** — intended **primary release channel**, but **deferred to a pre-1.0
+  release milestone**. It is a distribution concern, not a dev-loop one: the work is the sandbox
+  (GPU/CUDA `--device=dri`, filesystem holes for user-chosen model/gallery dirs, network for
+  downloads, bundling the sd.cpp binary + libs). Packaging is done **once the file layout is
+  stable** after the multi-file rework, so sandbox/permission work isn't redone each time storage
+  changes. Flatpak is also the clean fix for the known `libcuda.so.1` runtime quirk (the lib
+  lives in the GL runtime).
 
 ## Confirmed engine flags (from `src-tauri/fixtures/sd-help.txt`)
 
@@ -126,6 +151,38 @@ unmatched required roles empty. No filesystem access — takes a list of filenam
 
 Powers the point-at-a-folder flow: run detection against each recipe, pick the family with the
 most confident match, and present the role→file assignments pre-filled for confirmation.
+
+### Recipe source: Draw Things community-models catalog, CC0 (amendment — 2026-07-17)
+
+Recipe knowledge is sourced from the **Draw Things community-models** catalog
+(`github.com/drawthingsai/community-models`), published under **CC0 1.0 (public domain)**. Each
+model's `metadata.json` encodes exactly what a recipe needs: the family, which component roles it
+uses, the source HuggingFace repo, and defaults (VAE format, prediction objective, scale).
+
+**We harvest metadata, not files.** The catalog's own model files are Draw Things' *converted,
+quantized `.ckpt`* format (their `q8p`/`q6p`/`i8x` schemes), which **`stable-diffusion.cpp`
+cannot load**. So we use the catalog only to *learn the recipe*, then resolve each role to the
+**original `.safetensors` on HuggingFace** (which sd.cpp loads) — we never point at Draw Things'
+converted file URLs. Downloads still come from HF/Civitai as designed in Section 4.
+
+This is the fast path to expanding the recipe table beyond hand-authored families. Concrete
+example — the previously-blocked **Flux2-Klein** test case. Its catalog entry reveals:
+
+| Role | FLUX.1 (`flux1`) | FLUX.2 klein (new `flux2` family) |
+|---|---|---|
+| text encoder | `t5xxl` + `clip_l` | **`llm` = Qwen3-8B** (no T5/CLIP) |
+| VAE | flux VAE | FLUX.2 VAE |
+| `vae_format` / `prediction` | `flux` / `flux_flow` | `flux2` / `flux2_flow` |
+
+Our `command_builder` already emits `--llm` and supports `--vae-format flux2` /
+`--prediction flux2_flow` (see "Confirmed engine flags"), so adding a **`flux2` recipe** is
+metadata-only. This motivates adding `flux2` to the initial recipe families.
+
+**Attribution:** CC0 *waives* the attribution requirement, but we credit Draw Things and its
+community regardless — a line in an About/credits surface (e.g. *"Model recipes adapted from the
+Draw Things community-models catalog — CC0"*). This is a thank-you, not an obligation. It is
+**separate** from the model files' own licenses (FLUX is non-commercial, etc.), which are
+governed by HuggingFace/BFL and unaffected.
 
 ## Section 3 — The three entry flows & dropdown integration
 
@@ -285,6 +342,99 @@ framework exists today; none added (consistent with the app).
 second model reuses them), point-at-folder auto-detect, manual assembly, generate with each, and
 delete a model (per-model folder gone, shared pool intact).
 
+## Section 7 — Model variants & low-VRAM offload (amendment — 2026-07-17)
+
+Two additions to the "point at an HF URL" flow and generation, so the user can (a) choose among a
+model's quantization variants with real sizes + a fit estimate, and (b) run models that exceed
+their VRAM by spreading weights into RAM.
+
+### 7.1 HF variant discovery & picker (HuggingFace only)
+
+**URL classification** — pure fn over the pasted string:
+- **Repo URL** (`huggingface.co/<org>/<repo>`) → enumerate.
+- **Direct file URL** (`.../resolve/<rev>/<file>.safetensors`) → skip enumeration; the file *is*
+  the chosen diffusion component.
+
+**Enumeration** — `GET https://huggingface.co/api/models/<org>/<repo>/tree/<rev>?recursive=true`.
+Each entry yields `path` and a size (`lfs.size ?? size`). Public repos need no auth; gated repos
+(401/403) reuse the stored **HF token** as an `Authorization: Bearer` header. Keep only
+`.safetensors`.
+
+**Grouping into variants** — for each file:
+1. Tag its **role** via the existing `recipes::detect` (diffusion / t5xxl / clip_l / clip_g / vae /
+   llm), so a VAE is never shown as a "variant" of the transformer.
+2. Extract a quant label via a new pure `precision_label(filename) -> Option<String>`
+   (`fp16`, `bf16`, `fp8_e4m3fn`, `fp8_e5m2`, `q8_0`, `q6_k`, `q4_k_m`, `q4_0`, …).
+
+The **diffusion-role files are the variant list**; the user picks one. Companion files (T5/CLIP/
+VAE) keep coming from the recipe's curated shared components; if the repo bundles them, auto-pick
+the closest-precision match. **Per-companion variant override is deferred** (documented, not built
+now).
+
+Direct-file input skips enumeration but still runs `detect` on the filename to choose the family
+and shows a single-row picker (size + fit badge).
+
+**GGUF note:** the project is safetensors-only, so `.gguf` quant variants on a repo are not
+offered. A user wanting more compression than the fp8/fp16 variants can use sd.cpp's runtime
+`--type` down-quantization — out of scope here, noted for later.
+
+### 7.2 Fit estimate (simple heuristic)
+
+Pure fn:
+
+```
+estimate_vram_mb(file_size_bytes) ≈ (file_size_bytes / 1_048_576) * 1.15 + ACTIVATION_BUDGET_MB
+```
+
+`ACTIVATION_BUDGET_MB` starts at **1500** — one documented, tunable constant. Multi-file sums the
+on-GPU components. Verdict against the **selected device's** detected VRAM (from the live monitor):
+
+| Condition | Verdict |
+|---|---|
+| `est ≤ 0.9 × VRAM` | **Fits** |
+| `est ≤ VRAM` | **Tight** |
+| `est > VRAM` | **Won't fit** (Low-VRAM mode can help) |
+| VRAM unknown / no GPU | **size only, no verdict** (mirrors `catalog::rate`'s `None` path) |
+
+Always labeled an *estimate*. Reuses the existing suitability vocabulary for UI consistency.
+
+### 7.3 Low-VRAM offload mode
+
+- New persisted **`AppConfig.low_vram: bool`** (`#[serde(default)]`, default `false`). Toggle lives
+  in **Preferences → Hardware**, beside the Device picker. Label: *"Low-VRAM mode (slower; fits
+  bigger models)."*
+- When on, generation appends **`--offload-to-cpu` + `--vae-tiling` + `--diffusion-fa`** (weights
+  paged from RAM, tiled VAE decode, flash attention — the low-UI/high-headroom bundle).
+- **Auto-suggest, never auto-enable:** when a selected / about-to-generate model estimates **Won't
+  fit** and the toggle is off, show a one-click, non-blocking suggestion to enable it, stating the
+  speed tradeoff. The user stays in control.
+- **Threading:** `build_args` gains the `low_vram` flag (via a small engine-options struct rather
+  than a bare bool sprawl), pushing the three flags after the model/backend flags. Stays a pure,
+  unit-testable function.
+- **Deferred (documented future):** granular expert controls — `--max-vram <GiB>` budget,
+  `--stream-layers`, `--params-backend`, and per-component `--backend clip=cpu,vae=cuda0,…` split.
+  These are acknowledged in the GPU device-selection spec; the single toggle ships first.
+
+### 7.4 Error handling (never a dead end)
+
+- HF API / network failure → fall back to direct-file handling if the URL looks like a file, else a
+  clear error with a "paste a direct file URL" escape.
+- Gated repo (401/403) → prompt that an HF token is needed (Preferences), reuse the stored token.
+- No `.safetensors` in the repo → error + direct-URL suggestion.
+- Offload on but still OOM → surface sd.cpp stderr as today; the suggestion text already set
+  expectations.
+
+### 7.5 Testing (pure-first, `cargo test --lib`)
+
+- URL classification (repo vs direct file vs junk).
+- Variant grouping from a **fixture HF tree JSON** → correct roles + sizes; non-safetensors
+  dropped; diffusion files become the variant list.
+- `precision_label` across the label set incl. no-match.
+- `estimate_vram_mb` + verdict thresholds, including `None` VRAM → size-only.
+- `build_args` with `low_vram` true → three offload flags present; false → all absent.
+- Serde round-trip of `AppConfig.low_vram` + old-config default (missing key → `false`).
+- Frontend: `npm run check` stays 0/0; no new test framework (consistent with the app).
+
 ## New / changed files (anticipated)
 
 - `src-tauri/src/recipes.rs` — NEW: `ComponentRole`, `RoleSpec`, `ModelRecipe`, `SharedComponent`,
@@ -293,10 +443,20 @@ delete a model (per-model folder gone, shared pool intact).
   resolution planning.
 - `src-tauri/src/types.rs` — `ModelRef`, `ModelComponents`, `ModelDefinition`; `GenerationRequest`
   and `AppConfig` changes; `missing_components`.
-- `src-tauri/src/command_builder.rs` — `match`-based flag mapping.
+- `src-tauri/src/command_builder.rs` — `match`-based flag mapping; **+ low-VRAM offload flags**
+  (`--offload-to-cpu`, `--vae-tiling`, `--diffusion-fa`) via an engine-options struct (§7.3).
 - `src-tauri/src/models.rs` — exclude definition-referenced paths from the single-file list.
 - `src-tauri/src/commands.rs` + downloader — `download_multifile`, definition CRUD, multi-file
-  progress.
+  progress; **+ `list_hf_variants` command** (§7.1).
 - Frontend: `types.ts` (discriminated union), `stores.ts` (definitions + richer download status),
   `api.ts`, `ModelLibrary.svelte` (dropdown + badges + broken flag), a new assembly dialog
   component, and Model Library management.
+
+**New / changed for §7 (variants & low-VRAM):**
+- `src-tauri/src/hf.rs` — NEW: HF URL classification, tree-API parse, variant grouping,
+  `precision_label` (pure); the async fetch behind `list_hf_variants`.
+- `src-tauri/src/catalog.rs` (or `fit.rs`) — `estimate_vram_mb` + fit verdict (pure).
+- `src-tauri/src/types.rs` — `AppConfig.low_vram: bool`; a `Variant` DTO; engine-options struct.
+- Frontend: `Variant` type in `types.ts`; variant-picker UI in the assembly dialog; Low-VRAM
+  toggle in `PreferencesDialog.svelte` (Hardware section); Won't-fit auto-suggest on model
+  selection / generate.
