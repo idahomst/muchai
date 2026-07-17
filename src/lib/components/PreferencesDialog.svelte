@@ -47,6 +47,24 @@
       error = String(e);
     }
   }
+
+  // Optimistic save of the low-VRAM toggle, reusing the same serialized chain so
+  // it can't race a token save. Reverts on failure.
+  function saveLowVram(value: boolean) {
+    saveChain = saveChain.then(async () => {
+      const cur = $settings;
+      if (!cur || cur.low_vram === value) return;
+      const next = { ...cur, low_vram: value };
+      settings.set(next);
+      error = null;
+      try {
+        await setSettings(next);
+      } catch (e) {
+        settings.set({ ...($settings ?? cur), low_vram: cur.low_vram });
+        error = String(e);
+      }
+    });
+  }
 </script>
 
 <div class="backdrop" onclick={(e) => { if (e.target === e.currentTarget) onclose(); }} role="presentation">
@@ -93,6 +111,14 @@
     <section class="grp">
       <div class="grp-hdr">Hardware</div>
       <DevicePicker />
+      <label class="lowvram">
+        <input
+          type="checkbox"
+          checked={$settings?.low_vram ?? false}
+          disabled={!$settings}
+          onchange={(e) => saveLowVram(e.currentTarget.checked)} />
+        <span>Low-VRAM mode <em>(slower; fits bigger models)</em></span>
+      </label>
     </section>
 
     <section class="grp">
@@ -124,6 +150,8 @@
   .appearance { display:flex; align-items:center; gap:.5rem; font-size:.75rem;
     border-top:1px solid var(--border); padding:.45rem .2rem 0; }
   .appearance .lbl { opacity:.6; }
+  .lowvram { display:flex; align-items:center; gap:.4rem; font-size:.75rem; padding:.35rem .2rem 0; }
+  .lowvram em { opacity:.6; font-style:italic; }
   .err { font-size:.72rem; color:var(--danger); margin:0; }
   .row { display:flex; justify-content:flex-end; margin-top:.3rem; }
   button.btn-primary { font:inherit; font-size:.8rem; padding:.4rem .8rem; cursor:pointer; }

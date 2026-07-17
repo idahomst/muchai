@@ -2,7 +2,7 @@ use crate::engine::{self, ChildSlot, GenError};
 use crate::types::{AppConfig, DownloadProgress, GalleryItem, GenerationRequest, GpuDevice, ModelInfo};
 use crate::recipes::{self, ComponentRole};
 use crate::types::{ModelDefinition, ModelRef};
-use crate::{catalog, config, downloader, gallery, models};
+use crate::{catalog, config, downloader, gallery, hf, models};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -173,10 +173,11 @@ pub async fn generate(
     let req = request.clone();
     let img = image_path.clone();
     let backend_owned = backend;
+    let engine_opts = crate::command_builder::EngineOptions { low_vram: cfg.low_vram };
 
     // Run the (blocking) engine on a worker thread so the async command yields.
     let result = tauri::async_runtime::spawn_blocking(move || {
-        engine::run_generation(&binary, &req, &img, backend_owned.as_deref(), &slot, |p| {
+        engine::run_generation(&binary, &req, &img, backend_owned.as_deref(), engine_opts, &slot, |p| {
             let _ = app2.emit("generation:progress", p);
         })
     })
@@ -427,6 +428,45 @@ pub async fn download_model(
 #[tauri::command]
 pub fn multifile_catalog(vram_total_mb: Option<u64>) -> Vec<catalog::RatedMultiFile> {
     catalog::rated_multi_file_catalog(vram_total_mb)
+}
+
+/// Discover a HuggingFace model's downloadable variants, each with a size + fit
+/// verdict against the given VRAM. Repo URLs enumerate the tree; a direct file
+/// URL yields a single-row picker (size unknown until download).
+#[tauri::command]
+pub async fn list_hf_variants(
+    url: String,
+    token: String,
+    vram_total_mb: Option<u64>,
+) -> Result<Vec<hf::RatedHfVariant>, String> {
+    let parsed = hf::parse_hf_url(&url)
+        .ok_or_else(|| "Not a HuggingFace URL. Paste a huggingface.co repo or file link.".to_string())?;
+    match parsed {
+        hf::HfUrl::File { repo, path } => {
+            let name = hf::basename(&path);
+            let family = crate::recipes::detect_best(&[name.clone()]).map(|(r, _)| r.family.to_string());
+            let variant = hf::HfVariant {
+                label: hf::precision_label(&name).unwrap_or_else(|| hf::stem(&path)),
+                family,
+                path,
+                size_bytes: 0, // unknown until download; verdict → size-only
+            };
+            Ok(vec![hf::rate_variant(&repo, &variant, vram_total_mb)])
+        }
+        hf::HfUrl::Repo(repo) => {
+            // Network I/O runs off the main thread (mirrors download_model /
+            // download_multifile) so a slow or hung HF request can't freeze the UI.
+            let repo_for_fetch = repo.clone();
+            let entries = tauri::async_runtime::spawn_blocking(move || hf::fetch_tree(&repo_for_fetch, &token))
+                .await
+                .map_err(|e| e.to_string())??;
+            let variants = hf::classify_variants(&entries);
+            if variants.is_empty() {
+                return Err("No downloadable diffusion model found in that repo. Paste a direct file URL instead.".into());
+            }
+            Ok(variants.iter().map(|v| hf::rate_variant(&repo, v, vram_total_mb)).collect())
+        }
+    }
 }
 
 /// Download a curated multi-file model: fetch diffusion + any missing shared

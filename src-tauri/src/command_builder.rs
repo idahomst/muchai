@@ -1,9 +1,22 @@
 use crate::types::{GenerationRequest, ModelRef};
 
+/// Engine knobs that aren't part of the generation request itself. A struct
+/// (not a bare bool) leaves room for the deferred expert controls (--max-vram,
+/// --stream-layers, per-component --backend) without another signature churn.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct EngineOptions {
+    pub low_vram: bool,
+}
+
 /// Build the argument vector for stable-diffusion.cpp's CLI.
 /// Pure function (no I/O) so it is fully unit-testable.
 /// Flag spellings are confirmed against `fixtures/sd-help.txt`.
-pub fn build_args(req: &GenerationRequest, output_path: &str, backend: Option<&str>) -> Vec<String> {
+pub fn build_args(
+    req: &GenerationRequest,
+    output_path: &str,
+    backend: Option<&str>,
+    opts: EngineOptions,
+) -> Vec<String> {
     let mut a: Vec<String> = Vec::new();
     a.push("-M".into());
     a.push("img_gen".into());
@@ -54,6 +67,13 @@ pub fn build_args(req: &GenerationRequest, output_path: &str, backend: Option<&s
         a.push("--backend".into());
         a.push(b.to_string());
     }
+    if opts.low_vram {
+        // Weights paged from RAM, tiled VAE decode, flash attention — the
+        // low-VRAM/high-headroom bundle so models larger than VRAM can run.
+        a.push("--offload-to-cpu".into());
+        a.push("--vae-tiling".into());
+        a.push("--diffusion-fa".into());
+    }
     a.push("-v".into()); // verbose: ensures progress lines are emitted
     a
 }
@@ -86,7 +106,7 @@ mod tests {
 
     #[test]
     fn includes_core_flags_and_values() {
-        let args = build_args(&sample(), "/out/x.png", None);
+        let args = build_args(&sample(), "/out/x.png", None, EngineOptions::default());
         assert_eq!(val_after(&args, "-m"), Some("/m/model.safetensors"));
         assert_eq!(val_after(&args, "-p"), Some("a cat"));
         assert_eq!(val_after(&args, "-n"), Some("blurry"));
@@ -102,7 +122,7 @@ mod tests {
 
     #[test]
     fn uses_img_gen_mode() {
-        let args = build_args(&sample(), "/out/x.png", None);
+        let args = build_args(&sample(), "/out/x.png", None, EngineOptions::default());
         assert_eq!(val_after(&args, "-M"), Some("img_gen"));
     }
 
@@ -110,25 +130,25 @@ mod tests {
     fn omits_negative_prompt_when_empty() {
         let mut req = sample();
         req.negative_prompt = "".into();
-        let args = build_args(&req, "/out/x.png", None);
+        let args = build_args(&req, "/out/x.png", None, EngineOptions::default());
         assert!(!args.iter().any(|x| x == "-n"));
     }
 
     #[test]
     fn appends_backend_when_some() {
-        let args = build_args(&sample(), "/out/x.png", Some("vulkan1"));
+        let args = build_args(&sample(), "/out/x.png", Some("vulkan1"), EngineOptions::default());
         assert_eq!(val_after(&args, "--backend"), Some("vulkan1"));
     }
 
     #[test]
     fn omits_backend_when_none() {
-        let args = build_args(&sample(), "/out/x.png", None);
+        let args = build_args(&sample(), "/out/x.png", None, EngineOptions::default());
         assert!(!args.iter().any(|x| x == "--backend"));
     }
 
     #[test]
     fn single_file_emits_dash_m_and_no_diffusion_model() {
-        let args = build_args(&sample(), "/out/x.png", None);
+        let args = build_args(&sample(), "/out/x.png", None, EngineOptions::default());
         assert_eq!(val_after(&args, "-m"), Some("/m/model.safetensors"));
         assert!(!args.iter().any(|x| x == "--diffusion-model"));
     }
@@ -148,7 +168,7 @@ mod tests {
             prediction: Some("flux_flow".into()),
             ..Default::default()
         });
-        let args = build_args(&req, "/out/x.png", None);
+        let args = build_args(&req, "/out/x.png", None, EngineOptions::default());
         assert_eq!(val_after(&args, "--diffusion-model"), Some("/m/flux1-dev.safetensors"));
         assert_eq!(val_after(&args, "--t5xxl"), Some("/m/t5xxl.safetensors"));
         assert_eq!(val_after(&args, "--clip_l"), Some("/m/clip_l.safetensors"));
@@ -168,7 +188,7 @@ mod tests {
             diffusion_model: "/m/d.safetensors".into(),
             ..Default::default()
         });
-        let args = build_args(&req, "/out/x.png", None);
+        let args = build_args(&req, "/out/x.png", None, EngineOptions::default());
         assert_eq!(val_after(&args, "--diffusion-model"), Some("/m/d.safetensors"));
         for flag in ["--vae", "--clip_l", "--clip_g", "--t5xxl", "--llm", "--vae-format", "--prediction"] {
             assert!(!args.iter().any(|x| x == flag), "{flag} must be absent");
@@ -179,7 +199,23 @@ mod tests {
     fn output_path_extension_passes_through_verbatim() {
         // build_args is format-agnostic: whatever extension the caller chose on
         // the -o path is forwarded unchanged (the engine infers format from it).
-        let args = build_args(&sample(), "/out/x.jpg", None);
+        let args = build_args(&sample(), "/out/x.jpg", None, EngineOptions::default());
         assert_eq!(val_after(&args, "-o"), Some("/out/x.jpg"));
+    }
+
+    #[test]
+    fn low_vram_appends_offload_flags() {
+        let args = build_args(&sample(), "/out/x.png", None, EngineOptions { low_vram: true });
+        assert!(args.iter().any(|x| x == "--offload-to-cpu"));
+        assert!(args.iter().any(|x| x == "--vae-tiling"));
+        assert!(args.iter().any(|x| x == "--diffusion-fa"));
+    }
+
+    #[test]
+    fn low_vram_off_omits_offload_flags() {
+        let args = build_args(&sample(), "/out/x.png", None, EngineOptions { low_vram: false });
+        for flag in ["--offload-to-cpu", "--vae-tiling", "--diffusion-fa"] {
+            assert!(!args.iter().any(|x| x == flag), "{flag} must be absent");
+        }
     }
 }

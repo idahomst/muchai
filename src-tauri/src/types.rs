@@ -305,6 +305,10 @@ pub struct AppConfig {
     /// download rework. Pre-feature configs deserialize as None.
     #[serde(default)]
     pub civitai_token: Option<String>,
+    /// Low-VRAM offload mode: page weights from RAM + tiled VAE + flash attention
+    /// so models larger than VRAM can run (slower). Old configs default to false.
+    #[serde(default)]
+    pub low_vram: bool,
     pub last_request: GenerationRequest,
 }
 

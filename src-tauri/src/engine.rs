@@ -1,4 +1,4 @@
-use crate::command_builder::build_args;
+use crate::command_builder::{build_args, EngineOptions};
 use crate::progress_parser::{parse_image_seed_line, parse_progress_line, parse_resolved_seed_line};
 use crate::types::{GenerationRequest, ProgressUpdate};
 use std::io::{BufRead, BufReader};
@@ -38,13 +38,14 @@ pub fn run_generation<F: FnMut(ProgressUpdate)>(
     req: &GenerationRequest,
     output_path: &Path,
     backend: Option<&str>,
+    opts: EngineOptions,
     slot: &ChildSlot,
     mut on_progress: F,
 ) -> Result<Vec<i64>, GenError> {
     if !binary.exists() {
         return Err(GenError::BinaryNotFound(binary.display().to_string()));
     }
-    let args = build_args(req, &output_path.to_string_lossy(), backend);
+    let args = build_args(req, &output_path.to_string_lossy(), backend, opts);
 
     let mut child = Command::new(binary)
         .args(&args)
@@ -170,6 +171,7 @@ mod tests {
             &GenerationRequest::default(),
             Path::new("/tmp/ignored.png"),
             None,
+            EngineOptions::default(),
             &slot,
             move |p| u2.lock().unwrap().push(p),
         );
@@ -193,6 +195,7 @@ mod tests {
             &GenerationRequest::default(),
             Path::new("/tmp/ignored.png"),
             None,
+            EngineOptions::default(),
             &slot,
             |_| {},
         );
@@ -212,6 +215,7 @@ mod tests {
             &GenerationRequest::default(),
             Path::new("/tmp/ignored.png"),
             None,
+            EngineOptions::default(),
             &slot,
             |_| {},
         );
@@ -233,6 +237,7 @@ mod tests {
             &GenerationRequest::default(),
             Path::new("/tmp/ignored.png"),
             None,
+            EngineOptions::default(),
             &slot,
             |_| {},
         );

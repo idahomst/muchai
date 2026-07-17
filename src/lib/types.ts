@@ -132,6 +132,9 @@ export interface AppConfig {
   // Rust AppConfig fields (#[serde(default)] → null for old configs). null = unset.
   hf_token: string | null;
   civitai_token: string | null;
+  // Low-VRAM offload mode (mirrors Rust AppConfig.low_vram, #[serde(default)] →
+  // false for old configs). When on, generation pages weights from RAM.
+  low_vram: boolean;
 }
 
 export const defaultRequest = (): GenerationRequest => ({
@@ -163,6 +166,19 @@ export interface ModelInfo { path: string; name: string; size_bytes: number; }
 
 export type ModelKind = "sd15" | "sdxl";
 export type Suitability = "recommended" | "tight" | "too_big" | "unknown";
+
+// Wire values MUST match the Rust `FitVerdict` enum's serde snake_case form
+// (src-tauri/src/fit.rs).
+export type FitVerdict = "fits" | "tight" | "wont_fit" | "unknown";
+
+// Mirrors Rust `hf::RatedHfVariant`. One selectable diffusion variant + fit.
+export interface RatedHfVariant {
+  label: string;
+  family: string | null;
+  url: string;
+  size_bytes: number;
+  verdict: FitVerdict;
+}
 
 export interface RatedModel {
   id: string; name: string; url: string; size_bytes: number;
