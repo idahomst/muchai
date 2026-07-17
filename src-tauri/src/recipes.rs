@@ -197,6 +197,18 @@ pub fn recipes() -> Vec<ModelRecipe> {
             shared: vec![],
         },
         ModelRecipe {
+            family: "flux2",
+            name: "FLUX.2 (klein / dev)",
+            roles: vec![
+                role(ComponentRole::Diffusion, true, &["flux2", "flux-2", "flux.2"]),
+                role(ComponentRole::Llm, true, &["qwen3", "qwen", "llm"]),
+                role(ComponentRole::Vae, true, &["vae", "ae."]),
+            ],
+            vae_format: Some("flux2"),
+            prediction: Some("flux2_flow"),
+            shared: vec![],
+        },
+        ModelRecipe {
             family: "custom",
             name: "Custom (assign files manually)",
             roles: vec![
@@ -330,6 +342,32 @@ mod tests {
                 assert!(PRED.contains(&p), "{} bad prediction {p}", r.family);
             }
         }
+    }
+
+    #[test]
+    fn flux2_recipe_is_registered_with_expected_shape() {
+        let r = recipe_for("flux2").expect("flux2 recipe must exist");
+        assert_eq!(r.vae_format, Some("flux2"));
+        assert_eq!(r.prediction, Some("flux2_flow"));
+        // Required roles: diffusion + llm + vae; no t5xxl/clip.
+        let required: Vec<ComponentRole> =
+            r.roles.iter().filter(|s| s.required).map(|s| s.role).collect();
+        assert!(required.contains(&ComponentRole::Diffusion));
+        assert!(required.contains(&ComponentRole::Llm));
+        assert!(required.contains(&ComponentRole::Vae));
+        assert!(!required.contains(&ComponentRole::T5xxl));
+        assert!(!required.contains(&ComponentRole::ClipL));
+    }
+
+    #[test]
+    fn detect_best_picks_flux2_for_flux2_file_set() {
+        let files = vec![
+            "flux2-klein.safetensors".to_string(),
+            "qwen3-8b.safetensors".to_string(),
+            "flux2-vae.safetensors".to_string(),
+        ];
+        let (recipe, _d) = detect_best(&files).unwrap();
+        assert_eq!(recipe.family, "flux2");
     }
 
     #[test]
