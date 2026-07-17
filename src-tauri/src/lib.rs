@@ -7,6 +7,7 @@ mod downloader;
 mod engine;
 mod fit;
 mod gallery;
+mod hf;
 mod models;
 mod progress_parser;
 mod recipes;
