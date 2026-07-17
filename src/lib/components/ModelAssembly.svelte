@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { listRecipes, detectFolder, pickFolder, pickModelFile, saveModelDefinition, multifileCatalog } from "../api";
-  import { startMultiFileDownload, downloadStatus, settings } from "../stores";
+  import { listRecipes, detectFolder, pickFolder, pickModelFile, saveModelDefinition, multifileCatalog, downloadModel, listHfVariants } from "../api";
+  import { startMultiFileDownload, downloadStatus, settings, sysStats } from "../stores";
   import { ROLE_LABELS, VAE_FORMATS, PREDICTIONS } from "../types";
-  import type { RecipeInfo, ComponentRole, ModelComponents, ModelDefinition, RatedMultiFile } from "../types";
+  import type { RecipeInfo, ComponentRole, ModelComponents, ModelDefinition, RatedMultiFile, RatedHfVariant, FitVerdict } from "../types";
   import { onMount } from "svelte";
   import { get } from "svelte/store";
 
@@ -12,7 +12,7 @@
     edit?: ModelDefinition | null;
   } = $props();
 
-  type Mode = "choose" | "folder" | "manual" | "catalog";
+  type Mode = "choose" | "folder" | "manual" | "catalog" | "hf";
   let mode = $state<Mode>("choose");
 
   let recipes = $state<RecipeInfo[]>([]);
@@ -28,6 +28,18 @@
   let catalog = $state<RatedMultiFile[]>([]);
   let catalogLoading = $state(false);
   let selectedEntry = $state<RatedMultiFile | null>(null);
+
+  // HuggingFace variant-picker flow state.
+  let hfUrl = $state("");
+  let hfVariants = $state<RatedHfVariant[]>([]);
+  let hfLoading = $state(false);
+
+  const fitBadge: Record<FitVerdict, string> = {
+    fits: "✅ Fits (est.)",
+    tight: "⚠️ Tight (est.)",
+    wont_fit: "❌ Won't fit (est.) — try Low-VRAM mode",
+    unknown: "— size only",
+  };
 
   const recipe = $derived(recipes.find((r) => r.family === family));
   const basename = (p: string) => p.split(/[\\/]/).pop() || p;
@@ -90,6 +102,54 @@
       error = String(e);
     } finally {
       catalogLoading = false;
+    }
+  }
+
+  function openHf() {
+    error = null;
+    hfVariants = [];
+    hfUrl = "";
+    mode = "hf";
+  }
+
+  async function findVariants() {
+    if (hfLoading || !hfUrl.trim()) return;
+    hfLoading = true;
+    error = null;
+    hfVariants = [];
+    try {
+      hfVariants = await listHfVariants(
+        hfUrl.trim(),
+        $settings?.hf_token ?? "",
+        $sysStats?.gpu?.vram_total_mb ?? null,
+      );
+    } catch (e) {
+      error = String(e);
+    } finally {
+      hfLoading = false;
+    }
+  }
+
+  // Download the chosen diffusion file, then drop into manual assembly with the
+  // slot filled + family applied so companions can be assigned.
+  async function importVariant(v: RatedHfVariant) {
+    if (busy) return;
+    if (get(downloadStatus).kind === "active") {
+      error = "Another download is already in progress.";
+      return;
+    }
+    busy = true;
+    error = null;
+    try {
+      const info = await downloadModel(v.url, $settings?.hf_token ?? "");
+      applyFamily(v.family ?? "custom");
+      slots = { diffusion: info.path };
+      if (!name) name = info.name;
+      mode = "manual";
+    } catch (e) {
+      error = String(e);
+    } finally {
+      busy = false;
     }
   }
 
@@ -170,6 +230,7 @@
       <button class="btn-primary" onclick={chooseFolder}>From a folder I have (auto-detect)</button>
       <button class="btn-secondary" onclick={startManual}>Assign files manually</button>
       <button class="btn-secondary" onclick={openCatalog}>Download from catalog</button>
+      <button class="btn-secondary" onclick={openHf}>Import from a HuggingFace URL</button>
       <button class="btn-secondary" onclick={onclose}>Cancel</button>
     {:else if mode === "catalog"}
       {#if catalogLoading}
@@ -195,6 +256,31 @@
           <button class="btn-secondary" onclick={onclose} disabled={busy}>Cancel</button>
         </div>
       {/if}
+    {:else if mode === "hf"}
+      <p class="lead">Paste a HuggingFace model page or file URL to see its variants.</p>
+      <div class="row">
+        <input class="in" type="text" placeholder="https://huggingface.co/org/repo" bind:value={hfUrl} />
+        <button class="btn-secondary" disabled={hfLoading || !hfUrl.trim()} onclick={findVariants}>
+          {hfLoading ? "Finding…" : "Find variants"}
+        </button>
+      </div>
+      <p class="hint">Gated repos use your HuggingFace token from Preferences (⚙). Fit is an estimate.</p>
+      {#if hfVariants.length > 0}
+        <div class="cat">
+          {#each hfVariants as v (v.url)}
+            <button class="cat-row" disabled={busy} onclick={() => importVariant(v)}>
+              <span class="cat-name">{v.label}</span>
+              <span class="cat-meta">
+                {v.size_bytes > 0 ? fmtSize(v.size_bytes) : "size unknown"} · {fitBadge[v.verdict]}
+              </span>
+            </button>
+          {/each}
+        </div>
+      {/if}
+      {#if error}<p class="err">{error}</p>{/if}
+      <div class="row">
+        <button class="btn-secondary" onclick={onclose} disabled={busy}>Cancel</button>
+      </div>
     {:else}
       <label class="fld"><span>Name</span>
         <input class="in" type="text" bind:value={name} placeholder="My FLUX model" />
