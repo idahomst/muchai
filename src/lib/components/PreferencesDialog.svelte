@@ -97,7 +97,7 @@
 
     <section class="grp">
       <div class="grp-hdr">Appearance</div>
-      <div class="appearance"><span class="lbl">Theme</span><ThemeToggle /></div>
+      <div class="appearance"><span class="lbl">Theme</span><ThemeToggle labeled /></div>
     </section>
 
     <div class="row">
@@ -121,7 +121,8 @@
   .in { flex:1; font:inherit; padding:.35rem; box-sizing:border-box; }
   .reveal { font:inherit; font-size:.72rem; padding:.2rem .5rem; cursor:pointer; }
   .hint { font-size:.68rem; opacity:.6; }
-  .appearance { display:flex; align-items:center; gap:.5rem; font-size:.75rem; }
+  .appearance { display:flex; align-items:center; gap:.5rem; font-size:.75rem;
+    border-top:1px solid var(--border); padding:.45rem .2rem 0; }
   .appearance .lbl { opacity:.6; }
   .err { font-size:.72rem; color:var(--danger); margin:0; }
   .row { display:flex; justify-content:flex-end; margin-top:.3rem; }
