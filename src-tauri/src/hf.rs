@@ -359,4 +359,30 @@ mod tests {
         assert_eq!(variants[0].family, None);
         assert_eq!(variants[0].path, "mystery-model.safetensors");
     }
+
+    #[test]
+    fn classify_variants_excludes_file_matching_both_diffusion_and_companion() {
+        // Regression pin for the `&& !matches_any(companion)` clause. In the
+        // qwen-image family the LLM file matches the diffusion substring "qwen"
+        // AND the companion pattern "qwen2.5"; it must be excluded, leaving only
+        // the true diffusion transformer. Without the clause this returns 2.
+        let entries = vec![
+            HfTreeEntry { path: "qwen-image.safetensors".into(), size_bytes: 20_000_000_000 },
+            HfTreeEntry { path: "qwen2.5-vl-7b.safetensors".into(), size_bytes: 15_000_000_000 },
+            HfTreeEntry { path: "vae.safetensors".into(), size_bytes: 300_000_000 },
+        ];
+        let variants = classify_variants(&entries);
+        assert_eq!(variants.len(), 1);
+        assert_eq!(variants[0].path, "qwen-image.safetensors");
+        assert_eq!(variants[0].family.as_deref(), Some("qwen-image"));
+    }
+
+    #[test]
+    fn parse_tree_json_falls_back_to_plain_size_when_lfs_size_zero() {
+        // lfs present but reporting 0 must fall back to the top-level size.
+        let body = r#"[{"type":"file","path":"x.bin","size":99,"lfs":{"size":0}}]"#;
+        let entries = parse_tree_json(body).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].size_bytes, 99);
+    }
 }
