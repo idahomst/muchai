@@ -5,6 +5,7 @@ mod config;
 mod devices;
 mod downloader;
 mod engine;
+mod fit;
 mod gallery;
 mod models;
 mod progress_parser;
