@@ -173,10 +173,11 @@ pub async fn generate(
     let req = request.clone();
     let img = image_path.clone();
     let backend_owned = backend;
+    let engine_opts = crate::command_builder::EngineOptions { low_vram: cfg.low_vram };
 
     // Run the (blocking) engine on a worker thread so the async command yields.
     let result = tauri::async_runtime::spawn_blocking(move || {
-        engine::run_generation(&binary, &req, &img, backend_owned.as_deref(), &slot, |p| {
+        engine::run_generation(&binary, &req, &img, backend_owned.as_deref(), engine_opts, &slot, |p| {
             let _ = app2.emit("generation:progress", p);
         })
     })
