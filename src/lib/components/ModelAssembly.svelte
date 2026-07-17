@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { listRecipes, detectFolder, pickFolder, pickModelFile, saveModelDefinition, multifileCatalog, downloadModel, listHfVariants } from "../api";
-  import { startMultiFileDownload, downloadStatus, settings, sysStats } from "../stores";
+  import { listRecipes, detectFolder, pickFolder, pickModelFile, saveModelDefinition, multifileCatalog, listHfVariants } from "../api";
+  import { startMultiFileDownload, startFileDownload, downloadStatus, settings, sysStats } from "../stores";
   import { ROLE_LABELS, VAE_FORMATS, PREDICTIONS } from "../types";
   import type { RecipeInfo, ComponentRole, ModelComponents, ModelDefinition, RatedMultiFile, RatedHfVariant, FitVerdict } from "../types";
   import { onMount } from "svelte";
@@ -141,7 +141,8 @@
     busy = true;
     error = null;
     try {
-      const info = await downloadModel(v.url, $settings?.hf_token ?? "");
+      const info = await startFileDownload(v.url, $settings?.hf_token ?? "", v.label);
+      if (!info) return; // download failed (surfaced via downloadStatus) or one was already active
       applyFamily(v.family ?? "custom");
       slots = { diffusion: info.path };
       if (!name) name = info.name;
@@ -221,7 +222,7 @@
   }
 </script>
 
-<div class="backdrop" onclick={(e) => { if (e.target === e.currentTarget) onclose(); }} role="presentation">
+<div class="backdrop" onclick={(e) => { if (!busy && e.target === e.currentTarget) onclose(); }} role="presentation">
   <div class="dialog" role="dialog" aria-modal="true" aria-label={edit ? "Edit multi-file model" : "New multi-file model"}>
     <h2>{edit ? "Edit multi-file model" : "New multi-file model"}</h2>
 

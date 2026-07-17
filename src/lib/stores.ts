@@ -65,6 +65,35 @@ export async function startDownload(url: string, token: string, name: string): P
   }
 }
 
+/**
+ * Download a single model file for the assembly flow and return its ModelInfo
+ * so the caller can fill a slot. Single-flight like startDownload (sets
+ * downloadStatus active, wires progress, enforces one-at-a-time via the shared
+ * backend cancel flag). Returns null if a download is already active or on error.
+ */
+export async function startFileDownload(url: string, token: string, name: string): Promise<ModelInfo | null> {
+  if (get(downloadStatus).kind === "active") return null;
+  cancelRequested = false;
+  downloadStatus.set({ kind: "active", name, downloaded: 0, total: null });
+  const unlisten = await onDownloadProgress((p) => {
+    downloadStatus.update((s) =>
+      s.kind === "active"
+        ? { ...s, downloaded: p.downloaded, total: p.total, fileIndex: p.file_index, fileCount: p.file_count, fileName: p.file_name }
+        : s,
+    );
+  });
+  try {
+    const info = await downloadModel(url, token);
+    downloadStatus.set({ kind: "done", name });
+    return info;
+  } catch (e) {
+    downloadStatus.set(cancelRequested ? { kind: "idle" } : { kind: "error", name, message: String(e) });
+    return null;
+  } finally {
+    unlisten();
+  }
+}
+
 /** Cancel the active download; the backend removes the partial `.part` file. */
 export function cancelActiveDownload(): void {
   cancelRequested = true;
