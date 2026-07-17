@@ -93,6 +93,7 @@ pub fn run() {
             commands::multifile_catalog,
             commands::download_multifile,
             commands::broken_definitions,
+            commands::list_hf_variants,
         ])
         .run(tauri::generate_context!())
         .expect("error while running fridAI");

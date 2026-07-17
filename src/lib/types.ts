@@ -167,6 +167,19 @@ export interface ModelInfo { path: string; name: string; size_bytes: number; }
 export type ModelKind = "sd15" | "sdxl";
 export type Suitability = "recommended" | "tight" | "too_big" | "unknown";
 
+// Wire values MUST match the Rust `FitVerdict` enum's serde snake_case form
+// (src-tauri/src/fit.rs).
+export type FitVerdict = "fits" | "tight" | "wont_fit" | "unknown";
+
+// Mirrors Rust `hf::RatedHfVariant`. One selectable diffusion variant + fit.
+export interface RatedHfVariant {
+  label: string;
+  family: string | null;
+  url: string;
+  size_bytes: number;
+  verdict: FitVerdict;
+}
+
 export interface RatedModel {
   id: string; name: string; url: string; size_bytes: number;
   kind: ModelKind; min_vram_mb: number; recommended_vram_mb: number;

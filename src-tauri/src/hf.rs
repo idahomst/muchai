@@ -218,6 +218,55 @@ pub fn classify_variants(entries: &[HfTreeEntry]) -> Vec<HfVariant> {
         .collect()
 }
 
+/// A variant enriched with a download URL + fit verdict, ready for the UI.
+#[derive(Debug, Clone, Serialize)]
+pub struct RatedHfVariant {
+    pub label: String,
+    pub family: Option<String>,
+    pub url: String,
+    pub size_bytes: u64,
+    pub verdict: crate::fit::FitVerdict,
+}
+
+/// Attach a resolve URL + fit verdict to a variant. Size 0 (direct-file, size
+/// unknown until download) → `Unknown` verdict (size-only in the UI).
+pub fn rate_variant(repo: &HfRepoRef, v: &HfVariant, vram_total_mb: Option<u64>) -> RatedHfVariant {
+    let size = if v.size_bytes > 0 { Some(v.size_bytes) } else { None };
+    RatedHfVariant {
+        label: v.label.clone(),
+        family: v.family.clone(),
+        url: resolve_url(repo, &v.path),
+        size_bytes: v.size_bytes,
+        verdict: crate::fit::fit_verdict(size, vram_total_mb),
+    }
+}
+
+/// Fetch and parse a repo's file tree. Reuses the stored HF token as a bearer
+/// header for gated repos (mirrors `downloader.rs`). Returns a user-facing
+/// error string on any failure.
+pub fn fetch_tree(repo: &HfRepoRef, token: &str) -> Result<Vec<HfTreeEntry>, String> {
+    let url = format!(
+        "https://huggingface.co/api/models/{}/{}/tree/{}?recursive=true",
+        repo.org, repo.repo, repo.revision
+    );
+    let mut req = ureq::get(&url);
+    if !token.is_empty() {
+        req = req.set("Authorization", &format!("Bearer {token}"));
+    }
+    match req.call() {
+        Ok(resp) => {
+            let body = resp.into_string().map_err(|e| e.to_string())?;
+            parse_tree_json(&body)
+        }
+        Err(ureq::Error::Status(401, _)) | Err(ureq::Error::Status(403, _)) => {
+            Err("This repo is gated — add a HuggingFace token in Preferences (⚙).".into())
+        }
+        Err(ureq::Error::Status(404, _)) => Err("Repo not found on HuggingFace.".into()),
+        Err(ureq::Error::Status(code, _)) => Err(format!("HuggingFace returned HTTP {code}.")),
+        Err(ureq::Error::Transport(t)) => Err(format!("Network error reaching HuggingFace: {t}")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
