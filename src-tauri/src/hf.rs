@@ -2,6 +2,9 @@
 //! extraction, and variant grouping. All grouping/parsing logic is pure and
 //! unit-tested; only `fetch_tree` performs I/O (thin `ureq` wrapper).
 
+use crate::recipes::{self, ComponentRole};
+use serde::{Deserialize, Serialize};
+
 /// A repo coordinate on huggingface.co.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HfRepoRef {
@@ -104,6 +107,117 @@ pub fn precision_label(filename: &str) -> Option<String> {
         .map(|t| t.to_string())
 }
 
+/// One file from the HF tree API, size already normalized (lfs.size ?? size).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HfTreeEntry {
+    pub path: String,
+    pub size_bytes: u64,
+}
+
+#[derive(Deserialize)]
+struct RawTreeEntry {
+    #[serde(rename = "type")]
+    kind: String,
+    path: String,
+    #[serde(default)]
+    size: u64,
+    #[serde(default)]
+    lfs: Option<RawLfs>,
+}
+
+#[derive(Deserialize)]
+struct RawLfs {
+    #[serde(default)]
+    size: u64,
+}
+
+/// Parse the tree-API JSON array into normalized file entries (dirs dropped).
+pub fn parse_tree_json(body: &str) -> Result<Vec<HfTreeEntry>, String> {
+    let raw: Vec<RawTreeEntry> = serde_json::from_str(body).map_err(|e| e.to_string())?;
+    Ok(raw
+        .into_iter()
+        .filter(|e| e.kind == "file")
+        .map(|e| {
+            let size_bytes = match &e.lfs {
+                Some(l) if l.size > 0 => l.size,
+                _ => e.size,
+            };
+            HfTreeEntry { path: e.path, size_bytes }
+        })
+        .collect())
+}
+
+/// One selectable diffusion variant within a repo.
+#[derive(Debug, Clone, Serialize)]
+pub struct HfVariant {
+    /// Quant label (e.g. "fp8") or, if none, the filename stem.
+    pub label: String,
+    /// Detected family (None when no recipe matched the file set).
+    pub family: Option<String>,
+    /// Repo-relative path of the diffusion file.
+    pub path: String,
+    pub size_bytes: u64,
+}
+
+/// True if `lower` (a lowercased filename) contains any of `patterns`.
+fn matches_any(patterns: &[&str], lower: &str) -> bool {
+    patterns.iter().any(|p| lower.contains(&p.to_lowercase()))
+}
+
+/// Group the tree's `.safetensors` files into the diffusion-variant list.
+/// The detected family (via `recipes::detect_best`) determines which files are
+/// diffusion (kept) vs companion encoders/VAE (excluded). With no family match,
+/// every `.safetensors` is offered as a variant.
+pub fn classify_variants(entries: &[HfTreeEntry]) -> Vec<HfVariant> {
+    let files: Vec<&HfTreeEntry> = entries
+        .iter()
+        .filter(|e| e.path.to_lowercase().ends_with(".safetensors"))
+        .collect();
+    if files.is_empty() {
+        return Vec::new();
+    }
+    let names: Vec<String> = files.iter().map(|e| basename(&e.path)).collect();
+    let detected = recipes::detect_best(&names);
+    let family = detected.as_ref().map(|(r, _)| r.family.to_string());
+
+    // Split the recipe's role patterns into diffusion vs companion sets.
+    let (diffusion_patterns, companion_patterns): (Vec<&str>, Vec<&str>) = match &detected {
+        Some((recipe, _)) => {
+            let mut diff = Vec::new();
+            let mut comp = Vec::new();
+            for spec in &recipe.roles {
+                if spec.role == ComponentRole::Diffusion {
+                    diff.extend(spec.patterns.iter().copied());
+                } else {
+                    comp.extend(spec.patterns.iter().copied());
+                }
+            }
+            (diff, comp)
+        }
+        None => (Vec::new(), Vec::new()),
+    };
+
+    files
+        .iter()
+        .filter(|e| {
+            let lower = basename(&e.path).to_lowercase();
+            match &detected {
+                // Family known: diffusion file = matches a diffusion pattern and
+                // no companion pattern (so a VAE/encoder is never a "variant").
+                Some(_) => matches_any(&diffusion_patterns, &lower) && !matches_any(&companion_patterns, &lower),
+                // No family: offer every safetensors.
+                None => true,
+            }
+        })
+        .map(|e| HfVariant {
+            label: precision_label(&basename(&e.path)).unwrap_or_else(|| stem(&e.path)),
+            family: family.clone(),
+            path: e.path.clone(),
+            size_bytes: e.size_bytes,
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -203,5 +317,46 @@ mod tests {
         // Regression: "iq4_xs" contains "q4"; the IQ token must win.
         assert_eq!(precision_label("mixtral-IQ4_XS.gguf"), Some("iq4_xs".into()));
         assert_eq!(precision_label("model-IQ2_XXS.gguf"), Some("iq2_xxs".into()));
+    }
+
+    #[test]
+    fn parse_tree_json_normalizes_lfs_size_and_drops_dirs() {
+        let body = include_str!("../fixtures/hf-tree-flux1.json");
+        let entries = parse_tree_json(body).unwrap();
+        // Directory dropped; 4 files kept.
+        assert_eq!(entries.len(), 4);
+        let diff = entries.iter().find(|e| e.path == "flux1-dev.safetensors").unwrap();
+        assert_eq!(diff.size_bytes, 23802932552); // from lfs.size, not the 52-byte pointer
+        let idx = entries.iter().find(|e| e.path == "model_index.json").unwrap();
+        assert_eq!(idx.size_bytes, 320); // no lfs → plain size
+    }
+
+    #[test]
+    fn classify_variants_lists_diffusion_files_only() {
+        let body = include_str!("../fixtures/hf-tree-flux1.json");
+        let entries = parse_tree_json(body).unwrap();
+        let variants = classify_variants(&entries);
+        // ae.safetensors is a VAE companion → excluded; model_index.json isn't
+        // safetensors → excluded. Two diffusion variants remain.
+        assert_eq!(variants.len(), 2);
+        assert!(variants.iter().all(|v| v.family.as_deref() == Some("flux1")));
+        let labels: Vec<&str> = variants.iter().map(|v| v.label.as_str()).collect();
+        assert!(labels.contains(&"flux1-dev")); // no precision token → stem
+        assert!(labels.contains(&"fp8"));
+        let fp8 = variants.iter().find(|v| v.label == "fp8").unwrap();
+        assert_eq!(fp8.path, "flux1-dev-fp8.safetensors");
+        assert_eq!(fp8.size_bytes, 11901466276);
+    }
+
+    #[test]
+    fn classify_variants_falls_back_to_all_safetensors_when_family_unknown() {
+        let entries = vec![
+            HfTreeEntry { path: "mystery-model.safetensors".into(), size_bytes: 100 },
+            HfTreeEntry { path: "readme.md".into(), size_bytes: 5 },
+        ];
+        let variants = classify_variants(&entries);
+        assert_eq!(variants.len(), 1);
+        assert_eq!(variants[0].family, None);
+        assert_eq!(variants[0].path, "mystery-model.safetensors");
     }
 }

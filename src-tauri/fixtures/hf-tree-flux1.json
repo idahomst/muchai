@@ -1,0 +1,7 @@
+[
+  {"type": "directory", "path": "vae", "size": 0},
+  {"type": "file", "path": "flux1-dev.safetensors", "size": 52, "lfs": {"size": 23802932552}},
+  {"type": "file", "path": "flux1-dev-fp8.safetensors", "size": 52, "lfs": {"size": 11901466276}},
+  {"type": "file", "path": "ae.safetensors", "size": 52, "lfs": {"size": 335304388}},
+  {"type": "file", "path": "model_index.json", "size": 320}
+]
