@@ -69,7 +69,7 @@ pub fn build_args(
     }
     if opts.low_vram {
         // Weights paged from RAM, tiled VAE decode, flash attention — the
-        // low-UI/high-headroom bundle so models larger than VRAM can run.
+        // low-VRAM/high-headroom bundle so models larger than VRAM can run.
         a.push("--offload-to-cpu".into());
         a.push("--vae-tiling".into());
         a.push("--diffusion-fa".into());
