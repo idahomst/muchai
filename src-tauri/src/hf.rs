@@ -82,11 +82,17 @@ pub fn resolve_url(repo: &HfRepoRef, path: &str) -> String {
 }
 
 /// Canonical quant/precision tokens, most-specific first so `q4_k_m` matches
-/// before `q4`. Returned lowercased for stable display.
+/// before `q4` and `iq4_xs` before `q4`. Returned lowercased for stable display.
+/// Substring match, so any token that CONTAINS a shorter token must precede it.
 const PRECISION_TOKENS: &[&str] = &[
-    "fp8_e4m3fn", "fp8_e5m2", "fp32", "bf16", "fp16", "fp8",
+    // float + bitsandbytes (the safetensors low-VRAM variants this feature targets)
+    "fp8_e4m3fn", "fp8_e5m2", "fp32", "bf16", "fp16", "fp8", "nf4", "fp4", "int8", "int4",
+    // GGUF importance-matrix (IQ) quants — MUST precede the bare q* tokens below,
+    // since e.g. "iq4_xs" contains "q4".
+    "iq4_xs", "iq4_nl", "iq3_xxs", "iq3_s", "iq3_m", "iq2_xxs", "iq2_xs", "iq2_s", "iq2_m", "iq1_s", "iq1_m",
+    // GGUF K-quants + legacy, most-specific first
     "q8_0", "q6_k", "q5_k_m", "q5_k", "q4_k_m", "q4_k", "q4_0", "q3_k", "q2_k",
-    "q8", "q6", "q5", "q4", "q3", "q2", "int8",
+    "q8", "q6", "q5", "q4", "q3", "q2",
 ];
 
 /// Extract a quant/precision label from a filename, or `None` if none is found.
@@ -183,5 +189,19 @@ mod tests {
     #[test]
     fn precision_label_none_when_absent() {
         assert_eq!(precision_label("flux1-dev.safetensors"), None);
+    }
+
+    #[test]
+    fn precision_label_recognizes_bnb_low_vram_tokens() {
+        assert_eq!(precision_label("flux1-dev-bnb-nf4.safetensors"), Some("nf4".into()));
+        assert_eq!(precision_label("model-fp4.safetensors"), Some("fp4".into()));
+        assert_eq!(precision_label("model-int4.safetensors"), Some("int4".into()));
+    }
+
+    #[test]
+    fn precision_label_iq_quants_not_mislabeled_as_q() {
+        // Regression: "iq4_xs" contains "q4"; the IQ token must win.
+        assert_eq!(precision_label("mixtral-IQ4_XS.gguf"), Some("iq4_xs".into()));
+        assert_eq!(precision_label("model-IQ2_XXS.gguf"), Some("iq2_xxs".into()));
     }
 }
