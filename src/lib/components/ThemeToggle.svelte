@@ -3,6 +3,10 @@
   import { setSettings } from "$lib/api";
   import { applyTheme } from "$lib/theme";
 
+  // `labeled` renders a self-explanatory button ("☀ Switch to light theme") for
+  // the Preferences dialog; the default is the compact icon used in the header.
+  let { labeled = false }: { labeled?: boolean } = $props();
+
   let busy = $state(false);
 
   // A not-yet-loaded config is treated as dark.
@@ -29,11 +33,16 @@
 
 <button
   class="theme-toggle"
+  class:labeled
   onclick={toggle}
   disabled={busy}
   aria-label={theme === "light" ? "Switch to dark theme" : "Switch to light theme"}
   title={theme === "light" ? "Switch to dark theme" : "Switch to light theme"}>
-  {theme === "light" ? "☽" : "☀"}
+  {#if labeled}
+    {theme === "light" ? "☽ Switch to dark theme" : "☀ Switch to light theme"}
+  {:else}
+    {theme === "light" ? "☽" : "☀"}
+  {/if}
 </button>
 
 <style>
@@ -43,4 +52,7 @@
   }
   .theme-toggle:hover { background:var(--surface); }
   .theme-toggle:disabled { cursor:default; opacity:.6; }
+  .theme-toggle.labeled {
+    font-size:.75rem; border:1px solid var(--border); padding:.35rem .6rem;
+  }
 </style>
