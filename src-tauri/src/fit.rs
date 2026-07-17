@@ -69,8 +69,32 @@ mod tests {
 
     #[test]
     fn verdict_wont_fit_when_over_vram() {
-        // est(6000MB) = 6900+1500 = 8400 > 8192 → WontFit.
+        // est(6000MB) = 6899+1500 = 8399 > 8192 → WontFit.
+        // (6000*1.15 == 6899.99… in f64, truncates to 6899, not 6900.)
         assert_eq!(fit_verdict(Some(6000 * MB), Some(8192)), FitVerdict::WontFit);
+    }
+
+    #[test]
+    fn verdict_boundary_fits_to_tight_at_ninety_percent() {
+        // VRAM 4000 → 0.9×VRAM = 3600.0 exactly, so the Fits↔Tight edge sits at
+        // est == 3600: est == 3600 → Fits (<= inclusive); est == 3601 → Tight.
+        // This pins the `<=` and the 0.9 factor (interior points wouldn't).
+        let fits_bytes = 1826 * MB + MB / 2; // weights 1826.5 → 1826.5*1.15=2100.47→2100 +1500 = 3600
+        let tight_bytes = 1827 * MB; //         weights 1827.0 → 1827*1.15=2101.05→2101 +1500 = 3601
+        assert_eq!(estimate_vram_mb(fits_bytes), 3600);
+        assert_eq!(estimate_vram_mb(tight_bytes), 3601);
+        assert_eq!(fit_verdict(Some(fits_bytes), Some(4000)), FitVerdict::Fits);
+        assert_eq!(fit_verdict(Some(tight_bytes), Some(4000)), FitVerdict::Tight);
+    }
+
+    #[test]
+    fn verdict_boundary_tight_to_wont_fit_at_full_vram() {
+        // Tight↔WontFit edge sits at est == VRAM: est == VRAM → Tight (<= inclusive);
+        // est == VRAM+1 → WontFit. Pins the second `<=`.
+        let bytes = 2000 * MB; // weights 2000 → 2000*1.15=2300.0(f64)→2300 +1500 = 3800
+        assert_eq!(estimate_vram_mb(bytes), 3800);
+        assert_eq!(fit_verdict(Some(bytes), Some(3800)), FitVerdict::Tight); // est == VRAM → Tight
+        assert_eq!(fit_verdict(Some(bytes), Some(3799)), FitVerdict::WontFit); // est > VRAM → WontFit
     }
 
     #[test]
