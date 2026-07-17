@@ -44,7 +44,12 @@ pub fn run_generation<F: FnMut(ProgressUpdate)>(
     if !binary.exists() {
         return Err(GenError::BinaryNotFound(binary.display().to_string()));
     }
-    let args = build_args(req, &output_path.to_string_lossy(), backend);
+    let args = build_args(
+        req,
+        &output_path.to_string_lossy(),
+        backend,
+        crate::command_builder::EngineOptions::default(),
+    );
 
     let mut child = Command::new(binary)
         .args(&args)
