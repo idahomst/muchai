@@ -132,6 +132,9 @@ export interface AppConfig {
   // Rust AppConfig fields (#[serde(default)] → null for old configs). null = unset.
   hf_token: string | null;
   civitai_token: string | null;
+  // Low-VRAM offload mode (mirrors Rust AppConfig.low_vram, #[serde(default)] →
+  // false for old configs). When on, generation pages weights from RAM.
+  low_vram: boolean;
 }
 
 export const defaultRequest = (): GenerationRequest => ({
