@@ -81,6 +81,23 @@ pub fn resolve_url(repo: &HfRepoRef, path: &str) -> String {
     )
 }
 
+/// Canonical quant/precision tokens, most-specific first so `q4_k_m` matches
+/// before `q4`. Returned lowercased for stable display.
+const PRECISION_TOKENS: &[&str] = &[
+    "fp8_e4m3fn", "fp8_e5m2", "fp32", "bf16", "fp16", "fp8",
+    "q8_0", "q6_k", "q5_k_m", "q5_k", "q4_k_m", "q4_k", "q4_0", "q3_k", "q2_k",
+    "q8", "q6", "q5", "q4", "q3", "q2", "int8",
+];
+
+/// Extract a quant/precision label from a filename, or `None` if none is found.
+pub fn precision_label(filename: &str) -> Option<String> {
+    let lower = filename.to_lowercase();
+    PRECISION_TOKENS
+        .iter()
+        .find(|t| lower.contains(*t))
+        .map(|t| t.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -152,5 +169,19 @@ mod tests {
         assert_eq!(basename("a/b/c.safetensors"), "c.safetensors");
         assert_eq!(stem("a/b/c.safetensors"), "c");
         assert_eq!(stem("noext"), "noext");
+    }
+
+    #[test]
+    fn precision_label_extracts_known_tokens() {
+        assert_eq!(precision_label("flux1-dev-fp8_e4m3fn.safetensors"), Some("fp8_e4m3fn".into()));
+        assert_eq!(precision_label("model-fp16.safetensors"), Some("fp16".into()));
+        assert_eq!(precision_label("model-bf16.safetensors"), Some("bf16".into()));
+        assert_eq!(precision_label("t5-Q4_K_M.safetensors"), Some("q4_k_m".into()));
+        assert_eq!(precision_label("x-q8_0.safetensors"), Some("q8_0".into()));
+    }
+
+    #[test]
+    fn precision_label_none_when_absent() {
+        assert_eq!(precision_label("flux1-dev.safetensors"), None);
     }
 }
