@@ -739,7 +739,7 @@ mod tests {
     #[test]
     fn scan_excludes_shared_pool_but_keeps_real_models() {
         use std::collections::HashSet;
-        let root = std::env::temp_dir().join(format!("fridai-shared-excl-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("muchai-shared-excl-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let real = root.join("realmodel.safetensors");
         let shared = root.join("shared/flux1/t5xxl.safetensors");
@@ -757,7 +757,7 @@ mod tests {
 
     #[test]
     fn safe_model_dir_guards_shared_and_separators() {
-        let root = std::env::temp_dir().join(format!("fridai-safedir-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("muchai-safedir-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("shared")).unwrap();
         std::fs::create_dir_all(root.join("good")).unwrap();

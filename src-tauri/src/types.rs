@@ -276,7 +276,7 @@ pub struct AppConfig {
     /// Primary managed models folder; downloads land here.
     #[serde(default)]
     pub models_dir: String,
-    /// Additional folders fridAI scans and merges into the model list.
+    /// Additional folders MuchAI scans and merges into the model list.
     #[serde(default)]
     pub extra_model_dirs: Vec<String>,
     /// Chosen Vulkan device. `None` = engine default (auto-picks best device).
@@ -474,7 +474,7 @@ mod tests {
 
     #[test]
     fn missing_components_reports_only_set_but_absent_paths() {
-        let dir = std::env::temp_dir().join(format!("fridai-missing-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("muchai-missing-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let present = dir.join("d.safetensors");

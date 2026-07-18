@@ -97,5 +97,5 @@ pub fn run() {
             commands::list_hf_variants,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running fridAI");
+        .expect("error while running MuchAI");
 }
