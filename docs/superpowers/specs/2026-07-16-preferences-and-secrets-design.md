@@ -8,7 +8,7 @@ stored here.
 
 ## Problem
 
-FridAI has no place to store credentials or consolidate app settings:
+MuchAI has no place to store credentials or consolidate app settings:
 
 - HuggingFace (and, later, Civitai) tokens are typed into the download UI **every
   time**. HF tokens cannot be re-viewed after creation, so re-prompting is
@@ -33,7 +33,7 @@ automatically for downloads.
   unreliable in this machine's sandboxed environment. Tokens are stored as normal
   config fields.
 - **Read-only token guidance**: the Secrets section advises creating tokens with
-  read-only permissions (all FridAI needs).
+  read-only permissions (all MuchAI needs).
 
 ## Architecture
 

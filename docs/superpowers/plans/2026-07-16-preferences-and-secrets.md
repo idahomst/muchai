@@ -235,7 +235,7 @@ Create `src/lib/components/PreferencesDialog.svelte` with exactly this content:
 
     <section class="grp">
       <div class="grp-hdr">Secrets</div>
-      <p class="tip">Tip: a <strong>read-only</strong> token is all FridAI needs — create your tokens with read permissions only.</p>
+      <p class="tip">Tip: a <strong>read-only</strong> token is all MuchAI needs — create your tokens with read permissions only.</p>
 
       <label class="fld"><span>HuggingFace token</span>
         <div class="tok">

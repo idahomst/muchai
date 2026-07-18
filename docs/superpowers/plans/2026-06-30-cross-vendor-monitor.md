@@ -390,7 +390,7 @@ mod sysfs_tests {
 
     /// Build a fake sysfs tree at <tmp>/class/drm/<card>/device with the given files.
     fn fixture(tag: &str, files: &[(&str, &str)]) -> PathBuf {
-        let root = std::env::temp_dir().join(format!("fridai-sysfs-{}-{}", tag, std::process::id()));
+        let root = std::env::temp_dir().join(format!("muchai-sysfs-{}-{}", tag, std::process::id()));
         let _ = fs::remove_dir_all(&root);
         let dev = root.join("class/drm/card0/device");
         fs::create_dir_all(&dev).unwrap();

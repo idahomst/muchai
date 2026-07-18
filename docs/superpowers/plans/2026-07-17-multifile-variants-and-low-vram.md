@@ -255,7 +255,7 @@ Add to `mod tests` in `src-tauri/src/config.rs`:
 ```rust
     #[test]
     fn old_config_without_low_vram_defaults_to_false() {
-        let dir = std::env::temp_dir().join(format!("fridai-cfg-lv-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("muchai-cfg-lv-{}", std::process::id()));
         let path = dir.join("config.json");
         std::fs::create_dir_all(&dir).unwrap();
         // A pre-feature config file: no low_vram key.
@@ -271,7 +271,7 @@ Add to `mod tests` in `src-tauri/src/config.rs`:
 
     #[test]
     fn low_vram_round_trips() {
-        let dir = std::env::temp_dir().join(format!("fridai-cfg-lv2-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("muchai-cfg-lv2-{}", std::process::id()));
         let path = dir.join("config.json");
         let mut cfg = default_config();
         cfg.low_vram = true;

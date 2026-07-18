@@ -1,4 +1,4 @@
-# fridAI — Beta (Phase 1) Design Spec
+# MuchAI — Beta (Phase 1) Design Spec
 
 **Date:** 2026-06-25
 **Status:** Approved design, pre-implementation
@@ -123,8 +123,8 @@ must not implement them.
 
 ## Persistence (files only — no database)
 
-- Images: `~/.local/share/fridai/gallery/<id>.png` + `<id>.json` sidecar.
-- Config: platform config dir (e.g. `~/.config/fridai/config.json`) — sd model
+- Images: `~/.local/share/muchai/gallery/<id>.png` + `<id>.json` sidecar.
+- Config: platform config dir (e.g. `~/.config/muchai/config.json`) — sd model
   path(s), gallery dir, last-used parameters.
 - macOS uses the platform-appropriate dirs (via Tauri/`directories` crate).
 

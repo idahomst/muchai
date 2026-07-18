@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Let users manage a library of image models (a primary managed folder plus user-added watched folders) and acquire new single-file checkpoints from inside fridAI via a curated, hardware-aware starter list and a paste-URL downloader.
+**Goal:** Let users manage a library of image models (a primary managed folder plus user-added watched folders) and acquire new single-file checkpoints from inside MuchAI via a curated, hardware-aware starter list and a paste-URL downloader.
 
 **Architecture:** Three new Rust modules (`models.rs` scanning, `catalog.rs` starter list + suitability, `downloader.rs` streaming download) plus thin Tauri command adapters, mirrored by new Svelte components (`ModelLibrary`, `DownloadDialog`, `ModelFolders`). Pure logic is unit-tested with `cargo test`; IO/HTTP runs on worker threads exactly like the existing engine; frontend is validated with `npm run check` and manual E2E.
 
@@ -41,7 +41,7 @@ Add to the `mod tests` block in `src-tauri/src/config.rs`:
 
     #[test]
     fn old_config_without_model_fields_loads_and_backfills_models_dir() {
-        let dir = std::env::temp_dir().join(format!("fridai-cfg-old-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("muchai-cfg-old-{}", std::process::id()));
         let path = dir.join("config.json");
         std::fs::create_dir_all(&dir).unwrap();
         // A pre-feature config file: no models_dir / extra_model_dirs keys.
@@ -75,7 +75,7 @@ pub struct AppConfig {
     /// Primary managed models folder; downloads land here.
     #[serde(default)]
     pub models_dir: String,
-    /// Additional folders fridAI scans and merges into the model list.
+    /// Additional folders MuchAI scans and merges into the model list.
     #[serde(default)]
     pub extra_model_dirs: Vec<String>,
     pub last_request: GenerationRequest,
@@ -187,7 +187,7 @@ mod tests {
 
     #[test]
     fn finds_model_files_recursively_and_ignores_others() {
-        let root = std::env::temp_dir().join(format!("fridai-scan-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("muchai-scan-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         touch(&root.join("a.safetensors"), 10);
         touch(&root.join("sub/b.ckpt"), 20);
@@ -204,13 +204,13 @@ mod tests {
 
     #[test]
     fn missing_directory_is_skipped_not_an_error() {
-        let models = scan_models(&[PathBuf::from("/no/such/fridai/dir")]);
+        let models = scan_models(&[PathBuf::from("/no/such/muchai/dir")]);
         assert!(models.is_empty());
     }
 
     #[test]
     fn deduplicates_when_a_file_is_reachable_via_two_dirs() {
-        let root = std::env::temp_dir().join(format!("fridai-dedup-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("muchai-dedup-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         touch(&root.join("models/x.safetensors"), 1);
         // Scan the parent AND the child: x is reachable from both.
@@ -510,7 +510,7 @@ mod tests {
 
     #[test]
     fn unique_path_suffixes_on_collision() {
-        let dir = std::env::temp_dir().join(format!("fridai-uniq-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("muchai-uniq-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("m.safetensors"), b"x").unwrap();
@@ -1407,7 +1407,7 @@ Verify manually:
 - [ ] **Step 3: Build the self-contained AppImage**
 
 Run: `bash scripts/build-appimage.sh`
-Expected: completes; `src-tauri/target/release/bundle/appimage/fridai_0.1.0_amd64.AppImage` exists; no `libcuda.so.1`/`libnvidia-*` bundled (per the existing build script's strip step).
+Expected: completes; `src-tauri/target/release/bundle/appimage/muchai_0.1.0_amd64.AppImage` exists; no `libcuda.so.1`/`libnvidia-*` bundled (per the existing build script's strip step).
 
 - [ ] **Step 4: Commit any final touch-ups, then update the roadmap**
 

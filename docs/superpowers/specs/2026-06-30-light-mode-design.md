@@ -5,7 +5,7 @@
 
 ## Problem
 
-fridAI is dark-only. Colors are split between a tiny set of CSS variables in
+MuchAI is dark-only. Colors are split between a tiny set of CSS variables in
 `src/app.css` (`--border`, `--accent`) and ~16 hardcoded hex/rgba literals
 scattered across 9 component `<style>` blocks. Users who prefer a light UI have
 no option. We want a light theme the user can toggle, persisted across restarts.
@@ -20,7 +20,7 @@ semantic CSS variables. Default to **dark** for new and existing users.
 
 - **Behavior:** manual toggle only. No `prefers-color-scheme` / system-follow.
   The field is `theme: "dark" | "light"`.
-- **Placement:** a small sun/moon icon button in the header next to the `fridAI`
+- **Placement:** a small sun/moon icon button in the header next to the `MuchAI`
   brand. Sun ☀ shown in dark mode (click → light); moon ☽ in light (click → dark).
 - **Default:** dark, for both new installs and existing config files (via serde
   default), so current users see no change until they switch.

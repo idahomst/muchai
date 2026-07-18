@@ -63,7 +63,7 @@ In `src-tauri/src/types.rs`, inside `#[cfg(test)] mod tests`, add:
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `cd /home/idaho/g/mst/fridai/src-tauri && cargo test --lib output_format`
+Run: `cd /home/idaho/g/mst/muchai/src-tauri && cargo test --lib output_format`
 Expected: FAIL to compile — `OutputFormat` and `output_format` do not exist yet.
 
 - [ ] **Step 3: Add the `OutputFormat` enum**
@@ -142,13 +142,13 @@ with:
 
 - [ ] **Step 6: Run the tests to verify they pass**
 
-Run: `cd /home/idaho/g/mst/fridai/src-tauri && cargo test --lib`
+Run: `cd /home/idaho/g/mst/muchai/src-tauri && cargo test --lib`
 Expected: all tests PASS (the 4 new ones plus all existing). The existing `generation_request_round_trips_through_json` test still passes because `..Default::default()` now includes `output_format`.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-cd /home/idaho/g/mst/fridai && git add src-tauri/src/types.rs && git commit -m "feat(jpeg-output): add OutputFormat to GenerationRequest
+cd /home/idaho/g/mst/muchai && git add src-tauri/src/types.rs && git commit -m "feat(jpeg-output): add OutputFormat to GenerationRequest
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
@@ -177,7 +177,7 @@ In `src-tauri/src/command_builder.rs`, inside `#[cfg(test)] mod tests`, add:
 
 - [ ] **Step 2: Run it to confirm it passes (no production change needed)**
 
-Run: `cd /home/idaho/g/mst/fridai/src-tauri && cargo test --lib output_path_extension_passes_through_verbatim`
+Run: `cd /home/idaho/g/mst/muchai/src-tauri && cargo test --lib output_path_extension_passes_through_verbatim`
 Expected: PASS. (`build_args` already forwards the `-o` path verbatim; this test pins that contract so the JPEG path is safe.)
 
 - [ ] **Step 3: Derive the extension in `generate`**
@@ -225,18 +225,18 @@ Replace the `format!` line so it reads:
 
 - [ ] **Step 5: Build to verify it compiles**
 
-Run: `cd /home/idaho/g/mst/fridai/src-tauri && cargo build 2>&1 | tail -5`
+Run: `cd /home/idaho/g/mst/muchai/src-tauri && cargo build 2>&1 | tail -5`
 Expected: compiles with no errors and no new warnings.
 
 - [ ] **Step 6: Run the full Rust test suite**
 
-Run: `cd /home/idaho/g/mst/fridai/src-tauri && cargo test --lib 2>&1 | tail -2`
+Run: `cd /home/idaho/g/mst/muchai/src-tauri && cargo test --lib 2>&1 | tail -2`
 Expected: all tests pass.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-cd /home/idaho/g/mst/fridai && git add src-tauri/src/command_builder.rs src-tauri/src/commands.rs && git commit -m "feat(jpeg-output): drive output extension from OutputFormat in generate
+cd /home/idaho/g/mst/muchai && git add src-tauri/src/command_builder.rs src-tauri/src/commands.rs && git commit -m "feat(jpeg-output): drive output extension from OutputFormat in generate
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
@@ -352,13 +352,13 @@ with:
 
 - [ ] **Step 6: Type-check the frontend**
 
-Run: `cd /home/idaho/g/mst/fridai && npm run check 2>&1 | tail -3`
+Run: `cd /home/idaho/g/mst/muchai && npm run check 2>&1 | tail -3`
 Expected: 0 errors, 0 warnings. (`defaultRequest` now supplies `output_format`, so the new required interface field breaks no construction site; `$currentItem.request.output_format` is typed via the mirrored interface.)
 
 - [ ] **Step 7: Commit**
 
 ```bash
-cd /home/idaho/g/mst/fridai && git add src/lib/types.ts src/lib/components/SettingsPanel.svelte src/lib/components/ParamsPanel.svelte && git commit -m "feat(jpeg-output): format dropdown + params row, TS mirror
+cd /home/idaho/g/mst/muchai && git add src/lib/types.ts src/lib/components/SettingsPanel.svelte src/lib/components/ParamsPanel.svelte && git commit -m "feat(jpeg-output): format dropdown + params row, TS mirror
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
@@ -371,12 +371,12 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 - [ ] **Step 1: Backend tests**
 
-Run: `cd /home/idaho/g/mst/fridai/src-tauri && cargo test --lib 2>&1 | tail -2`
+Run: `cd /home/idaho/g/mst/muchai/src-tauri && cargo test --lib 2>&1 | tail -2`
 Expected: all tests pass (52 prior + 5 new = 57).
 
 - [ ] **Step 2: Frontend check**
 
-Run: `cd /home/idaho/g/mst/fridai && npm run check 2>&1 | tail -2`
+Run: `cd /home/idaho/g/mst/muchai && npm run check 2>&1 | tail -2`
 Expected: 0 errors, 0 warnings.
 
 - [ ] **Step 3: Manual E2E (dev box, `npm run tauri dev`)**
@@ -391,7 +391,7 @@ Verify:
 
 - [ ] **Step 4: Update roadmap memory**
 
-In `/home/idaho/.claude/projects/-home-idaho-g-mst-fridai/memory/fridai-roadmap.md`, mark roadmap item 2 (JPEG output format) DONE.
+In `/home/idaho/.claude/projects/-home-idaho-g-mst-muchai/memory/muchai-roadmap.md`, mark roadmap item 2 (JPEG output format) DONE.
 
 - [ ] **Step 5: Finish the branch**
 

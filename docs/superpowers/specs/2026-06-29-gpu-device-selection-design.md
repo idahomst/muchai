@@ -6,7 +6,7 @@
 
 ## Goal
 
-Let the user choose which GPU fridAI generates on, on Linux, across vendors
+Let the user choose which GPU MuchAI generates on, on Linux, across vendors
 (NVIDIA, AMD, Intel) by switching the engine to a Vulkan build and exposing a
 device picker. One cohesive, independently shippable sub-project.
 

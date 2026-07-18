@@ -6,7 +6,7 @@
 
 ## Problem
 
-fridAI is about to go to non-technical test users (friends) who have no image-generation or model-settings experience. Two frictions block them:
+MuchAI is about to go to non-technical test users (friends) who have no image-generation or model-settings experience. Two frictions block them:
 
 1. **Cold start** — the app opens empty (no model). "What do I even do?"
 2. **Jargon** — Steps, CFG, Sampler, Seed, negative prompt, Model, Device are meaningless to a beginner.
@@ -66,14 +66,14 @@ export const HELP = {
   seed: "The random starting point. −1 makes a new random image each time; set a fixed number to reproduce the exact same image.",
   // ModelLibrary / DevicePicker
   model: "The AI model that turns your words into images. Download one to get started — different models produce different styles.",
-  device: "The hardware that runs the AI. A graphics card (GPU) is much faster than CPU. 'Default' lets fridAI choose for you.",
+  device: "The hardware that runs the AI. A graphics card (GPU) is much faster than CPU. 'Default' lets MuchAI choose for you.",
 } as const;
 ```
 
 ### `WelcomeDialog.svelte` (new)
 One-time modal.
 
-- Title: **"Welcome to fridAI 👋"**
+- Title: **"Welcome to MuchAI 👋"**
 - Intro: "Make images from text in three steps:"
 - Steps:
   1. **Download a model** — the AI that creates images. Use the **Download…** button under "Model".
