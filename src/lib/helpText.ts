@@ -28,5 +28,5 @@ export const HELP = {
   model:
     "The AI model that turns your words into images. Download one to get started — different models produce different styles.",
   device:
-    "The hardware that runs the AI. A graphics card (GPU) is much faster than CPU. 'Default' lets FridAI choose for you.",
+    "The hardware that runs the AI. A graphics card (GPU) is much faster than CPU. 'Default' lets MuchAI choose for you.",
 } as const;
