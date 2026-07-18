@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build a self-contained fridAI AppImage.
+# Build a self-contained MuchAI AppImage.
 #
 # The engine is now a Vulkan build (sd-cli + its .so siblings shipped as the
 # `engine` resource dir, found via RUNPATH=$ORIGIN). Vulkan reaches the GPU
@@ -34,7 +34,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 APPIMAGE_DIR="src-tauri/target/release/bundle/appimage"
-APPDIR="$APPIMAGE_DIR/fridai.AppDir"
+APPDIR="$APPIMAGE_DIR/muchai.AppDir"
 PLUGIN="$HOME/.cache/tauri/linuxdeploy-plugin-appimage.AppImage"
 
 echo ">> tauri build (appimage)…"
@@ -55,9 +55,9 @@ find "$APPDIR/usr/lib" \
 
 echo ">> repacking AppImage without host GPU libs…"
 ( cd "$APPIMAGE_DIR" \
-  && ARCH=x86_64 OUTPUT="fridai_0.1.0_amd64.AppImage" \
+  && ARCH=x86_64 OUTPUT="muchai_0.1.0_amd64.AppImage" \
      APPIMAGE_EXTRACT_AND_RUN=1 \
-     "$PLUGIN" --appdir fridai.AppDir )
+     "$PLUGIN" --appdir muchai.AppDir )
 
 echo ">> done:"
-ls -lh "$APPIMAGE_DIR"/fridai_0.1.0_amd64.AppImage
+ls -lh "$APPIMAGE_DIR"/muchai_0.1.0_amd64.AppImage
