@@ -107,7 +107,7 @@ In `src-tauri/src/config.rs`, inside `#[cfg(test)] mod tests`, add:
     #[test]
     fn old_config_without_theme_defaults_to_dark() {
         use crate::types::Theme;
-        let dir = std::env::temp_dir().join(format!("fridai-cfg-theme-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("muchai-cfg-theme-{}", std::process::id()));
         let path = dir.join("config.json");
         std::fs::create_dir_all(&dir).unwrap();
         // A pre-feature config file: no theme key.
@@ -124,7 +124,7 @@ In `src-tauri/src/config.rs`, inside `#[cfg(test)] mod tests`, add:
     #[test]
     fn theme_round_trips() {
         use crate::types::Theme;
-        let dir = std::env::temp_dir().join(format!("fridai-cfg-theme2-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("muchai-cfg-theme2-{}", std::process::id()));
         let path = dir.join("config.json");
         let mut cfg = default_config();
         cfg.theme = Theme::Light;
@@ -474,7 +474,7 @@ Change the brand markup from:
 
 ```svelte
   <aside class="controls">
-    <h1 class="brand">fridAI</h1>
+    <h1 class="brand">MuchAI</h1>
 ```
 
 to:
@@ -482,7 +482,7 @@ to:
 ```svelte
   <aside class="controls">
     <header class="brandbar">
-      <h1 class="brand">fridAI</h1>
+      <h1 class="brand">MuchAI</h1>
       <ThemeToggle />
     </header>
 ```

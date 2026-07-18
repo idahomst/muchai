@@ -54,8 +54,8 @@ pub fn enumerate(binary: &Path) -> Vec<GpuDevice> {
         return Vec::new();
     }
     let tmp = std::env::temp_dir();
-    let model = tmp.join("fridai-vk-probe-missing.gguf");
-    let out = tmp.join("fridai-vk-probe.png");
+    let model = tmp.join("muchai-vk-probe-missing.gguf");
+    let out = tmp.join("muchai-vk-probe.png");
 
     let mut child = match Command::new(binary)
         .args(["-M", "img_gen", "-m"])
@@ -112,7 +112,7 @@ pub fn validate_gpu_selection(sel: Option<GpuSelection>, devices: &[GpuDevice]) 
         .then_some(sel)
 }
 
-/// Pick the device fridAI should default to when the user hasn't made a valid
+/// Pick the device MuchAI should default to when the user hasn't made a valid
 /// selection. The ggml-vulkan backend's *own* default is loader-dependent and
 /// not necessarily the first-enumerated device (on a discrete+iGPU box it was
 /// observed to pick the discrete GPU, not banner index 0), so we choose
@@ -128,7 +128,7 @@ pub fn pick_default_device(devices: &[GpuDevice]) -> Option<&GpuDevice> {
 /// Map a (possibly stale) saved selection + the enumerated device list to the
 /// engine `--backend` value. A valid GPU selection maps to `vulkan{index}`; a
 /// valid CPU selection (or no real GPU anywhere) yields `Some("cpu")`. With no
-/// valid selection but a real GPU present, fridAI picks the default device
+/// valid selection but a real GPU present, MuchAI picks the default device
 /// explicitly (`pick_default_device`) and targets it by index rather than
 /// omitting `--backend` and letting the engine's opaque default decide.
 pub fn resolve_backend(selection: Option<GpuSelection>, devices: &[GpuDevice]) -> Option<String> {
@@ -156,7 +156,7 @@ mod tests {
     use std::path::PathBuf;
 
     fn write_fake_engine(body: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("fridai-vkprobe-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("muchai-vkprobe-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("sd-cli");
         std::fs::write(&path, body).unwrap();

@@ -6,7 +6,7 @@
 
 ## Goal
 
-Three cohesive improvements to fridAI's gallery/thumbnail area:
+Three cohesive improvements to MuchAI's gallery/thumbnail area:
 
 1. **Delete** a generated image from within the app (to the OS trash, with confirmation).
 2. **Selection highlight** so it's clear which thumbnail the big preview + metadata panel describe.

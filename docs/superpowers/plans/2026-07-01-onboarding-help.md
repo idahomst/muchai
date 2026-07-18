@@ -45,7 +45,7 @@
 ```rust
     #[test]
     fn old_config_without_onboarded_defaults_to_false() {
-        let dir = std::env::temp_dir().join(format!("fridai-cfg-onb-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("muchai-cfg-onb-{}", std::process::id()));
         let path = dir.join("config.json");
         std::fs::create_dir_all(&dir).unwrap();
         // A pre-feature config file: no onboarded key.
@@ -61,7 +61,7 @@
 
     #[test]
     fn onboarded_round_trips() {
-        let dir = std::env::temp_dir().join(format!("fridai-cfg-onb2-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("muchai-cfg-onb2-{}", std::process::id()));
         let path = dir.join("config.json");
         let mut cfg = default_config();
         cfg.onboarded = true;
@@ -143,7 +143,7 @@ git commit -m "feat(onboarding): add persisted onboarded config flag"
 
 <div class="backdrop" onclick={(e) => { if (e.target === e.currentTarget) onclose(); }} role="presentation">
   <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="welcome-title">
-    <h2 id="welcome-title">Welcome to fridAI 👋</h2>
+    <h2 id="welcome-title">Welcome to MuchAI 👋</h2>
     <p class="intro">Make images from text in three steps:</p>
     <ol class="steps">
       <li><strong>Download a model</strong> — the AI that creates images. Use the <em>Download…</em> button under “Model”.</li>
@@ -225,7 +225,7 @@ Inside the `onMount` async IIFE, immediately after `applyTheme(cfg.theme);`, add
 
 ```svelte
     <header class="brandbar">
-      <h1 class="brand">fridAI</h1>
+      <h1 class="brand">MuchAI</h1>
       <div class="hdr-actions">
         <button class="help-btn" aria-label="Help" title="Help" onclick={() => (showWelcome = true)}>?</button>
         <ThemeToggle />
@@ -419,7 +419,7 @@ export const HELP = {
   model:
     "The AI model that turns your words into images. Download one to get started — different models produce different styles.",
   device:
-    "The hardware that runs the AI. A graphics card (GPU) is much faster than CPU. 'Default' lets fridAI choose for you.",
+    "The hardware that runs the AI. A graphics card (GPU) is much faster than CPU. 'Default' lets MuchAI choose for you.",
 } as const;
 ```
 

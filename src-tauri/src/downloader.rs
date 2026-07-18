@@ -218,7 +218,7 @@ mod tests {
 
     #[test]
     fn unique_path_suffixes_on_collision() {
-        let dir = std::env::temp_dir().join(format!("fridai-uniq-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("muchai-uniq-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("m.safetensors"), b"x").unwrap();

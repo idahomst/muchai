@@ -95,13 +95,13 @@ export function cancelActiveDownload(): void {
 
 - [ ] **Step 3: Type-check**
 
-Run: `cd /home/idaho/g/mst/fridai && npm run check 2>&1 | tail -3`
+Run: `cd /home/idaho/g/mst/muchai && npm run check 2>&1 | tail -3`
 Expected: 0 errors, 0 warnings. (`DownloadProgress.total` is `number | null`, matching the store field; the store compiles even though no component consumes it yet.)
 
 - [ ] **Step 4: Commit**
 
 ```bash
-cd /home/idaho/g/mst/fridai && git add src/lib/stores.ts && git commit -m "feat(background-downloads): downloadStatus store + start/cancel helpers
+cd /home/idaho/g/mst/muchai && git add src/lib/stores.ts && git commit -m "feat(background-downloads): downloadStatus store + start/cancel helpers
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
@@ -219,13 +219,13 @@ Changes vs. the old file: removed the `ondownloaded` prop, the `busy`/`cancellin
 
 - [ ] **Step 2: Type-check**
 
-Run: `cd /home/idaho/g/mst/fridai && npm run check 2>&1 | tail -3`
+Run: `cd /home/idaho/g/mst/muchai && npm run check 2>&1 | tail -3`
 Expected: errors in `ModelLibrary.svelte` only — it still passes the now-removed `ondownloaded` prop (`Object literal may only specify known properties` / missing prop). `DownloadDialog.svelte` itself has 0 errors. Task 3 resolves the `ModelLibrary` errors. (If you prefer a clean check between tasks, this is acceptable mid-refactor; the build is green again after Task 3.)
 
 - [ ] **Step 3: Commit**
 
 ```bash
-cd /home/idaho/g/mst/fridai && git add src/lib/components/DownloadDialog.svelte && git commit -m "feat(background-downloads): DownloadDialog starts in background and closes
+cd /home/idaho/g/mst/muchai && git add src/lib/components/DownloadDialog.svelte && git commit -m "feat(background-downloads): DownloadDialog starts in background and closes
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
@@ -367,13 +367,13 @@ In the same file's `<style>` block, after the existing `.err` rule, add:
 
 - [ ] **Step 6: Type-check (now clean)**
 
-Run: `cd /home/idaho/g/mst/fridai && npm run check 2>&1 | tail -3`
+Run: `cd /home/idaho/g/mst/muchai && npm run check 2>&1 | tail -3`
 Expected: 0 errors, 0 warnings. (`$downloadStatus.kind === "..."` narrows the union in templates — the same idiom `GenerateBar.svelte` uses with `$genStatus`.)
 
 - [ ] **Step 7: Commit**
 
 ```bash
-cd /home/idaho/g/mst/fridai && git add src/lib/components/ModelLibrary.svelte && git commit -m "feat(background-downloads): inline download status + refresh-on-done in ModelLibrary
+cd /home/idaho/g/mst/muchai && git add src/lib/components/ModelLibrary.svelte && git commit -m "feat(background-downloads): inline download status + refresh-on-done in ModelLibrary
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
@@ -386,12 +386,12 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 - [ ] **Step 1: Frontend check**
 
-Run: `cd /home/idaho/g/mst/fridai && npm run check 2>&1 | tail -3`
+Run: `cd /home/idaho/g/mst/muchai && npm run check 2>&1 | tail -3`
 Expected: 0 errors, 0 warnings.
 
 - [ ] **Step 2: Backend tests unchanged**
 
-Run: `cd /home/idaho/g/mst/fridai/src-tauri && cargo test --lib 2>&1 | tail -2`
+Run: `cd /home/idaho/g/mst/muchai/src-tauri && cargo test --lib 2>&1 | tail -2`
 Expected: all 57 tests pass (no Rust files changed).
 
 - [ ] **Step 3: Manual E2E (dev box, `npm run tauri dev`)**
@@ -407,7 +407,7 @@ Verify:
 
 - [ ] **Step 4: Update roadmap memory**
 
-In `/home/idaho/.claude/projects/-home-idaho-g-mst-fridai/memory/fridai-roadmap.md`, mark roadmap item 3 (Background model downloads) DONE, noting it was a frontend-only change (new `downloadStatus` store + helpers; `DownloadDialog` fire-and-close; inline status in `ModelLibrary`; no Rust change) and that it also clears the "Background model downloads" deferred item from the Gallery-UX cluster note.
+In `/home/idaho/.claude/projects/-home-idaho-g-mst-muchai/memory/muchai-roadmap.md`, mark roadmap item 3 (Background model downloads) DONE, noting it was a frontend-only change (new `downloadStatus` store + helpers; `DownloadDialog` fire-and-close; inline status in `ModelLibrary`; no Rust change) and that it also clears the "Background model downloads" deferred item from the Gallery-UX cluster note.
 
 - [ ] **Step 5: Finish the branch**
 

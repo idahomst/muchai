@@ -68,7 +68,7 @@ mod tests {
 
     #[test]
     fn writes_sidecar_and_lists_newest_first() {
-        let dir = std::env::temp_dir().join(format!("fridai-gal-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("muchai-gal-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
 
         write_sidecar(&dir.join("older.png"), &item("older", 100)).unwrap();
@@ -101,7 +101,7 @@ mod tests {
 
     #[test]
     fn deletion_targets_includes_sidecar_only_when_present() {
-        let dir = std::env::temp_dir().join(format!("fridai-del-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("muchai-del-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let img = dir.join("pic.png");
         std::fs::write(&img, b"png").unwrap();
@@ -119,7 +119,7 @@ mod tests {
 
     #[test]
     fn delete_to_trash_removes_image_and_sidecar() {
-        let dir = std::env::temp_dir().join(format!("fridai-trash-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("muchai-trash-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let img = dir.join("gone.png");
         let side = dir.join("gone.json");
@@ -136,7 +136,7 @@ mod tests {
 
     #[test]
     fn skips_corrupt_sidecar() {
-        let dir = std::env::temp_dir().join(format!("fridai-gal-corrupt-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("muchai-gal-corrupt-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
 
         write_sidecar(&dir.join("good.png"), &item("good", 100)).unwrap();

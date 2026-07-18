@@ -8,7 +8,7 @@ multi-file UX rework.
 
 ## Problem
 
-fridAI assumes **one model = one file**: `GenerationRequest.model_path` is a single
+MuchAI assumes **one model = one file**: `GenerationRequest.model_path` is a single
 `String` passed to stable-diffusion.cpp via `-m` (the all-in-one checkpoint flag).
 That works for SD1.5 / SDXL but **cannot load split models** (FLUX, Krea, Qwen-Image),
 whose transformer, text encoders, and VAE are separate `.safetensors` files loaded via
@@ -43,7 +43,7 @@ the cleaner data model.
 ## Platform & distribution (amendment — 2026-07-17)
 
 **Target: Linux-only.** macOS and Windows are dropped as targets — Draw Things already serves
-those platforms well; the gap fridAI fills is a native, DrawThings-class image-generation app
+those platforms well; the gap MuchAI fills is a native, DrawThings-class image-generation app
 for Linux, which is missing today. Narrowing to Linux removes macOS notarization, Windows code
 signing, and cross-compilation from the picture.
 

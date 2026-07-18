@@ -174,7 +174,7 @@ In `src-tauri/src/gallery.rs` tests module, add:
 ```rust
     #[test]
     fn deletion_targets_includes_sidecar_only_when_present() {
-        let dir = std::env::temp_dir().join(format!("fridai-del-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("muchai-del-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let img = dir.join("pic.png");
         std::fs::write(&img, b"png").unwrap();
@@ -229,7 +229,7 @@ In `src-tauri/src/gallery.rs` tests module, add:
 ```rust
     #[test]
     fn delete_to_trash_removes_image_and_sidecar() {
-        let dir = std::env::temp_dir().join(format!("fridai-trash-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("muchai-trash-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let img = dir.join("gone.png");
         let side = dir.join("gone.json");
@@ -573,7 +573,7 @@ Verify each:
 
 - [ ] **Step 4: Update roadmap memory**
 
-Append the completed feature to `/home/idaho/.claude/projects/-home-idaho-g-mst-fridai/memory/fridai-roadmap.md` (mark delete / selection-highlight / batch-grouping DONE; note the deferred app-settings menu and background downloads remain).
+Append the completed feature to `/home/idaho/.claude/projects/-home-idaho-g-mst-muchai/memory/muchai-roadmap.md` (mark delete / selection-highlight / batch-grouping DONE; note the deferred app-settings menu and background downloads remain).
 
 - [ ] **Step 5: Finish the branch**
 

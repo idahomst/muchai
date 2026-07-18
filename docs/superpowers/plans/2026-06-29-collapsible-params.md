@@ -83,7 +83,7 @@ In `src-tauri/src/config.rs`, inside `#[cfg(test)] mod tests`, add:
 ```rust
     #[test]
     fn old_config_without_params_expanded_defaults_to_collapsed() {
-        let dir = std::env::temp_dir().join(format!("fridai-cfg-pe-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("muchai-cfg-pe-{}", std::process::id()));
         let path = dir.join("config.json");
         std::fs::create_dir_all(&dir).unwrap();
         // A pre-feature config file: no params_expanded key.
@@ -99,7 +99,7 @@ In `src-tauri/src/config.rs`, inside `#[cfg(test)] mod tests`, add:
 
     #[test]
     fn params_expanded_round_trips() {
-        let dir = std::env::temp_dir().join(format!("fridai-cfg-pe2-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("muchai-cfg-pe2-{}", std::process::id()));
         let path = dir.join("config.json");
         let mut cfg = default_config();
         cfg.params_expanded = true;
@@ -113,7 +113,7 @@ In `src-tauri/src/config.rs`, inside `#[cfg(test)] mod tests`, add:
 
 - [ ] **Step 4: Run the tests**
 
-Run: `cd /home/idaho/g/mst/fridai/src-tauri && cargo test --lib config`
+Run: `cd /home/idaho/g/mst/muchai/src-tauri && cargo test --lib config`
 Expected: all config tests PASS, including the two new ones. (The existing `save_then_load_round_trips` test still passes because both sides now carry `params_expanded: false` from `default_config`.)
 
 - [ ] **Step 5: Mirror the field in TypeScript**
@@ -135,7 +135,7 @@ with:
 
 - [ ] **Step 6: Type-check the frontend**
 
-Run: `cd /home/idaho/g/mst/fridai && npm run check`
+Run: `cd /home/idaho/g/mst/muchai && npm run check`
 Expected: 0 errors, 0 warnings. (No frontend code constructs an `AppConfig` literal — it's only read from / spread — so the new required field breaks no call sites.)
 
 - [ ] **Step 7: Commit**
@@ -253,7 +253,7 @@ Replace the entire contents of `src/lib/components/ParamsPanel.svelte` with:
 
 - [ ] **Step 2: Type-check**
 
-Run: `cd /home/idaho/g/mst/fridai && npm run check`
+Run: `cd /home/idaho/g/mst/muchai && npm run check`
 Expected: 0 errors, 0 warnings.
 
 - [ ] **Step 3: Commit**
@@ -273,12 +273,12 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 - [ ] **Step 1: Backend tests**
 
-Run: `cd /home/idaho/g/mst/fridai/src-tauri && cargo test --lib 2>&1 | tail -3`
+Run: `cd /home/idaho/g/mst/muchai/src-tauri && cargo test --lib 2>&1 | tail -3`
 Expected: all tests pass (52 prior + the 2 new config tests = 54).
 
 - [ ] **Step 2: Frontend check**
 
-Run: `cd /home/idaho/g/mst/fridai && npm run check 2>&1 | tail -3`
+Run: `cd /home/idaho/g/mst/muchai && npm run check 2>&1 | tail -3`
 Expected: 0 errors, 0 warnings.
 
 - [ ] **Step 3: Manual E2E (dev box, `npm run tauri dev`)**
@@ -293,7 +293,7 @@ Verify:
 
 - [ ] **Step 4: Update roadmap memory**
 
-In `/home/idaho/.claude/projects/-home-idaho-g-mst-fridai/memory/fridai-roadmap.md`, mark roadmap item 1 (collapsible params panel) DONE.
+In `/home/idaho/.claude/projects/-home-idaho-g-mst-muchai/memory/muchai-roadmap.md`, mark roadmap item 1 (collapsible params panel) DONE.
 
 - [ ] **Step 5: Finish the branch**
 

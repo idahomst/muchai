@@ -61,7 +61,7 @@
 <main class="app">
   <aside class="controls">
     <header class="brandbar">
-      <h1 class="brand">FridAI</h1>
+      <h1 class="brand">MuchAI</h1>
       <div class="hdr-actions">
         <button class="help-btn" aria-label="Help" title="Help" onclick={() => (showWelcome = true)}>?</button>
         <button class="help-btn" aria-label="Preferences" title="Preferences" onclick={() => (showPrefs = true)}>⚙</button>

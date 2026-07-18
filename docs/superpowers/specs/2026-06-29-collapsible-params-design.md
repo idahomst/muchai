@@ -21,7 +21,7 @@ restarts.
 - `ParamsPanel.svelte` renders nothing unless `$currentItem` is set; when it is, it
   shows a grid (Model/Seed/Steps/CFG/Sampler/Size) plus a prompt/negative block,
   all read from `$currentItem.request`.
-- Config is persisted in `~/.config/fridai/config.json` as `AppConfig`
+- Config is persisted in `~/.config/muchai/config.json` as `AppConfig`
   (`src-tauri/src/types.rs`, mirrored in `src/lib/types.ts`). Newer fields use
   `#[serde(default)]` for backward compatibility (e.g. `gpu_device`,
   `extra_model_dirs`).

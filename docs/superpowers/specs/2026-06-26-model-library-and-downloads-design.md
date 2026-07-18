@@ -7,8 +7,8 @@
 ## Goal
 
 Let users manage a library of image models and acquire new ones from inside
-fridAI, instead of hand-picking a single `.safetensors` file every time. This
-serves fridAI's core value: simple, self-contained, no dependency hell — a new
+MuchAI, instead of hand-picking a single `.safetensors` file every time. This
+serves MuchAI's core value: simple, self-contained, no dependency hell — a new
 user with an empty library should be able to get a working model in a few clicks.
 
 ## Scope

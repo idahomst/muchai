@@ -74,7 +74,7 @@ mod tests {
 
     #[test]
     fn finds_model_files_recursively_and_ignores_others() {
-        let root = std::env::temp_dir().join(format!("fridai-scan-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("muchai-scan-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         touch(&root.join("a.safetensors"), 10);
         touch(&root.join("sub/b.ckpt"), 20);
@@ -91,13 +91,13 @@ mod tests {
 
     #[test]
     fn missing_directory_is_skipped_not_an_error() {
-        let models = scan_models(&[PathBuf::from("/no/such/fridai/dir")]);
+        let models = scan_models(&[PathBuf::from("/no/such/muchai/dir")]);
         assert!(models.is_empty());
     }
 
     #[test]
     fn deduplicates_when_a_file_is_reachable_via_two_dirs() {
-        let root = std::env::temp_dir().join(format!("fridai-dedup-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("muchai-dedup-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         touch(&root.join("models/x.safetensors"), 1);
         // Scan the parent AND the child: x is reachable from both.
@@ -108,7 +108,7 @@ mod tests {
 
     #[test]
     fn excludes_paths_referenced_by_definitions() {
-        let root = std::env::temp_dir().join(format!("fridai-excl-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("muchai-excl-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         touch(&root.join("loose.safetensors"), 10);
         touch(&root.join("flux1/flux1-dev.safetensors"), 20);

@@ -1,4 +1,4 @@
-# fridAI Beta (Phase 1) Implementation Plan
+# MuchAI Beta (Phase 1) Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -12,14 +12,14 @@
 - TDD for all pure Rust logic (`command_builder`, `progress_parser`, `config`, `gallery`, `sysmon`, `engine`). UI is verified manually (Svelte components hold minimal logic).
 - All Rust unit tests live inline in `#[cfg(test)] mod tests` and run with `cargo test` from `src-tauri/`.
 - Conventional commit messages. **Every commit message ends with the trailer** `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>` (shown in each commit step via a second `-m`).
-- Work happens at the repo root `/home/idaho/g/mst/fridai`. Rust crate lives in `src-tauri/`.
+- Work happens at the repo root `/home/idaho/g/mst/muchai`. Rust crate lives in `src-tauri/`.
 
 ---
 
 ## File Structure
 
 ```
-fridai/
+muchai/
   src/                              # Svelte frontend
     app.css                         # global theme
     main.ts                         # Svelte entry (scaffolded)
@@ -70,20 +70,20 @@ Each Rust module has one responsibility and pure-logic modules (`command_builder
 - [ ] **Step 1: Scaffold into a temp dir** (create-tauri-app refuses a non-empty dir, so we scaffold then move)
 
 ```bash
-rm -rf /tmp/fridai-scaffold
-npm create tauri-app@latest /tmp/fridai-scaffold -- \
-  --manager npm --template svelte-ts --identifier cz.mst.fridai --yes
+rm -rf /tmp/muchai-scaffold
+npm create tauri-app@latest /tmp/muchai-scaffold -- \
+  --manager npm --template svelte-ts --identifier cz.mst.muchai --yes
 ```
-Expected: a new project under `/tmp/fridai-scaffold` containing `src/`, `src-tauri/`, `package.json`, etc.
+Expected: a new project under `/tmp/muchai-scaffold` containing `src/`, `src-tauri/`, `package.json`, etc.
 
 - [ ] **Step 2: Move scaffold contents into the repo root** (keep our `docs/`, `.git`, `.gitignore`, `.superpowers/`)
 
 ```bash
-cd /home/idaho/g/mst/fridai
+cd /home/idaho/g/mst/muchai
 # copy everything except git metadata
-rsync -a --exclude='.git' --exclude='.gitignore' /tmp/fridai-scaffold/ ./
+rsync -a --exclude='.git' --exclude='.gitignore' /tmp/muchai-scaffold/ ./
 # if the scaffold shipped its own .gitignore, append any unique lines to ours
-[ -f /tmp/fridai-scaffold/.gitignore ] && cat /tmp/fridai-scaffold/.gitignore >> .gitignore.scaffold && sort -u .gitignore .gitignore.scaffold -o .gitignore && rm -f .gitignore.scaffold
+[ -f /tmp/muchai-scaffold/.gitignore ] && cat /tmp/muchai-scaffold/.gitignore >> .gitignore.scaffold && sort -u .gitignore .gitignore.scaffold -o .gitignore && rm -f .gitignore.scaffold
 ```
 
 - [ ] **Step 3: Install JS deps**
@@ -157,7 +157,7 @@ This pins the real command-line interface and output format so the parser/builde
 
 - [ ] **Step 1: Get a CUDA build of `sd-cli`**
 
-Download a prebuilt CUDA release of stable-diffusion.cpp from its GitHub Releases (asset containing `sd-cli` built with CUDA), or build it. Place the binary at `/home/idaho/g/mst/fridai/src-tauri/binaries/sd-cli` and mark it executable:
+Download a prebuilt CUDA release of stable-diffusion.cpp from its GitHub Releases (asset containing `sd-cli` built with CUDA), or build it. Place the binary at `/home/idaho/g/mst/muchai/src-tauri/binaries/sd-cli` and mark it executable:
 
 ```bash
 chmod +x src-tauri/binaries/sd-cli
@@ -176,10 +176,10 @@ Expected: `sd-help.txt` lists the real flags. **Read it** and note the exact spe
 
 ```bash
 src-tauri/binaries/sd-cli -m /path/to/your/model.safetensors \
-  -p "a lovely cat" --steps 6 -W 256 -H 256 -o /tmp/fridai-cap.png -v \
+  -p "a lovely cat" --steps 6 -W 256 -H 256 -o /tmp/muchai-cap.png -v \
   > src-tauri/fixtures/sd-sample-output.txt 2>&1
 ```
-Expected: an image at `/tmp/fridai-cap.png` and `sd-sample-output.txt` containing the real progress lines. **Read it** and note the exact progress-bar line format (e.g. whether it shows `5/6`, which stream it's on, the `\r` carriage returns). This is the ground truth for Task 6.
+Expected: an image at `/tmp/muchai-cap.png` and `sd-sample-output.txt` containing the real progress lines. **Read it** and note the exact progress-bar line format (e.g. whether it shows `5/6`, which stream it's on, the `\r` carriage returns). This is the ground truth for Task 6.
 
 - [ ] **Step 4: Commit the fixtures** (the binary itself is gitignored via `/binaries/` — only text fixtures are committed)
 
@@ -609,7 +609,7 @@ use directories::ProjectDirs;
 use std::path::{Path, PathBuf};
 
 fn project_dirs() -> Option<ProjectDirs> {
-    ProjectDirs::from("cz", "mst", "fridai")
+    ProjectDirs::from("cz", "mst", "muchai")
 }
 
 pub fn default_gallery_dir() -> PathBuf {
@@ -621,7 +621,7 @@ pub fn default_gallery_dir() -> PathBuf {
 pub fn config_file_path() -> PathBuf {
     project_dirs()
         .map(|d| d.config_dir().join("config.json"))
-        .unwrap_or_else(|| PathBuf::from("./fridai-config.json"))
+        .unwrap_or_else(|| PathBuf::from("./muchai-config.json"))
 }
 
 pub fn default_config() -> AppConfig {
@@ -656,14 +656,14 @@ mod tests {
 
     #[test]
     fn missing_file_yields_defaults() {
-        let cfg = load_config_from(Path::new("/nonexistent/fridai/none.json"));
+        let cfg = load_config_from(Path::new("/nonexistent/muchai/none.json"));
         assert!(cfg.sd_binary_path.is_none());
         assert_eq!(cfg.last_request.steps, 20);
     }
 
     #[test]
     fn save_then_load_round_trips() {
-        let dir = std::env::temp_dir().join(format!("fridai-cfg-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("muchai-cfg-{}", std::process::id()));
         let path = dir.join("config.json");
         let mut cfg = default_config();
         cfg.default_model_path = Some("/m/x.safetensors".into());
@@ -753,7 +753,7 @@ mod tests {
 
     #[test]
     fn writes_sidecar_and_lists_newest_first() {
-        let dir = std::env::temp_dir().join(format!("fridai-gal-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("muchai-gal-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
 
         write_sidecar(&dir.join("older.png"), &item("older", 100)).unwrap();
@@ -981,7 +981,7 @@ mod tests {
     use super::*;
 
     fn write_fake_engine(script: &str, name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("fridai-eng-{}-{}", std::process::id(), name));
+        let dir = std::env::temp_dir().join(format!("muchai-eng-{}-{}", std::process::id(), name));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("sd-cli");
         std::fs::write(&path, script).unwrap();
@@ -1257,7 +1257,7 @@ pub fn run() {
             commands::pick_model_file,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running fridAI");
+        .expect("error while running MuchAI");
 }
 ```
 
@@ -1364,7 +1364,7 @@ export const onSystemStats = (cb: (s: SystemStats) => void): Promise<UnlistenFn>
 - [ ] **Step 3: Enable the asset protocol for the gallery dir** — in `src-tauri/tauri.conf.json`, under `app.security`, add (create the keys if absent):
 
 ```json
-"assetProtocol": { "enable": true, "scope": ["$APPDATA/**", "$HOME/.local/share/fridai/**"] }
+"assetProtocol": { "enable": true, "scope": ["$APPDATA/**", "$HOME/.local/share/muchai/**"] }
 ```
 
 And in `src-tauri/capabilities/default.json`, ensure the `permissions` array includes `"core:default"` and `"dialog:default"` (the latter added by Task 2).
@@ -1733,7 +1733,7 @@ git commit -m "feat: generate bar, image preview, and history strip components" 
 
 <main class="app">
   <aside class="controls">
-    <h1 class="brand">fridAI</h1>
+    <h1 class="brand">MuchAI</h1>
     <ModelPicker />
     <PromptPanel />
     <SettingsPanel />
@@ -1853,8 +1853,8 @@ Expected: the first image reloads in the preview and the control panel restores 
 
 Confirm files exist:
 ```bash
-ls ~/.local/share/fridai/gallery/   # expect <id>.png and <id>.json pairs
-cat ~/.config/fridai/config.json     # expect last_request persisted
+ls ~/.local/share/muchai/gallery/   # expect <id>.png and <id>.json pairs
+cat ~/.config/muchai/config.json     # expect last_request persisted
 ```
 Expected: PNG + JSON sidecar per generation; config holds the last-used request.
 
@@ -1871,7 +1871,7 @@ Expected: a clear "engine not found / set its path in Settings" message, no cras
 - [ ] **Step 6: Final commit / tag (optional)**
 
 ```bash
-git commit --allow-empty -m "chore: fridAI beta verified end-to-end on RTX 3060" \
+git commit --allow-empty -m "chore: MuchAI beta verified end-to-end on RTX 3060" \
   -m "Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
 

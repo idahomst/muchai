@@ -60,13 +60,13 @@ and the monitor therefore always agree on a known device, and "Default" is deter
     nor `mem_info_vram_*` in sysfs (those are `amdgpu`-specific attributes). Where a
     field is unavailable it is simply not reported (no fake zeros).
 - **Which device:** the monitor follows the **selected** device, matched by name.
-  For `Default`, fridAI picks the default device *explicitly* (see "Default device"
+  For `Default`, MuchAI picks the default device *explicitly* (see "Default device"
   below) and the monitor keys to that same device. CPU selected → GPU section hidden.
   A GPU with no obtainable live stats (e.g. an Intel iGPU) → GPU section shows the
   vendor-neutral empty state, same as no-match.
 - **Display fields:** unchanged — GPU name, utilization%, VRAM used/total; CPU%; RAM.
   No power, no temperature, no multi-GPU listing.
-- **Platform:** `sysfs` providers are `#[cfg(target_os = "linux")]` (fridAI ships as a
+- **Platform:** `sysfs` providers are `#[cfg(target_os = "linux")]` (MuchAI ships as a
   Linux AppImage). On non-Linux, only the NVML provider compiles in.
 
 ## Architecture

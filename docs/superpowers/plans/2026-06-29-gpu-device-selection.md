@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Let the user pick which GPU fridAI generates on (NVIDIA / AMD / Intel) on Linux by switching the engine to a Vulkan build and exposing a device picker that maps to `--backend vulkanN`.
+**Goal:** Let the user pick which GPU MuchAI generates on (NVIDIA / AMD / Intel) on Linux by switching the engine to a Vulkan build and exposing a device picker that maps to `--backend vulkanN`.
 
 **Architecture:** Swap the single-file CUDA `sd-cli` for the prebuilt multi-file Vulkan bundle, shipped as a **colocated engine directory** (`sd-cli` + its `.so` siblings together; `RUNPATH=$ORIGIN` finds them). A one-time probe of `sd-cli` enumerates Vulkan devices from its stderr (`ggml_vulkan: Found N Vulkan devices:`). The chosen device index is persisted in `AppConfig.gpu_device` and threaded into the engine as `--backend vulkan{index}`.
 
@@ -67,7 +67,7 @@ Swap the CUDA single-file engine for the Vulkan multi-file bundle in a colocated
 - [ ] **Step 1: Create the colocated engine dir from the extracted Vulkan bundle**
 
 ```bash
-cd /home/idaho/g/mst/fridai
+cd /home/idaho/g/mst/muchai
 mkdir -p src-tauri/binaries/engine
 # Copy sd-cli and every shared lib (NOT sd-server) into the engine dir.
 cp /tmp/sdvk/sd-cli src-tauri/binaries/engine/
@@ -79,7 +79,7 @@ chmod +x src-tauri/binaries/engine/sd-cli
 
 Run:
 ```bash
-cd /home/idaho/g/mst/fridai/src-tauri/binaries/engine
+cd /home/idaho/g/mst/muchai/src-tauri/binaries/engine
 ./sd-cli -M img_gen -m /tmp/does_not_exist.gguf -p x --steps 1 -W 64 -H 64 -o /tmp/_p.png 2>&1 \
   | grep -E "ggml_vulkan: (Found|[0-9] =)"
 ```
@@ -88,7 +88,7 @@ Expected: prints `ggml_vulkan: Found 2 Vulkan devices:` and two `ggml_vulkan: N 
 - [ ] **Step 3: Remove the obsolete CUDA single-file binaries**
 
 ```bash
-cd /home/idaho/g/mst/fridai
+cd /home/idaho/g/mst/muchai
 rm -f src-tauri/binaries/sd-cli src-tauri/binaries/sd-cli-x86_64-unknown-linux-gnu
 ```
 
@@ -96,7 +96,7 @@ rm -f src-tauri/binaries/sd-cli src-tauri/binaries/sd-cli-x86_64-unknown-linux-g
 
 Run:
 ```bash
-cd /home/idaho/g/mst/fridai
+cd /home/idaho/g/mst/muchai
 git check-ignore -v src-tauri/binaries/engine/sd-cli || echo "NOT ignored"
 git status --short src-tauri/binaries/
 ```
@@ -105,7 +105,7 @@ Expected: report whether the bundle is ignored. If **not ignored**, the ~112 MB 
 - [ ] **Step 5: Commit (gitignore change only, if any)**
 
 ```bash
-cd /home/idaho/g/mst/fridai
+cd /home/idaho/g/mst/muchai
 git add .gitignore 2>/dev/null || true
 git commit -m "build: source Vulkan engine bundle into binaries/engine (local asset)" --allow-empty
 ```
@@ -330,7 +330,7 @@ Add to `src-tauri/src/devices.rs` `mod tests`:
     use std::path::PathBuf;
 
     fn write_fake_engine(body: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("fridai-vkprobe-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("muchai-vkprobe-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("sd-cli");
         std::fs::write(&path, body).unwrap();
@@ -385,8 +385,8 @@ pub fn enumerate(binary: &Path) -> Vec<GpuDevice> {
         return Vec::new();
     }
     let tmp = std::env::temp_dir();
-    let model = tmp.join("fridai-vk-probe-missing.gguf");
-    let out = tmp.join("fridai-vk-probe.png");
+    let model = tmp.join("muchai-vk-probe-missing.gguf");
+    let out = tmp.join("muchai-vk-probe.png");
 
     let mut child = match Command::new(binary)
         .args(["-M", "img_gen", "-m"])
@@ -845,7 +845,7 @@ This copies the contents of `src-tauri/binaries/engine/` into `<resource_dir>/en
 
 Run (starts the app; needs a display):
 ```bash
-cd /home/idaho/g/mst/fridai && npm run tauri dev
+cd /home/idaho/g/mst/muchai && npm run tauri dev
 ```
 Expected: app launches; the device picker (added in Task 11) lists the Intel + NVIDIA devices. The dev path resolves via the `CARGO_MANIFEST_DIR/binaries/engine` fallback in `engine_dir()`. Close the app when verified. (If running headless, defer this to the Task 13 manual E2E.)
 
@@ -898,7 +898,7 @@ import type { AppConfig, GalleryItem, GenerationRequest, ProgressUpdate, SystemS
 
 - [ ] **Step 3: Type-check**
 
-Run: `cd /home/idaho/g/mst/fridai && npm run check 2>&1 | tail -20`
+Run: `cd /home/idaho/g/mst/muchai && npm run check 2>&1 | tail -20`
 Expected: no new errors from these files. (`AppConfig` consumers spread existing config objects, so the new non-optional `gpu_device` field is only constructed from backend data — no TS literal needs updating. If `npm run check` flags a place that builds an `AppConfig` literal, set `gpu_device: null` there.)
 
 - [ ] **Step 4: Commit**
@@ -1038,7 +1038,7 @@ In the `.controls` aside, add `<DevicePicker />` right after `<ModelFolders />` 
 
 - [ ] **Step 4: Type-check and lint**
 
-Run: `cd /home/idaho/g/mst/fridai && npm run check 2>&1 | tail -20`
+Run: `cd /home/idaho/g/mst/muchai && npm run check 2>&1 | tail -20`
 Expected: clean (no errors).
 
 - [ ] **Step 5: Commit**
@@ -1061,7 +1061,7 @@ Replace the contents of `scripts/build-appimage.sh` with:
 
 ```bash
 #!/usr/bin/env bash
-# Build a self-contained fridAI AppImage (Vulkan engine).
+# Build a self-contained MuchAI AppImage (Vulkan engine).
 #
 # The engine (sd-cli + its .so siblings) ships as a Tauri *resource* directory
 # (binaries/engine -> <resources>/engine) and is loaded via RUNPATH=$ORIGIN, so
@@ -1077,7 +1077,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 APPIMAGE_DIR="src-tauri/target/release/bundle/appimage"
-APPDIR="$APPIMAGE_DIR/fridai.AppDir"
+APPDIR="$APPIMAGE_DIR/muchai.AppDir"
 PLUGIN="$HOME/.cache/tauri/linuxdeploy-plugin-appimage.AppImage"
 
 echo ">> tauri build (appimage)…"
@@ -1091,25 +1091,25 @@ find "$APPDIR/usr/lib" \
 
 echo ">> repacking AppImage without loader/driver libs…"
 ( cd "$APPIMAGE_DIR" \
-  && ARCH=x86_64 OUTPUT="fridai_0.1.0_amd64.AppImage" \
+  && ARCH=x86_64 OUTPUT="muchai_0.1.0_amd64.AppImage" \
      APPIMAGE_EXTRACT_AND_RUN=1 \
-     "$PLUGIN" --appdir fridai.AppDir )
+     "$PLUGIN" --appdir muchai.AppDir )
 
 echo ">> done:"
-ls -lh "$APPIMAGE_DIR"/fridai_0.1.0_amd64.AppImage
+ls -lh "$APPIMAGE_DIR"/muchai_0.1.0_amd64.AppImage
 ```
 
 - [ ] **Step 2: Build the AppImage**
 
-Run: `cd /home/idaho/g/mst/fridai && bash scripts/build-appimage.sh 2>&1 | tail -30`
-Expected: completes and prints the resulting `fridai_0.1.0_amd64.AppImage` path and size. The `binaries/engine` resources land under the AppDir; the strip step removes only host-locked loader/driver libs from `usr/lib` (not the engine resource dir).
+Run: `cd /home/idaho/g/mst/muchai && bash scripts/build-appimage.sh 2>&1 | tail -30`
+Expected: completes and prints the resulting `muchai_0.1.0_amd64.AppImage` path and size. The `binaries/engine` resources land under the AppDir; the strip step removes only host-locked loader/driver libs from `usr/lib` (not the engine resource dir).
 
 - [ ] **Step 3: Smoke-test the AppImage**
 
 Run:
 ```bash
-cd /home/idaho/g/mst/fridai
-APPIMAGE_EXTRACT_AND_RUN=1 src-tauri/target/release/bundle/appimage/fridai_0.1.0_amd64.AppImage &
+cd /home/idaho/g/mst/muchai
+APPIMAGE_EXTRACT_AND_RUN=1 src-tauri/target/release/bundle/appimage/muchai_0.1.0_amd64.AppImage &
 sleep 8 && kill %1 2>/dev/null || true
 ```
 Expected: the app window opens without a missing-library error (engine resolves from `<resources>/engine`, Vulkan loader from host). Verify the device picker lists devices, then close.
@@ -1129,12 +1129,12 @@ git commit -m "build(gpu): AppImage packaging for the Vulkan engine"
 
 - [ ] **Step 1: Full Rust test suite**
 
-Run: `cd /home/idaho/g/mst/fridai/src-tauri && cargo test 2>&1 | tail -25`
+Run: `cd /home/idaho/g/mst/muchai/src-tauri && cargo test 2>&1 | tail -25`
 Expected: all tests pass.
 
 - [ ] **Step 2: Frontend check**
 
-Run: `cd /home/idaho/g/mst/fridai && npm run check 2>&1 | tail -15`
+Run: `cd /home/idaho/g/mst/muchai && npm run check 2>&1 | tail -15`
 Expected: clean.
 
 - [ ] **Step 3: Manual E2E on the dev box (`npm run tauri dev`)**
@@ -1148,7 +1148,7 @@ Verify each:
 
 - [ ] **Step 4: Update the roadmap memory**
 
-Update `/home/idaho/.claude/projects/-home-idaho-g-mst-fridai/memory/fridai-roadmap.md`: record sub-project 1 (Linux Vulkan GPU selection) as done, and that sub-projects 2 (cross-vendor monitor) and 3 (macOS Metal) remain. Note the interim limitation: the resource monitor still uses NVML and reports NVIDIA stats regardless of the selected device.
+Update `/home/idaho/.claude/projects/-home-idaho-g-mst-muchai/memory/muchai-roadmap.md`: record sub-project 1 (Linux Vulkan GPU selection) as done, and that sub-projects 2 (cross-vendor monitor) and 3 (macOS Metal) remain. Note the interim limitation: the resource monitor still uses NVML and reports NVIDIA stats regardless of the selected device.
 
 - [ ] **Step 5: Finish the branch**
 

@@ -144,7 +144,7 @@ mod tests {
     }
 
     fn write_fake_engine(script: &str, name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("fridai-eng-{}-{}", std::process::id(), name));
+        let dir = std::env::temp_dir().join(format!("muchai-eng-{}-{}", std::process::id(), name));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("sd-cli");
         std::fs::write(&path, script).unwrap();

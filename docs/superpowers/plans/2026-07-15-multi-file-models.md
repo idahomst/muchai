@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Let fridAI load split models (FLUX, SD3, Qwen-Image) whose transformer, text encoders, and VAE are separate `.safetensors` files, plus a curated catalog and filename auto-assembly so the common case is "point at it, done."
+**Goal:** Let MuchAI load split models (FLUX, SD3, Qwen-Image) whose transformer, text encoders, and VAE are separate `.safetensors` files, plus a curated catalog and filename auto-assembly so the common case is "point at it, done."
 
 **Architecture:** A model becomes a sum type `ModelRef` — either one all-in-one file (`-m`) or typed component files (`--diffusion-model` + friends). Illegal states are unrepresentable. Recipes describe model families and recognize their component files by filename. Three entry flows (catalog download, point-at-folder auto-detect, manual assign) all converge on a saved `ModelDefinition` that appears in the Model dropdown. All decision logic lives in pure Rust functions covered by `cargo test --lib`; the UI is thin.
 
@@ -520,7 +520,7 @@ fn model_definition_round_trips() {
 
 #[test]
 fn missing_components_reports_only_set_but_absent_paths() {
-    let dir = std::env::temp_dir().join(format!("fridai-missing-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("muchai-missing-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let present = dir.join("d.safetensors");
@@ -756,7 +756,7 @@ Add to `models.rs` tests:
 ```rust
     #[test]
     fn excludes_paths_referenced_by_definitions() {
-        let root = std::env::temp_dir().join(format!("fridai-excl-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("muchai-excl-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         touch(&root.join("loose.safetensors"), 10);
         touch(&root.join("flux1/flux1-dev.safetensors"), 20);
