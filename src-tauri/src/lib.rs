@@ -21,6 +21,7 @@ use tauri::{Emitter, Manager};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    config::migrate_legacy_data_dirs();
     let initial = config::load_config_from(&config::config_file_path());
     let gallery_dir = initial.gallery_dir.clone();
 

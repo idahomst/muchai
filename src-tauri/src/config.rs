@@ -4,9 +4,9 @@ use std::path::{Path, PathBuf};
 
 fn project_dirs() -> Option<ProjectDirs> {
     // On Linux the qualifier/organization are ignored — XDG paths use only the
-    // app name ("fridai"), so ~/.config/fridai and ~/.local/share/fridai are
+    // app name ("muchai"), so ~/.config/muchai and ~/.local/share/muchai are
     // stable regardless of the qualifier/org values passed here.
-    ProjectDirs::from("cz", "mst", "fridai")
+    ProjectDirs::from("cz", "mst", "muchai")
 }
 
 pub fn default_gallery_dir() -> PathBuf {
@@ -24,7 +24,7 @@ pub fn default_models_dir() -> PathBuf {
 pub fn config_file_path() -> PathBuf {
     project_dirs()
         .map(|d| d.config_dir().join("config.json"))
-        .unwrap_or_else(|| PathBuf::from("./fridai-config.json"))
+        .unwrap_or_else(|| PathBuf::from("./muchai-config.json"))
 }
 
 pub fn default_config() -> AppConfig {
@@ -65,6 +65,61 @@ pub fn save_config_to(path: &Path, cfg: &AppConfig) -> std::io::Result<()> {
     }
     let s = serde_json::to_string_pretty(cfg).expect("config serializes");
     std::fs::write(path, s)
+}
+
+/// Move `legacy` to `new` if `new` doesn't exist yet and `legacy` does.
+/// Best-effort and idempotent: returns Ok(false) (no-op) if `new` already
+/// exists or `legacy` is absent. Never inspects directory contents.
+fn migrate_dir(legacy: &Path, new: &Path) -> std::io::Result<bool> {
+    if new.exists() || !legacy.exists() {
+        return Ok(false);
+    }
+    if let Some(parent) = new.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::rename(legacy, new)?;
+    Ok(true)
+}
+
+/// Rehome an absolute path that lives under `legacy` onto `new`, preserving the
+/// relative tail. Returns None if the path isn't under `legacy`.
+fn rewrite_prefix(p: &str, legacy: &Path, new: &Path) -> Option<String> {
+    let rel = Path::new(p).strip_prefix(legacy).ok()?;
+    Some(new.join(rel).to_string_lossy().into_owned())
+}
+
+/// Fix up stored gallery/models paths that pointed under the old data dir so
+/// they follow the renamed directory. User-chosen paths outside the old data
+/// dir are left untouched.
+pub fn rewrite_data_paths(cfg: &mut AppConfig, legacy_data: &Path, new_data: &Path) {
+    if let Some(g) = rewrite_prefix(&cfg.gallery_dir, legacy_data, new_data) {
+        cfg.gallery_dir = g;
+    }
+    if let Some(m) = rewrite_prefix(&cfg.models_dir, legacy_data, new_data) {
+        cfg.models_dir = m;
+    }
+}
+
+/// One-time rebrand migration: move ~/.config/fridai → ~/.config/muchai and
+/// ~/.local/share/fridai → ~/.local/share/muchai, then rehome the absolute
+/// gallery/models paths inside the migrated config. Safe to call on every
+/// startup: it no-ops once the new dirs exist. Does not log config contents.
+pub fn migrate_legacy_data_dirs() {
+    let (Some(legacy), Some(current)) = (
+        ProjectDirs::from("cz", "mst", "fridai"),
+        ProjectDirs::from("cz", "mst", "muchai"),
+    ) else {
+        return;
+    };
+    let _ = migrate_dir(legacy.config_dir(), current.config_dir());
+    let _ = migrate_dir(legacy.data_dir(), current.data_dir());
+
+    let cfg_path = current.config_dir().join("config.json");
+    if cfg_path.exists() {
+        let mut cfg = load_config_from(&cfg_path);
+        rewrite_data_paths(&mut cfg, legacy.data_dir(), current.data_dir());
+        let _ = save_config_to(&cfg_path, &cfg);
+    }
 }
 
 #[cfg(test)]
@@ -242,5 +297,61 @@ mod tests {
         assert!(back.low_vram);
         assert_eq!(back, cfg);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn migrate_dir_moves_when_new_absent_and_legacy_present() {
+        let base = std::env::temp_dir().join(format!("muchai-mig-{}", std::process::id()));
+        let legacy = base.join("share/fridai");
+        let new = base.join("share/muchai");
+        std::fs::create_dir_all(&legacy).unwrap();
+        std::fs::write(legacy.join("marker.txt"), b"keep me").unwrap();
+
+        let moved = migrate_dir(&legacy, &new).unwrap();
+
+        assert!(moved);
+        assert!(!legacy.exists());
+        assert_eq!(std::fs::read(new.join("marker.txt")).unwrap(), b"keep me");
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn migrate_dir_is_noop_when_new_already_exists() {
+        let base = std::env::temp_dir().join(format!("muchai-mig2-{}", std::process::id()));
+        let legacy = base.join("fridai");
+        let new = base.join("muchai");
+        std::fs::create_dir_all(&legacy).unwrap();
+        std::fs::create_dir_all(&new).unwrap();
+        std::fs::write(legacy.join("old.txt"), b"x").unwrap();
+
+        let moved = migrate_dir(&legacy, &new).unwrap();
+
+        assert!(!moved);
+        assert!(legacy.exists()); // untouched
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn migrate_dir_is_noop_when_legacy_absent() {
+        let base = std::env::temp_dir().join(format!("muchai-mig3-{}", std::process::id()));
+        let legacy = base.join("fridai");
+        let new = base.join("muchai");
+        let moved = migrate_dir(&legacy, &new).unwrap();
+        assert!(!moved);
+        assert!(!new.exists());
+    }
+
+    #[test]
+    fn rewrite_data_paths_rehomes_paths_under_legacy_and_leaves_others() {
+        let legacy = Path::new("/home/u/.local/share/fridai");
+        let new = Path::new("/home/u/.local/share/muchai");
+        let mut cfg = default_config();
+        cfg.gallery_dir = "/home/u/.local/share/fridai/gallery".into();
+        cfg.models_dir = "/mnt/big/models".into(); // custom, outside legacy prefix
+
+        rewrite_data_paths(&mut cfg, legacy, new);
+
+        assert_eq!(cfg.gallery_dir, "/home/u/.local/share/muchai/gallery");
+        assert_eq!(cfg.models_dir, "/mnt/big/models"); // unchanged
     }
 }
