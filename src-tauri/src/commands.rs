@@ -105,9 +105,12 @@ pub fn set_settings(
     state: State<AppState>,
     config: AppConfig,
 ) -> Result<(), String> {
-    // Merge under the lock so the preserved backend-owned fields reflect the
-    // latest state (a concurrent download_multifile may have just added one).
-    let merged = {
+    // Merge AND persist under the lock so the preserved backend-owned fields
+    // reflect the latest state and no concurrent mutator (e.g. download_multifile
+    // adding a ModelDefinition) can slip a write in between our merge and save —
+    // that would let us clobber their definition. Matches the sibling mutators,
+    // which all persist while still holding the lock.
+    let gallery_dir = {
         let mut cfg = state.config.lock().unwrap();
         // A changed engine path means a different binary that may enumerate devices
         // in a different order — drop the cached list so the next probe re-reads it,
@@ -115,16 +118,13 @@ pub fn set_settings(
         if cfg.sd_binary_path != config.sd_binary_path {
             *state.gpu_devices.lock().unwrap() = None;
         }
-        let merged = merged_settings(&cfg, config);
-        *cfg = merged.clone();
-        merged
+        *cfg = merged_settings(&cfg, config);
+        config::save_config_to(&config::config_file_path(), &cfg).map_err(|e| e.to_string())?;
+        cfg.gallery_dir.clone()
     };
-    config::save_config_to(&config::config_file_path(), &merged).map_err(|e| e.to_string())?;
     // Keep the asset-protocol scope in sync so images in a newly chosen gallery
     // dir can be displayed without restarting the app.
-    let _ = app
-        .asset_protocol_scope()
-        .allow_directory(&merged.gallery_dir, true);
+    let _ = app.asset_protocol_scope().allow_directory(&gallery_dir, true);
     Ok(())
 }
 
