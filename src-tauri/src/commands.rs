@@ -608,9 +608,10 @@ pub fn detect_folder(dir: String) -> DetectionResult {
     if let Ok(rd) = std::fs::read_dir(&dir) {
         for e in rd.flatten() {
             let p = e.path();
-            if p.is_file()
-                && p.extension().and_then(|x| x.to_str()).map(|x| x.eq_ignore_ascii_case("safetensors")).unwrap_or(false)
-            {
+            // Accept every recognized model extension (safetensors/ckpt/gguf) so a
+            // .gguf diffusion model is auto-detected too. `recipes::detect` matches
+            // on filename substrings, so it is already extension-agnostic.
+            if p.is_file() && models::is_model_file(&p) {
                 entries.push(p);
             }
         }
@@ -813,5 +814,29 @@ mod tests {
         // …but backend-owned fields are preserved from `current`.
         assert_eq!(merged.model_definitions, current.model_definitions);
         assert_eq!(merged.last_request.prompt, "backend-owned prompt");
+    }
+
+    #[test]
+    fn detect_folder_picks_up_gguf_diffusion() {
+        // A FLUX folder whose diffusion model is a .gguf; encoders + VAE are
+        // .safetensors. Detection must find the family and fill the diffusion slot
+        // with the .gguf file.
+        let root = std::env::temp_dir().join(format!("muchai-detect-gguf-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        for f in ["flux1-schnell-Q4_0.gguf", "t5xxl_fp16.safetensors", "clip_l.safetensors", "ae.safetensors"] {
+            std::fs::write(root.join(f), b"x").unwrap();
+        }
+
+        let result = detect_folder(root.to_string_lossy().into_owned());
+        assert_eq!(result.family, "flux1");
+        let diffusion = result
+            .slots
+            .iter()
+            .find(|s| s.role == ComponentRole::Diffusion)
+            .expect("diffusion slot must be filled");
+        assert!(diffusion.path.ends_with("flux1-schnell-Q4_0.gguf"), "got {}", diffusion.path);
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

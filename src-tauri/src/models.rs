@@ -3,9 +3,9 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const MODEL_EXTS: [&str; 3] = ["safetensors", "ckpt", "gguf"];
+pub(crate) const MODEL_EXTS: [&str; 3] = ["safetensors", "ckpt", "gguf"];
 
-fn is_model_file(path: &Path) -> bool {
+pub(crate) fn is_model_file(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
         .map(|e| MODEL_EXTS.iter().any(|m| e.eq_ignore_ascii_case(m)))
