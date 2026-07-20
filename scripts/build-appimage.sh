@@ -27,7 +27,9 @@
 # specific lib here rather than blanket-stripping.
 #
 # Prereq: src-tauri/binaries/engine/ must be the prebuilt Vulkan engine bundle
-# (sd-cli + all sibling .so files).
+# (sd-cli + all sibling .so files). Populate it with the pinned, known-good
+# revision by running ./scripts/fetch-engine.sh first — do NOT hand-place an
+# arbitrary build (an older engine silently broke FLUX; see that script's header).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
