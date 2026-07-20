@@ -13,6 +13,14 @@ export const currentImage = writable<string | null>(null); // converted asset sr
 export const currentItem = writable<GalleryItem | null>(null); // params behind the previewed image
 export const sysStats = writable<SystemStats | null>(null);
 
+// Belt-and-suspenders: mirror the authoritative `definitions` list into the
+// `settings` snapshot so any `setSettings(get(settings))` already carries the
+// current definitions. The backend also preserves them (see set_settings), so
+// this only has to keep the in-memory copy coherent for other readers.
+definitions.subscribe((defs) => {
+  settings.update((s) => (s ? { ...s, model_definitions: defs } : s));
+});
+
 export type GenStatus =
   | { kind: "idle" }
   | { kind: "running"; progress: ProgressUpdate | null }
