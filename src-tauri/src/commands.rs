@@ -87,28 +87,44 @@ pub fn list_gpu_devices(app: AppHandle, state: State<AppState>) -> Vec<GpuDevice
     devices
 }
 
+/// Merge an incoming settings payload with the current backend state, keeping the
+/// backend-owned fields (`model_definitions`, `last_request`) from `current`. The
+/// UI's copy of those can be stale; they have their own dedicated commands, so a
+/// preference save must never clobber them. Pure so it is unit-testable.
+fn merged_settings(current: &AppConfig, incoming: AppConfig) -> AppConfig {
+    AppConfig {
+        model_definitions: current.model_definitions.clone(),
+        last_request: current.last_request.clone(),
+        ..incoming
+    }
+}
+
 #[tauri::command]
 pub fn set_settings(
     app: AppHandle,
     state: State<AppState>,
     config: AppConfig,
 ) -> Result<(), String> {
-    config::save_config_to(&config::config_file_path(), &config).map_err(|e| e.to_string())?;
+    // Merge under the lock so the preserved backend-owned fields reflect the
+    // latest state (a concurrent download_multifile may have just added one).
+    let merged = {
+        let mut cfg = state.config.lock().unwrap();
+        // A changed engine path means a different binary that may enumerate devices
+        // in a different order — drop the cached list so the next probe re-reads it,
+        // preserving index parity with `--backend vulkanN`.
+        if cfg.sd_binary_path != config.sd_binary_path {
+            *state.gpu_devices.lock().unwrap() = None;
+        }
+        let merged = merged_settings(&cfg, config);
+        *cfg = merged.clone();
+        merged
+    };
+    config::save_config_to(&config::config_file_path(), &merged).map_err(|e| e.to_string())?;
     // Keep the asset-protocol scope in sync so images in a newly chosen gallery
     // dir can be displayed without restarting the app.
     let _ = app
         .asset_protocol_scope()
-        .allow_directory(&config.gallery_dir, true);
-    // A changed engine path means a different binary that may enumerate devices
-    // in a different order — drop the cached list so the next probe re-reads it,
-    // preserving index parity with `--backend vulkanN`.
-    {
-        let mut cfg = state.config.lock().unwrap();
-        if cfg.sd_binary_path != config.sd_binary_path {
-            *state.gpu_devices.lock().unwrap() = None;
-        }
-        *cfg = config;
-    }
+        .allow_directory(&merged.gallery_dir, true);
     Ok(())
 }
 
@@ -772,5 +788,30 @@ mod tests {
         assert!(safe_model_dir(&root, "   ").is_none());
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn set_settings_preserves_definitions_and_last_request() {
+        // Current backend state: has a saved definition and a meaningful last_request.
+        let mut current = crate::config::default_config();
+        current.model_definitions = vec![flux_def("keep-me")];
+        current.last_request.prompt = "backend-owned prompt".into();
+
+        // Incoming payload from the UI: preference fields changed, but it carries a
+        // STALE (empty) definitions list and a default last_request.
+        let mut incoming = crate::config::default_config();
+        incoming.theme = crate::types::Theme::Light;
+        incoming.low_vram = true;
+        incoming.model_definitions = Vec::new(); // stale — must NOT clobber
+        incoming.last_request = crate::types::GenerationRequest::default(); // stale
+
+        let merged = merged_settings(&current, incoming);
+
+        // Preference fields adopt the incoming values…
+        assert_eq!(merged.theme, crate::types::Theme::Light);
+        assert!(merged.low_vram);
+        // …but backend-owned fields are preserved from `current`.
+        assert_eq!(merged.model_definitions, current.model_definitions);
+        assert_eq!(merged.last_request.prompt, "backend-owned prompt");
     }
 }
