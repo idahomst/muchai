@@ -43,8 +43,17 @@
     { key: "llm", label: "LLM" },
   ];
 
+  // Parent folder of an absolute path (POSIX or Windows separator), or undefined.
+  function parentDir(p: string): string | undefined {
+    const i = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
+    return i > 0 ? p.slice(0, i) : undefined;
+  }
+
   async function pick(key: SlotKey) {
-    const p = await pickModelFile();
+    // Start in the slot's current folder, falling back to the diffusion model's
+    // folder so component re-picks land next to the model, not in the CWD.
+    const cur = slots[key] || slots.diffusion_model;
+    const p = await pickModelFile(cur ? parentDir(cur) : undefined);
     if (p) slots[key] = p;
   }
 

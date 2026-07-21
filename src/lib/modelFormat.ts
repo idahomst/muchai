@@ -1,4 +1,19 @@
-import type { LibraryEntry, Suitability, ModelRef } from "./types";
+import type { LibraryEntry, Suitability, ModelRef, CatalogEntry } from "./types";
+
+/** Bytes → compact decimal size, e.g. 6_780_000_000 → "6.8 GB". Model/catalog
+ *  sizes are decimal (matching HuggingFace), so divide by 1000, not 1024. */
+export function formatBytes(n: number): string {
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let v = n, i = 0;
+  while (v >= 1000 && i < units.length - 1) { v /= 1000; i++; }
+  const rounded = i === 0 ? v : v < 10 ? +v.toFixed(1) : Math.round(v);
+  return `${rounded} ${units[i]}`;
+}
+
+/** Total download size of a catalog entry: diffusion weights + shared files. */
+export function catalogTotalBytes(e: CatalogEntry): number {
+  return e.diffusion.size_bytes + e.shared.reduce((sum, s) => sum + s.size_bytes, 0);
+}
 
 /** Human label for a library row: name + family badge text. */
 export function entryLabel(entry: LibraryEntry): string {

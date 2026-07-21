@@ -310,13 +310,21 @@ pub async fn generate(
 }
 
 #[tauri::command]
-pub async fn pick_model_file(app: AppHandle) -> Option<String> {
+pub async fn pick_model_file(app: AppHandle, start_dir: Option<String>) -> Option<String> {
     use tauri_plugin_dialog::DialogExt;
-    let file = app
+    let mut dialog = app
         .dialog()
         .file()
-        .add_filter("Models", &["safetensors", "gguf", "ckpt"])
-        .blocking_pick_file();
+        .add_filter("Models", &["safetensors", "gguf", "ckpt"]);
+    // Open in the caller-supplied folder (e.g. the model's own dir when editing)
+    // so the user isn't dumped in the process CWD. Ignore a missing/invalid dir.
+    if let Some(dir) = start_dir {
+        let p = PathBuf::from(&dir);
+        if p.is_dir() {
+            dialog = dialog.set_directory(&p);
+        }
+    }
+    let file = dialog.blocking_pick_file();
     file.and_then(|f| f.into_path().ok()).map(|p| p.to_string_lossy().into_owned())
 }
 

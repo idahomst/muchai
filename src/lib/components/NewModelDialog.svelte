@@ -1,41 +1,38 @@
 <script lang="ts">
+  import { get } from "svelte/store";
   import { catalogEntries, addCatalogModel, addUrlModel, addLocalModel, pickModelFile } from "../api";
-  import { refreshLibrary } from "../stores";
-  import { suitabilityBadge } from "../modelFormat";
+  import { settings, runDownload, downloadBusy, downloadProgress, downloadError } from "../stores";
+  import { suitabilityBadge, formatBytes, catalogTotalBytes } from "../modelFormat";
+  import DownloadProgressBar from "./DownloadProgressBar.svelte";
   import type { RatedCatalogEntry } from "../types";
 
   let { vramTotalMb, onClose }: { vramTotalMb: number | null; onClose: () => void } = $props();
 
   type Tab = "catalog" | "url" | "local";
   let tab = $state<Tab>("catalog");
-  let busy = $state(false);
-  let error = $state<string | null>(null);
+  let catalogError = $state<string | null>(null);
 
   let catalog = $state<RatedCatalogEntry[]>([]);
   $effect(() => {
-    catalogEntries(vramTotalMb).then((c) => (catalog = c)).catch((e) => (error = String(e)));
+    catalogEntries(vramTotalMb).then((c) => (catalog = c)).catch((e) => (catalogError = String(e)));
   });
+
+  // VRAM is reported in MiB; show it in GB so the fit badge has visible basis.
+  const vramLabel = $derived(vramTotalMb ? `${+(vramTotalMb / 1024).toFixed(1)} GB` : "unknown");
 
   let url = $state("");
   let urlName = $state("");
   let localPath = $state("");
   let localName = $state("");
 
+  // Downloads run at the app level (stores.runDownload) so busy/progress/error
+  // survive this dialog closing mid-download. Close only on success.
   async function run(fn: () => Promise<unknown>) {
-    busy = true; error = null;
-    try {
-      await fn();
-      await refreshLibrary();
-      onClose();
-    } catch (e) {
-      error = String(e);
-    } finally {
-      busy = false;
-    }
+    if (await runDownload(fn)) onClose();
   }
 
   async function pickLocal() {
-    const picked = await pickModelFile();
+    const picked = await pickModelFile(get(settings)?.models_dir ?? undefined);
     if (picked) localPath = picked;
   }
 </script>
@@ -53,20 +50,22 @@
       <button class:active={tab === "local"} onclick={() => (tab = "local")}>Local file</button>
     </nav>
 
-    {#if error}<p class="error">{error}</p>{/if}
+    {#if catalogError}<p class="error">{catalogError}</p>{/if}
+    {#if $downloadError}<p class="error">{$downloadError}</p>{/if}
 
     {#if tab === "catalog"}
+      <p class="vram-note">Your VRAM: <b>{vramLabel}</b></p>
       <ul class="catalog">
         {#each catalog as e (e.id)}
           {@const b = suitabilityBadge(e.suitability)}
           <li>
             <div class="ci">
               <b>{e.name}</b>
-              <span class="fam">{e.family}</span>
+              <span class="fam">{e.family} · {formatBytes(catalogTotalBytes(e))}</span>
               <span class="fit {b.tone}">{b.text}</span>
               <span class="lic">{e.license}</span>
             </div>
-            <button disabled={busy} onclick={() => run(() => addCatalogModel(e.id))}>Add</button>
+            <button disabled={$downloadBusy} onclick={() => run(() => addCatalogModel(e.id))}>Add</button>
           </li>
         {/each}
       </ul>
@@ -74,7 +73,7 @@
       <div class="form">
         <label>URL (https)<input bind:value={url} placeholder="https://…" /></label>
         <label>Name<input bind:value={urlName} placeholder="My model" /></label>
-        <button disabled={busy || !url.startsWith("https://")} onclick={() => run(() => addUrlModel(url, urlName))}>
+        <button disabled={$downloadBusy || !url.startsWith("https://")} onclick={() => run(() => addUrlModel(url, urlName))}>
           Download & add
         </button>
       </div>
@@ -87,10 +86,14 @@
           </div>
         </label>
         <label>Name<input bind:value={localName} placeholder="My model" /></label>
-        <button disabled={busy || !localPath} onclick={() => run(() => addLocalModel(localPath, localName, null))}>
+        <button disabled={$downloadBusy || !localPath} onclick={() => run(() => addLocalModel(localPath, localName, null))}>
           Add (reference in place)
         </button>
       </div>
+    {/if}
+
+    {#if $downloadBusy}
+      <div class="progress"><DownloadProgressBar progress={$downloadProgress} /></div>
     {/if}
   </div>
 </div>
@@ -103,6 +106,7 @@
   .tabs { display: flex; gap: 4px; margin-bottom: 12px; }
   .tabs button { flex: 1; padding: 6px; border: 1px solid var(--border); background: transparent; border-radius: 6px; cursor: pointer; color: inherit; }
   .tabs button.active { background: var(--accent-tint); border-color: var(--accent); }
+  .vram-note { font-size: 12px; opacity: .75; margin: 0 0 8px; }
   .catalog { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
   .catalog li { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px; border: 1px solid var(--border); border-radius: 6px; }
   .ci { display: flex; flex-direction: column; gap: 2px; }
@@ -114,4 +118,5 @@
   .pick { display: flex; gap: 6px; }
   .pick input { flex: 1; }
   .error { color: var(--danger); font-size: 12px; }
+  .progress { margin-top: 12px; }
 </style>

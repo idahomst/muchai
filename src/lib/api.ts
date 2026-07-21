@@ -15,7 +15,8 @@ export const generate = (request: GenerationRequest, deviceVramMb: number | null
 /** Move a generated image (and its sidecar) to the OS trash. */
 export const deleteImage = (path: string) => invoke<void>("delete_image", { imagePath: path });
 export const cancelGeneration = () => invoke<void>("cancel_generation");
-export const pickModelFile = () => invoke<string | null>("pick_model_file");
+export const pickModelFile = (startDir?: string) =>
+  invoke<string | null>("pick_model_file", { startDir: startDir ?? null });
 export const pickGalleryDir = () => invoke<string | null>("pick_gallery_dir");
 
 /** Open a folder (or file) in the OS file manager / default app. */

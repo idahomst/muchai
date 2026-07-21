@@ -16,7 +16,10 @@ export default defineConfig(async () => ({
   server: {
     port: 1420,
     strictPort: true,
-    host: host || false,
+    // Bind loopback only (never the LAN) unless TAURI_DEV_HOST is explicitly set
+    // for mobile/remote dev. This is a dev-only server; `tauri build` bundles the
+    // frontend and opens no port.
+    host: host || "127.0.0.1",
     hmr: host
       ? {
           protocol: "ws",
