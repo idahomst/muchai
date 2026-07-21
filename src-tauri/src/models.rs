@@ -61,6 +61,18 @@ pub fn scan_models_excluding(dirs: &[PathBuf], exclude: &HashSet<PathBuf>) -> Ve
     out
 }
 
+/// Total size in BYTES of the given files. Returns `None` if ANY path can't be
+/// stat'd (missing/unreadable), so callers treat a broken model as "size unknown"
+/// rather than silently undercounting. An empty slice sums to `Some(0)`.
+pub fn sum_file_sizes(paths: &[String]) -> Option<u64> {
+    let mut total: u64 = 0;
+    for p in paths {
+        let meta = fs::metadata(p).ok()?;
+        total = total.saturating_add(meta.len());
+    }
+    Some(total)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -123,5 +135,37 @@ mod tests {
         let names: Vec<&str> = models.iter().map(|m| m.name.as_str()).collect();
         assert_eq!(names, vec!["loose"], "only the unreferenced file remains");
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn sum_file_sizes_totals_existing_files() {
+        let root = std::env::temp_dir().join(format!("muchai-sumsz-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        touch(&root.join("a.safetensors"), 100);
+        touch(&root.join("b.safetensors"), 250);
+        let paths = vec![
+            root.join("a.safetensors").to_string_lossy().into_owned(),
+            root.join("b.safetensors").to_string_lossy().into_owned(),
+        ];
+        assert_eq!(sum_file_sizes(&paths), Some(350));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn sum_file_sizes_is_none_if_any_file_missing() {
+        let root = std::env::temp_dir().join(format!("muchai-sumsz2-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        touch(&root.join("a.safetensors"), 100);
+        let paths = vec![
+            root.join("a.safetensors").to_string_lossy().into_owned(),
+            root.join("gone.safetensors").to_string_lossy().into_owned(),
+        ];
+        assert_eq!(sum_file_sizes(&paths), None);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn sum_file_sizes_empty_is_zero() {
+        assert_eq!(sum_file_sizes(&[]), Some(0));
     }
 }
