@@ -1,8 +1,42 @@
 <script lang="ts">
   import { request } from "../stores";
   import { SAMPLERS, FORMATS } from "../types";
+  import type { GenDefaults, ModelRef } from "../types";
+  import { recommendedSettings } from "../api";
   import InfoHint from "./InfoHint.svelte";
   import { HELP } from "../helpText";
+
+  // Recommended settings for the current model (null → family has no preset,
+  // so the button is hidden). Re-fetched only when the model reference changes,
+  // not on every params edit, guarded by a serialized-key comparison.
+  let recommended: GenDefaults | null = null;
+  let lastModelKey = "";
+  $: {
+    const key = JSON.stringify($request.model);
+    if (key !== lastModelKey) {
+      lastModelKey = key;
+      void loadRecommended($request.model);
+    }
+  }
+  async function loadRecommended(model: ModelRef) {
+    try {
+      recommended = await recommendedSettings(model);
+    } catch {
+      recommended = null;
+    }
+  }
+  function applyRecommended() {
+    const r = recommended;
+    if (!r) return;
+    request.update((req) => ({
+      ...req,
+      steps: r.steps,
+      cfg_scale: r.cfg_scale,
+      sampler: r.sampler,
+      width: r.width,
+      height: r.height,
+    }));
+  }
 </script>
 
 <div class="grid">
@@ -36,10 +70,17 @@
   </label>
 </div>
 
+{#if recommended}
+  <button type="button" class="recommend-btn" on:click={applyRecommended}>
+    Use recommended settings
+  </button>
+{/if}
+
 <style>
   .grid { display:grid; grid-template-columns:1fr 1fr; gap:.5rem; }
   .label { display:flex; flex-direction:column; font-size:.75rem; gap:.2rem; }
   .lbl-row { display:inline-flex; align-items:center; gap:.2rem; }
   .seed { grid-column:1 / -1; }
   input, select { font:inherit; padding:.3rem; }
+  .recommend-btn { margin-top:.5rem; width:100%; padding:.4rem; font:inherit; cursor:pointer; }
 </style>
