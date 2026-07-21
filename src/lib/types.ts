@@ -45,24 +45,44 @@ export type ModelRef =
   | { type: "single_file"; path: string }
   | ({ type: "multi_file" } & ModelComponents);
 
-export interface ModelDefinition {
+export type ManifestFlags = {
+  vae_format: string | null;
+  prediction: string | null;
+};
+
+export type LibraryEntry = {
   id: string;
   name: string;
   family: string;
-  components: ModelComponents;
-}
+  model: ModelRef;
+  flags: ManifestFlags;
+  broken: boolean;
+};
+
+export type CatalogFile = { url: string; filename: string; size_bytes: number };
+export type CatalogShared = { role: string; url: string; filename: string; size_bytes: number };
+export type CatalogEntry = {
+  id: string;
+  name: string;
+  family: string;
+  license: string;
+  source_url: string;
+  diffusion: CatalogFile;
+  shared: CatalogShared[];
+  min_vram_mb: number;
+  recommended_vram_mb: number;
+};
+export type RatedCatalogEntry = CatalogEntry & { suitability: Suitability };
 
 /** True when the model is selectable/usable (path or diffusion set). */
 export function modelIsSet(m: ModelRef): boolean {
   return m.type === "single_file" ? m.path.trim() !== "" : m.diffusion_model.trim() !== "";
 }
 
-/** A short label for a model reference (single-file basename or definition name). */
-export function modelLabel(m: ModelRef, definitions: ModelDefinition[] = []): string {
-  // Split on both separators so basenames are correct on Windows paths too.
-  if (m.type === "single_file") return m.path.split(/[\\/]/).pop() || m.path;
-  const def = definitions.find((d) => d.components.diffusion_model === m.diffusion_model);
-  return def?.name ?? (m.diffusion_model.split(/[\\/]/).pop() || "multi-file model");
+/** A short label for a model reference (basename of its diffusion file). */
+export function modelLabel(m: ModelRef): string {
+  const path = m.type === "single_file" ? m.path : m.diffusion_model;
+  return path.split(/[\\/]/).pop() || path || "model";
 }
 
 export interface GenerationRequest {
@@ -129,7 +149,6 @@ export interface AppConfig {
   models_dir: string;
   extra_model_dirs: string[];
   last_request: GenerationRequest;
-  model_definitions: ModelDefinition[];
   gpu_device: GpuSelection | null;
   params_expanded: boolean;
   // Wire values MUST match the Rust `Theme` enum's serde snake_case form
