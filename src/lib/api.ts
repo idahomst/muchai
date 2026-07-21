@@ -7,8 +7,11 @@ export const getSettings = () => invoke<AppConfig>("get_settings");
 export const listGpuDevices = () => invoke<GpuDevice[]>("list_gpu_devices");
 export const setSettings = (config: AppConfig) => invoke<void>("set_settings", { config });
 export const listHistory = () => invoke<GalleryItem[]>("list_history");
-/** Returns one item per produced image (batch_count may yield several). */
-export const generate = (request: GenerationRequest) => invoke<GalleryItem[]>("generate", { request });
+/** Returns one item per produced image (batch_count may yield several).
+ *  `deviceVramMb` is the selected GPU's total VRAM (from sysStats) so the
+ *  backend can auto-engage Low-VRAM; null when unknown / running on CPU. */
+export const generate = (request: GenerationRequest, deviceVramMb: number | null = null) =>
+  invoke<GalleryItem[]>("generate", { request, deviceVramMb });
 /** Move a generated image (and its sidecar) to the OS trash. */
 export const deleteImage = (path: string) => invoke<void>("delete_image", { imagePath: path });
 export const cancelGeneration = () => invoke<void>("cancel_generation");
@@ -22,6 +25,10 @@ export const imageSrc = (path: string) => convertFileSrc(path);
 
 export const onProgress = (cb: (p: ProgressUpdate) => void): Promise<UnlistenFn> =>
   listen<ProgressUpdate>("generation:progress", (e) => cb(e.payload));
+
+/** Fires once per run when the backend auto-engaged Low-VRAM mode for it. */
+export const onGenNotice = (cb: () => void): Promise<UnlistenFn> =>
+  listen("generation:low_vram_auto", () => cb());
 
 export const onSystemStats = (cb: (s: SystemStats) => void): Promise<UnlistenFn> =>
   listen<SystemStats>("system:stats", (e) => cb(e.payload));

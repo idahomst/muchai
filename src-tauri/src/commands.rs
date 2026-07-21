@@ -151,6 +151,7 @@ pub async fn generate(
     app: AppHandle,
     state: State<'_, AppState>,
     request: GenerationRequest,
+    device_vram_mb: Option<u64>,
 ) -> Result<Vec<GalleryItem>, String> {
     let cfg = state.config.lock().unwrap().clone();
     if let ModelRef::MultiFile(c) = &request.model {
@@ -189,7 +190,19 @@ pub async fn generate(
     let req = request.clone();
     let img = image_path.clone();
     let backend_owned = backend;
-    let engine_opts = crate::command_builder::EngineOptions { low_vram: cfg.low_vram };
+    // Decide Low-VRAM for THIS run: manual toggle forces it on; otherwise
+    // auto-engage when the summed weight bytes won't fit the selected GPU's VRAM.
+    // Weights are summed in bytes (what estimate_vram_mb expects). A broken model
+    // (some file un-stat'able) yields None → treated as "unknown", no auto-engage.
+    let is_cpu = backend_owned.as_deref() == Some("cpu");
+    let weights_bytes = models::sum_file_sizes(&request.model.component_paths());
+    let (low_vram, auto_engaged) =
+        crate::fit::resolve_low_vram(cfg.low_vram, weights_bytes, device_vram_mb, is_cpu);
+    if auto_engaged {
+        // One-time, payload-free signal; the note text lives in the frontend.
+        let _ = app.emit("generation:low_vram_auto", ());
+    }
+    let engine_opts = crate::command_builder::EngineOptions { low_vram };
 
     // Run the (blocking) engine on a worker thread so the async command yields.
     let result = tauri::async_runtime::spawn_blocking(move || {
