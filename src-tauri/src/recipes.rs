@@ -440,11 +440,18 @@ mod tests {
 
     #[test]
     fn family_defaults_cover_each_family() {
-        assert_eq!(family_defaults("flux2", None).unwrap().steps, 4);
+        let flux2 = family_defaults("flux2", None).unwrap();
+        assert_eq!(flux2.steps, 4);
+        assert_eq!(flux2.sampler, crate::types::Sampler::Euler);
+        assert_eq!((flux2.width, flux2.height), (1024, 1024));
         let sd3 = family_defaults("sd3", None).unwrap();
         assert_eq!((sd3.steps, sd3.cfg_scale), (28, 4.5));
+        assert_eq!(sd3.sampler, crate::types::Sampler::Euler);
+        assert_eq!((sd3.width, sd3.height), (1024, 1024));
         let qwen = family_defaults("qwen-image", None).unwrap();
         assert_eq!((qwen.steps, qwen.cfg_scale), (20, 2.5));
+        assert_eq!(qwen.sampler, crate::types::Sampler::Euler);
+        assert_eq!((qwen.width, qwen.height), (1024, 1024));
         let sdxl = family_defaults("sdxl", None).unwrap();
         assert_eq!((sdxl.steps, sdxl.sampler, (sdxl.width, sdxl.height)),
                    (28, crate::types::Sampler::EulerA, (1024, 1024)));
