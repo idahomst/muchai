@@ -493,6 +493,28 @@ pub async fn download_model(
     }
 }
 
+/// Infer a model family from a diffusion filename. Falls back to the sd15/sdxl
+/// name heuristic when no family keyword matches.
+fn infer_single_file_family(filename: &str) -> String {
+    let lower = filename.to_lowercase();
+    for (needle, family) in [
+        ("flux2", "flux2"),
+        ("flux", "flux1"),
+        ("qwen", "qwen-image"),
+        ("sd3", "sd3"),
+    ] {
+        if lower.contains(needle) {
+            return family.to_string();
+        }
+    }
+    if lower.contains("xl") { "sdxl".into() } else { "sd15".into() }
+}
+
+/// A filesystem-safe unique model id.
+fn new_model_id() -> String {
+    format!("model-{}", uuid::Uuid::new_v4())
+}
+
 /// Pick the auth token for a download URL by host. HuggingFace → `hf_token`;
 /// Civitai → `civitai_token`; anything else → no token (empty string).
 /// Bearer auth is applied by `downloader::download_to` only when non-empty.
@@ -608,6 +630,97 @@ pub async fn add_catalog_model(
     };
     manifest::save_to(&model_dir, &man).map_err(|e| e.to_string())?;
 
+    Ok(library::entry_from_manifest(&model_dir, &man))
+}
+
+/// Download a single user-supplied URL into its own `models_dir/<id>/` folder,
+/// infer its family from the filename, and write a manifest. Mirrors
+/// `add_catalog_model`'s download/error-cleanup shape but for one file with no
+/// pooled/shared components.
+#[tauri::command]
+pub async fn add_url_model(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    url: String,
+    name: String,
+) -> Result<library::LibraryEntry, String> {
+    if !url.starts_with("https://") {
+        return Err("URL must be https".into());
+    }
+    let (models_dir, hf_token, civitai_token) = {
+        let cfg = state.config.lock().unwrap();
+        (PathBuf::from(&cfg.models_dir), cfg.hf_token.clone().unwrap_or_default(), cfg.civitai_token.clone().unwrap_or_default())
+    };
+    if models_dir.as_os_str().is_empty() {
+        return Err("models directory is not set".into());
+    }
+    let id = new_model_id();
+    let model_dir = safe_child_dir(&models_dir, &id).ok_or_else(|| "invalid model id".to_string())?;
+    std::fs::create_dir_all(&model_dir).map_err(|e| e.to_string())?;
+
+    let filename = downloader::derive_filename(None, &url);
+    let dest = model_dir.join(&filename);
+
+    let cancel = state.download_cancel.clone();
+    // The UI triggers at most one download at a time; this reset assumes that
+    // single-flight invariant (concurrent downloads would share one cancel flag).
+    cancel.store(false, Ordering::SeqCst);
+    let app2 = app.clone();
+    let url2 = url.clone();
+    let dest2 = dest.clone();
+    let name_for_event = filename.clone();
+
+    let dl = tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        let token = token_for_url(&url2, &hf_token, &civitai_token);
+        let mut last_emit: u64 = 0;
+        downloader::download_to(
+            &url2,
+            &token,
+            &dest2,
+            move |downloaded, total| {
+                if downloaded.saturating_sub(last_emit) >= 4 << 20 || Some(downloaded) == total {
+                    last_emit = downloaded;
+                    let _ = app2.emit(
+                        "model:download:progress",
+                        DownloadProgress {
+                            downloaded,
+                            total,
+                            file_index: Some(0),
+                            file_count: Some(1),
+                            file_name: Some(name_for_event.clone()),
+                        },
+                    );
+                }
+            },
+            &cancel,
+        )
+        .map_err(|e| e.message())
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+
+    if let Err(e) = dl {
+        let _ = std::fs::remove_dir_all(&model_dir);
+        return Err(e);
+    }
+
+    let family = infer_single_file_family(&filename);
+    let mut components = manifest::ManifestComponents::default();
+    components.set_role(
+        crate::recipes::ComponentRole::Diffusion,
+        manifest::relativize(&model_dir, &dest.to_string_lossy()),
+    );
+    let man = manifest::ModelManifest {
+        schema_version: manifest::MANIFEST_SCHEMA_VERSION,
+        id: id.clone(),
+        name: if name.trim().is_empty() { filename.clone() } else { name },
+        family,
+        source: manifest::ManifestSource::Url { url },
+        components,
+        flags: manifest::ManifestFlags::default(),
+        recommended_settings: None,
+    };
+    manifest::save_to(&model_dir, &man).map_err(|e| e.to_string())?;
     Ok(library::entry_from_manifest(&model_dir, &man))
 }
 
@@ -834,6 +947,19 @@ mod tests {
                 ..Default::default()
             },
         }
+    }
+
+    #[test]
+    fn infers_family_from_filename() {
+        assert_eq!(infer_single_file_family("flux1-schnell-Q4_K_M.gguf"), "flux1");
+        assert_eq!(infer_single_file_family("sd_xl_base_1.0.safetensors"), "sdxl");
+        assert_eq!(infer_single_file_family("v1-5-pruned-emaonly.safetensors"), "sd15");
+        assert_eq!(infer_single_file_family("qwen-image-Q4.gguf"), "qwen-image");
+    }
+
+    #[test]
+    fn new_model_id_is_unique() {
+        assert_ne!(new_model_id(), new_model_id());
     }
 
     #[test]
