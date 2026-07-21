@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { library, request } from "../stores";
+  import { library, request, selectedModelId } from "../stores";
   import { familyBadge } from "../modelFormat";
   import type { LibraryEntry } from "../types";
 
@@ -10,18 +10,20 @@
   let entries = $state<LibraryEntry[]>([]);
   library.subscribe((v) => (entries = v));
 
-  let selectedId = $state<string | null>(null);
+  let selId = $state<string | null>(null);
+  selectedModelId.subscribe((v) => (selId = v));
+
   $effect(() => {
     // Keep a valid selection as the library changes.
-    if (entries.length && !entries.some((e) => e.id === selectedId)) {
-      selectedId = entries[0].id;
+    if (entries.length && !entries.some((e) => e.id === selId)) {
+      selectedModelId.set(entries[0].id);
     }
   });
 
-  const selected = $derived(entries.find((e) => e.id === selectedId) ?? null);
+  const selected = $derived(entries.find((e) => e.id === selId) ?? null);
 
   function select(entry: LibraryEntry) {
-    selectedId = entry.id;
+    selectedModelId.set(entry.id);
     if (entry.broken) return;
     request.update((r) => ({ ...r, model: entry.model }));
   }
@@ -37,7 +39,7 @@
         <li>
           <button
             class="row"
-            class:selected={entry.id === selectedId}
+            class:selected={entry.id === selId}
             class:broken={entry.broken}
             onclick={() => select(entry)}
           >

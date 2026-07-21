@@ -13,6 +13,9 @@ export const sysStats = writable<SystemStats | null>(null);
 
 export const library = writable<LibraryEntry[]>([]);
 
+/** Id of the currently-selected library entry (drives recommended-settings). */
+export const selectedModelId = writable<string | null>(null);
+
 /** Reload the model library from disk. Call after any add/edit/delete. */
 export async function refreshLibrary(): Promise<void> {
   library.set(await listLibrary());

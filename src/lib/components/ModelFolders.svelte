@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { settings, models } from "$lib/stores";
-  import { setSettings, pickFolder, listModels, openFolder } from "$lib/api";
+  import { settings } from "$lib/stores";
+  import { setSettings, pickFolder, openFolder } from "$lib/api";
 
   let busy = $state(false);
   let error = $state<string | null>(null);
@@ -9,7 +9,6 @@
     if (!next) return;
     await setSettings(next);
     settings.set(next);
-    models.set(await listModels());
   }
 
   async function addFolder() {
