@@ -29,6 +29,13 @@
   }
   $: pct = $genStatus.kind === "running" && $genStatus.progress
     ? Math.round(($genStatus.progress.current_step / $genStatus.progress.total_steps) * 100) : 0;
+  // Text label beside the bar: "Step N/M" once the engine reports a step, or
+  // "Starting…" for the pre-first-step window (progress is null until then).
+  $: stepLabel = $genStatus.kind === "running"
+    ? ($genStatus.progress
+        ? `Step ${$genStatus.progress.current_step}/${$genStatus.progress.total_steps}`
+        : "Starting…")
+    : "";
   // Mirrors the Rust `resolve_backend` rule: CPU when the saved selection is a
   // cpu device, or when there's no valid selection and no real GPU is present.
   $: willRunOnCpu = (() => {
@@ -49,6 +56,7 @@
 <div class="bar">
   {#if $genStatus.kind === "running"}
     <div class="progress"><div class="fill" style="width:{pct}%"></div></div>
+    <span class="step" aria-live="polite">{stepLabel}</span>
     <button class="btn-secondary" on:click={cancelGeneration}>Cancel</button>
   {:else}
     <button class="btn-primary" on:click={run}>Generate</button>
@@ -72,6 +80,7 @@
   .btn-primary { flex:1; padding:.6rem; font-weight:600; }
   .progress { flex:1; height:12px; background:var(--border-subtle); border-radius:6px; overflow:hidden; }
   .fill { height:100%; background:var(--accent); transition:width .15s linear; }
+  .step { font-size:.72rem; opacity:.75; font-variant-numeric:tabular-nums; white-space:nowrap; }
   .error { margin-top:.5rem; padding:.5rem; border-radius:6px; background:var(--danger-tint);
     color:var(--danger-soft); font-size:.8rem; white-space:pre-wrap; }
   .cpu-note { margin-top:.5rem; padding:.4rem .5rem; border-radius:6px; background:var(--warn-tint);
