@@ -1,4 +1,4 @@
-use crate::types::GenDefaults;
+use crate::types::{GenDefaults, ModelComponents, ModelRef};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -82,9 +82,60 @@ pub fn resolve_path(model_dir: &Path, stored: &str) -> PathBuf {
     }
 }
 
+impl ModelManifest {
+    /// True when the manifest has no companion files and no engine flags — i.e.
+    /// a plain single checkpoint that the engine loads with `-m`.
+    fn is_single_file(&self) -> bool {
+        let c = &self.components;
+        let no_companions = [&c.vae, &c.clip_l, &c.clip_g, &c.t5xxl, &c.llm]
+            .into_iter()
+            .all(|o| o.as_deref().map(|s| s.trim().is_empty()).unwrap_or(true));
+        let no_flags = self.flags.vae_format.is_none() && self.flags.prediction.is_none();
+        no_companions && no_flags
+    }
+
+    /// Resolve every set component path to absolute (relative → against
+    /// `model_dir`) and carry the engine flags. Diffusion is always present.
+    pub fn to_components(&self, model_dir: &Path) -> ModelComponents {
+        let c = &self.components;
+        let opt = |o: &Option<String>| {
+            o.as_deref()
+                .filter(|s| !s.trim().is_empty())
+                .map(|s| resolve_path(model_dir, s).to_string_lossy().into_owned())
+        };
+        ModelComponents {
+            diffusion_model: resolve_path(model_dir, &c.diffusion_model)
+                .to_string_lossy()
+                .into_owned(),
+            vae: opt(&c.vae),
+            clip_l: opt(&c.clip_l),
+            clip_g: opt(&c.clip_g),
+            t5xxl: opt(&c.t5xxl),
+            llm: opt(&c.llm),
+            vae_format: self.flags.vae_format.clone(),
+            prediction: self.flags.prediction.clone(),
+        }
+    }
+
+    /// The engine-ready reference. Single checkpoint → `SingleFile { -m path }`;
+    /// any companion or flag → `MultiFile(components)`.
+    pub fn to_model_ref(&self, model_dir: &Path) -> ModelRef {
+        if self.is_single_file() {
+            ModelRef::SingleFile {
+                path: resolve_path(model_dir, &self.components.diffusion_model)
+                    .to_string_lossy()
+                    .into_owned(),
+            }
+        } else {
+            ModelRef::MultiFile(self.to_components(model_dir))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::{ModelComponents, ModelRef};
 
     fn sample() -> ModelManifest {
         ModelManifest {
@@ -179,5 +230,67 @@ mod tests {
         let dir = std::path::Path::new("/models/flux1-schnell-def456");
         let abs = "/models/shared/flux1/t5xxl_fp16.safetensors";
         assert_eq!(resolve_path(dir, abs), std::path::PathBuf::from(abs));
+    }
+
+    #[test]
+    fn to_model_ref_single_when_only_diffusion_and_no_flags() {
+        let dir = std::path::Path::new("/models/my-sdxl");
+        let m = ModelManifest {
+            schema_version: 1,
+            id: "my-sdxl".into(),
+            name: "My SDXL".into(),
+            family: "sdxl".into(),
+            source: ManifestSource::Local { original_path: "/dl/sdxl.safetensors".into() },
+            components: ManifestComponents {
+                diffusion_model: "/dl/sdxl.safetensors".into(),
+                ..Default::default()
+            },
+            flags: ManifestFlags::default(),
+            recommended_settings: None,
+        };
+        assert_eq!(
+            m.to_model_ref(dir),
+            ModelRef::SingleFile { path: "/dl/sdxl.safetensors".into() }
+        );
+    }
+
+    #[test]
+    fn to_model_ref_multi_when_a_companion_is_set() {
+        let dir = std::path::Path::new("/models/flux1-schnell-def456");
+        let m = sample(); // has t5xxl/clip_l/vae companions
+        match m.to_model_ref(dir) {
+            ModelRef::MultiFile(c) => {
+                assert_eq!(c.diffusion_model, "/models/flux1-schnell-def456/flux1-schnell-Q4.gguf");
+                assert_eq!(c.t5xxl.as_deref(), Some("/models/shared/flux1/t5xxl_fp16.safetensors"));
+            }
+            other => panic!("expected MultiFile, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn to_model_ref_multi_when_only_flag_set() {
+        let dir = std::path::Path::new("/models/sd3");
+        let m = ModelManifest {
+            schema_version: 1,
+            id: "sd3".into(),
+            name: "SD3".into(),
+            family: "sd3".into(),
+            source: ManifestSource::Url { url: "https://e/sd3.safetensors".into() },
+            components: ManifestComponents { diffusion_model: "sd3.safetensors".into(), ..Default::default() },
+            flags: ManifestFlags { vae_format: Some("sd3".into()), prediction: None },
+            recommended_settings: None,
+        };
+        match m.to_model_ref(dir) {
+            ModelRef::MultiFile(c) => assert_eq!(c.vae_format.as_deref(), Some("sd3")),
+            other => panic!("expected MultiFile, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn to_components_resolves_all_paths_and_copies_flags() {
+        let dir = std::path::Path::new("/models/flux1-schnell-def456");
+        let c: ModelComponents = sample().to_components(dir);
+        assert_eq!(c.diffusion_model, "/models/flux1-schnell-def456/flux1-schnell-Q4.gguf");
+        assert_eq!(c.vae.as_deref(), Some("/models/shared/flux1/ae.safetensors"));
     }
 }
