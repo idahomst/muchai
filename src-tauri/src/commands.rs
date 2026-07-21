@@ -2,7 +2,7 @@ use crate::engine::{self, ChildSlot, GenError};
 use crate::types::{AppConfig, DownloadProgress, GalleryItem, GenerationRequest, GpuDevice, ModelInfo};
 use crate::recipes::{self, ComponentRole};
 use crate::types::{GenDefaults, ModelDefinition, ModelRef};
-use crate::{catalog, config, downloader, gallery, hf, models};
+use crate::{config, downloader, gallery, hf, models};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -392,11 +392,6 @@ pub fn list_models(state: State<AppState>) -> Vec<ModelInfo> {
 }
 
 #[tauri::command]
-pub fn starter_models(vram_total_mb: Option<u64>) -> Vec<catalog::RatedModel> {
-    catalog::rated_catalog(vram_total_mb)
-}
-
-#[tauri::command]
 pub fn list_library(state: State<AppState>) -> Vec<crate::library::LibraryEntry> {
     let models_dir = state.config.lock().unwrap().models_dir.clone();
     crate::library::scan_library(std::path::Path::new(&models_dir))
@@ -477,11 +472,6 @@ pub async fn download_model(
     }
 }
 
-#[tauri::command]
-pub fn multifile_catalog(vram_total_mb: Option<u64>) -> Vec<catalog::RatedMultiFile> {
-    catalog::rated_multi_file_catalog(vram_total_mb)
-}
-
 /// Discover a HuggingFace model's downloadable variants, each with a size + fit
 /// verdict against the given VRAM. Repo URLs enumerate the tree; a direct file
 /// URL yields a single-row picker (size unknown until download).
@@ -517,106 +507,6 @@ pub async fn list_hf_variants(
                 return Err("No downloadable diffusion model found in that repo. Paste a direct file URL instead.".into());
             }
             Ok(variants.iter().map(|v| hf::rate_variant(&repo, v, vram_total_mb)).collect())
-        }
-    }
-}
-
-/// Download a curated multi-file model: fetch diffusion + any missing shared
-/// components sequentially, assemble + persist a definition, return it.
-/// On cancel/failure: remove the partial per-model folder, persist nothing.
-#[tauri::command]
-pub async fn download_multifile(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    entry_id: String,
-    token: String,
-) -> Result<ModelDefinition, String> {
-    let (models_dir, entry, recipe) = {
-        let cfg = state.config.lock().unwrap();
-        let entry = catalog::multi_file_catalog()
-            .into_iter()
-            .find(|e| e.id == entry_id)
-            .ok_or_else(|| "Unknown catalog model.".to_string())?;
-        let recipe = recipes::recipe_for(&entry.family).ok_or_else(|| "Unknown family.".to_string())?;
-        (PathBuf::from(&cfg.models_dir), entry, recipe)
-    };
-
-    let plan = catalog::plan_downloads(&entry, &recipe, &models_dir, &|p| p.exists());
-    let file_count = plan.len() as u32;
-
-    let cancel = state.download_cancel.clone();
-    cancel.store(false, Ordering::SeqCst);
-    let app2 = app.clone();
-    let entry2 = entry.clone();
-    let recipe2 = recipe.clone();
-    let models_dir2 = models_dir.clone();
-
-    let result = tauri::async_runtime::spawn_blocking(move || -> Result<ModelDefinition, String> {
-        for (i, item) in plan.iter().enumerate() {
-            let name = item
-                .dest
-                .file_name()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            let mut last_emit: u64 = 0;
-            let app3 = app2.clone();
-            let name2 = name.clone();
-            downloader::download_to(
-                &item.url,
-                &token,
-                &item.dest,
-                move |downloaded, total| {
-                    if downloaded.saturating_sub(last_emit) >= 4 << 20 || Some(downloaded) == total {
-                        last_emit = downloaded;
-                        let _ = app3.emit(
-                            "model:download:progress",
-                            DownloadProgress {
-                                downloaded,
-                                total,
-                                file_index: Some(i as u32),
-                                file_count: Some(file_count),
-                                file_name: Some(name2.clone()),
-                            },
-                        );
-                    }
-                },
-                &cancel,
-            )
-            .map_err(|e| e.message())?;
-        }
-        let components = catalog::assemble_components(&entry2, &recipe2, &models_dir2);
-        Ok(ModelDefinition {
-            id: entry2.id.clone(),
-            name: entry2.name.clone(),
-            family: entry2.family.clone(),
-            components,
-        })
-    })
-    .await
-    .map_err(|e| e.to_string())?;
-
-    match result {
-        Ok(def) => {
-            // Persist (upsert by id).
-            let mut cfg = state.config.lock().unwrap();
-            if let Some(existing) = cfg.model_definitions.iter_mut().find(|d| d.id == def.id) {
-                *existing = def.clone();
-            } else {
-                cfg.model_definitions.push(def.clone());
-            }
-            config::save_config_to(&config::config_file_path(), &cfg).map_err(|e| e.to_string())?;
-            Ok(def)
-        }
-        Err(e) => {
-            // Roll back the per-model folder; leave the shared pool intact. The
-            // shared guard (`safe_model_dir`) only ever yields a genuine direct
-            // subfolder of models_dir — never the shared pool or models_dir
-            // itself — in case a future catalog id is empty, "shared", or bears
-            // a path separator.
-            if let Some(folder) = safe_model_dir(&models_dir, &entry.id) {
-                let _ = std::fs::remove_dir_all(&folder);
-            }
-            Err(e)
         }
     }
 }

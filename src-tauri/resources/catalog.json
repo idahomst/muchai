@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "entries": [
+    {
+      "id": "sd15",
+      "name": "Stable Diffusion 1.5",
+      "family": "sd15",
+      "license": "CreativeML-OpenRAIL-M",
+      "source_url": "https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5",
+      "diffusion": {
+        "url": "https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5/resolve/main/v1-5-pruned-emaonly.safetensors",
+        "filename": "v1-5-pruned-emaonly.safetensors",
+        "size_bytes": 4265146304
+      },
+      "shared": [],
+      "min_vram_mb": 2048,
+      "recommended_vram_mb": 4096
+    }
+  ]
+}
