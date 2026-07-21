@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -130,6 +131,71 @@ pub fn rated_catalog_entries(entries: Vec<CatalogEntry>, vram_total_mb: Option<u
         .collect()
 }
 
+/// One file to fetch and where to write it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlannedFile {
+    pub url: String,
+    pub dest: PathBuf,
+    pub role: crate::recipes::ComponentRole,
+    pub size_bytes: u64,
+    /// true if pooled under shared/<family> (skip if already present).
+    pub shared: bool,
+}
+
+/// The full plan for materializing a catalog entry on disk.
+#[derive(Debug, Clone)]
+pub struct EntryPlan {
+    pub model_dir: PathBuf,
+    pub shared_dir: PathBuf,
+    pub files: Vec<PlannedFile>,
+}
+
+/// Compute every file to download for `entry` and its on-disk destination.
+/// Diffusion → model folder. Recipe shared components → shared/<family> (pooled).
+/// Per-entry `shared` overrides → model folder (not pooled).
+pub fn plan_entry_downloads(entry: &CatalogEntry, models_dir: &Path) -> EntryPlan {
+    let model_dir = models_dir.join(&entry.id);
+    let shared_dir = models_dir.join("shared").join(&entry.family);
+    let mut files = Vec::new();
+
+    files.push(PlannedFile {
+        url: entry.diffusion.url.clone(),
+        dest: model_dir.join(&entry.diffusion.filename),
+        role: crate::recipes::ComponentRole::Diffusion,
+        size_bytes: entry.diffusion.size_bytes,
+        shared: false,
+    });
+
+    let override_roles: std::collections::HashSet<_> =
+        entry.shared.iter().map(|s| s.role).collect();
+    for s in &entry.shared {
+        files.push(PlannedFile {
+            url: s.url.clone(),
+            dest: model_dir.join(&s.filename),
+            role: s.role,
+            size_bytes: s.size_bytes,
+            shared: false,
+        });
+    }
+
+    if let Some(recipe) = crate::recipes::recipe_for(&entry.family) {
+        for comp in &recipe.shared {
+            if override_roles.contains(&comp.role) {
+                continue;
+            }
+            files.push(PlannedFile {
+                url: comp.url.to_string(),
+                dest: shared_dir.join(comp.filename),
+                role: comp.role,
+                size_bytes: comp.size_bytes,
+                shared: true,
+            });
+        }
+    }
+
+    EntryPlan { model_dir, shared_dir, files }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -206,6 +272,34 @@ mod tests {
         let cat = load_catalog_from_str(json);
         assert_eq!(cat.len(), 1);
         assert_eq!(cat[0].id, "good");
+    }
+
+    #[test]
+    fn plan_entry_downloads_pools_shared_and_folds_diffusion() {
+        let entry = CatalogEntry {
+            id: "flux1-schnell".into(), name: "FLUX.1 schnell".into(), family: "flux1".into(),
+            license: "Apache-2.0".into(), source_url: "https://h/flux".into(),
+            diffusion: CatalogFile { url: "https://h/flux1-schnell.gguf".into(), filename: "flux1-schnell.gguf".into(), size_bytes: 0 },
+            shared: vec![], min_vram_mb: 8192, recommended_vram_mb: 12288,
+        };
+        let models_dir = std::path::Path::new("/models");
+        let plan = plan_entry_downloads(&entry, models_dir);
+        assert_eq!(plan.model_dir, models_dir.join("flux1-schnell"));
+        assert!(plan.files.iter().any(|f| f.dest == plan.model_dir.join("flux1-schnell.gguf")));
+        let shared_dir = models_dir.join("shared").join("flux1");
+        assert!(plan.files.iter().any(|f| f.dest.starts_with(&shared_dir)), "family shared components pooled under shared/<family>");
+    }
+
+    #[test]
+    fn plan_entry_downloads_single_file_family_has_no_shared() {
+        let entry = CatalogEntry {
+            id: "sd15".into(), name: "SD 1.5".into(), family: "sd15".into(),
+            license: "OpenRAIL".into(), source_url: "https://h/sd15".into(),
+            diffusion: CatalogFile { url: "https://h/sd15.safetensors".into(), filename: "sd15.safetensors".into(), size_bytes: 0 },
+            shared: vec![], min_vram_mb: 2048, recommended_vram_mb: 4096,
+        };
+        let plan = plan_entry_downloads(&entry, std::path::Path::new("/models"));
+        assert_eq!(plan.files.len(), 1, "single-file family downloads only the diffusion weight");
     }
 
     #[test]

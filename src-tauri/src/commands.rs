@@ -2,7 +2,7 @@ use crate::engine::{self, ChildSlot, GenError};
 use crate::types::{AppConfig, DownloadProgress, GalleryItem, GenerationRequest, GpuDevice, ModelInfo};
 use crate::recipes::{self, ComponentRole};
 use crate::types::{GenDefaults, ModelDefinition, ModelRef};
-use crate::{catalog, config, downloader, gallery, hf, models};
+use crate::{catalog, config, downloader, gallery, hf, library, manifest, models};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -493,6 +493,124 @@ pub async fn download_model(
     }
 }
 
+/// Pick the auth token for a download URL by host. HuggingFace → `hf_token`;
+/// Civitai → `civitai_token`; anything else → no token (empty string).
+/// Bearer auth is applied by `downloader::download_to` only when non-empty.
+fn token_for_url(url: &str, hf_token: &str, civitai_token: &str) -> String {
+    let u = url.to_lowercase();
+    if u.contains("huggingface.co") || u.contains("hf.co") {
+        hf_token.to_string()
+    } else if u.contains("civitai.com") {
+        civitai_token.to_string()
+    } else {
+        String::new()
+    }
+}
+
+/// Download every file a catalog entry needs (diffusion + any pooled/override
+/// shared components) and write its `model.json`. Shared components already
+/// present in the pool (from a prior install) are skipped, not re-downloaded.
+/// On any download failure the freshly-created per-model folder is removed;
+/// the shared pool is left untouched since other models may depend on it.
+#[tauri::command]
+pub async fn add_catalog_model(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    catalog_id: String,
+) -> Result<library::LibraryEntry, String> {
+    let (models_dir, hf_token, civitai_token) = {
+        let cfg = state.config.lock().unwrap();
+        (PathBuf::from(&cfg.models_dir), cfg.hf_token.clone().unwrap_or_default(), cfg.civitai_token.clone().unwrap_or_default())
+    };
+    if models_dir.as_os_str().is_empty() {
+        return Err("models directory is not set".into());
+    }
+    let entry = load_bundled_catalog(&app)
+        .into_iter()
+        .find(|e| e.id == catalog_id)
+        .ok_or_else(|| format!("unknown catalog entry {catalog_id}"))?;
+
+    if safe_child_dir(&models_dir, &entry.id).is_none() {
+        return Err("invalid model id".into());
+    }
+    let plan = catalog::plan_entry_downloads(&entry, &models_dir);
+    let model_dir = plan.model_dir.clone();
+    let file_count = plan.files.len() as u32;
+
+    let cancel = state.download_cancel.clone();
+    // The UI triggers at most one download at a time; this reset assumes that
+    // single-flight invariant (concurrent downloads would share one cancel flag).
+    cancel.store(false, Ordering::SeqCst);
+    let app2 = app.clone();
+    let files = plan.files.clone();
+
+    let dl = tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        for (i, file) in files.iter().enumerate() {
+            if file.shared && file.dest.exists() {
+                continue;
+            }
+            let token = token_for_url(&file.url, &hf_token, &civitai_token);
+            let name = file.dest.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+            // Throttle: emit at most every ~4 MiB (or on completion) so multi-GB
+            // downloads don't flood the frontend with ~100k IPC events.
+            let mut last_emit: u64 = 0;
+            let app3 = app2.clone();
+            let name2 = name.clone();
+            downloader::download_to(
+                &file.url,
+                &token,
+                &file.dest,
+                move |downloaded, total| {
+                    if downloaded.saturating_sub(last_emit) >= 4 << 20 || Some(downloaded) == total {
+                        last_emit = downloaded;
+                        let _ = app3.emit(
+                            "model:download:progress",
+                            DownloadProgress {
+                                downloaded,
+                                total,
+                                file_index: Some(i as u32),
+                                file_count: Some(file_count),
+                                file_name: Some(name2.clone()),
+                            },
+                        );
+                    }
+                },
+                &cancel,
+            )
+            .map_err(|e| e.message())?;
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+
+    if let Err(e) = dl {
+        let _ = std::fs::remove_dir_all(&model_dir);
+        return Err(e);
+    }
+
+    let mut components = manifest::ManifestComponents::default();
+    for file in &plan.files {
+        components.set_role(file.role, manifest::relativize(&model_dir, &file.dest.to_string_lossy()));
+    }
+    let man = manifest::ModelManifest {
+        schema_version: manifest::MANIFEST_SCHEMA_VERSION,
+        id: entry.id.clone(),
+        name: entry.name.clone(),
+        family: entry.family.clone(),
+        source: manifest::ManifestSource::Catalog {
+            catalog_id: entry.id.clone(),
+            url: entry.source_url.clone(),
+        },
+        components,
+        flags: manifest::ManifestFlags::default(),
+        recommended_settings: None,
+    };
+    manifest::save_to(&model_dir, &man).map_err(|e| e.to_string())?;
+
+    Ok(library::entry_from_manifest(&model_dir, &man))
+}
+
 /// Discover a HuggingFace model's downloadable variants, each with a size + fit
 /// verdict against the given VRAM. Repo URLs enumerate the tree; a direct file
 /// URL yields a single-row picker (size unknown until download).
@@ -657,17 +775,27 @@ pub fn broken_definitions(state: State<'_, AppState>) -> Vec<String> {
         .collect()
 }
 
-/// The per-model folder `<models_dir>/<id>`, but only when `id` names a safe,
-/// direct child that actually exists as a directory: non-blank, not the shared
-/// pool, and free of path separators. Returns `None` otherwise so callers can
-/// never trash the shared pool or escape `models_dir` via a crafted id. Shared
-/// by both the delete and the download-rollback paths so they guard identically.
-fn safe_model_dir(models_dir: &std::path::Path, id: &str) -> Option<PathBuf> {
+/// Pure id guard, no filesystem check: `id` must be non-blank, not the shared
+/// pool name, and free of path separators, and the resulting path must land
+/// directly under `models_dir`. Used to validate an id *before* its folder
+/// exists (e.g. a fresh catalog install), unlike `safe_model_dir` below.
+fn safe_child_dir(models_dir: &std::path::Path, id: &str) -> Option<PathBuf> {
     if id.trim().is_empty() || id == "shared" || id.contains('/') || id.contains('\\') {
         return None;
     }
     let folder = models_dir.join(id);
-    (folder.parent() == Some(models_dir) && folder.is_dir()).then_some(folder)
+    (folder.parent() == Some(models_dir)).then_some(folder)
+}
+
+/// The per-model folder `<models_dir>/<id>`, but only when `id` names a safe,
+/// direct child that actually exists as a directory: non-blank, not the shared
+/// pool, and free of path separators. Returns `None` otherwise so callers can
+/// never trash the shared pool or escape `models_dir` via a crafted id. Used
+/// by the delete path, which only ever targets an already-existing folder
+/// (see `safe_child_dir` above for the pre-existence variant used before a
+/// fresh download creates the folder).
+fn safe_model_dir(models_dir: &std::path::Path, id: &str) -> Option<PathBuf> {
+    safe_child_dir(models_dir, id).filter(|f| f.is_dir())
 }
 
 /// Delete a definition and move its per-model folder to trash. The shared pool
@@ -706,6 +834,13 @@ mod tests {
                 ..Default::default()
             },
         }
+    }
+
+    #[test]
+    fn token_for_url_selects_by_host() {
+        assert_eq!(token_for_url("https://huggingface.co/x/y.gguf", "HF", "CV"), "HF");
+        assert_eq!(token_for_url("https://civitai.com/api/download/1", "HF", "CV"), "CV");
+        assert_eq!(token_for_url("https://example.com/a.safetensors", "HF", "CV"), "");
     }
 
     #[test]

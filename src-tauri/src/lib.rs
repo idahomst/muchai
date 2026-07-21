@@ -97,6 +97,7 @@ pub fn run() {
             commands::list_hf_variants,
             commands::recommended_settings,
             commands::catalog_entries,
+            commands::add_catalog_model,
         ])
         .run(tauri::generate_context!())
         .expect("error while running MuchAI");
