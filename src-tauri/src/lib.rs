@@ -8,6 +8,7 @@ mod engine;
 mod fit;
 mod gallery;
 mod hf;
+mod library;
 mod manifest;
 mod models;
 mod progress_parser;
