@@ -204,6 +204,18 @@ impl Default for GenerationRequest {
     }
 }
 
+/// Recommended generation settings for a model family. Applied only on explicit
+/// user action (the "Use recommended settings" button) — never auto-applied.
+/// `PartialEq` (not `Eq`) because `cfg_scale` is `f32`.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct GenDefaults {
+    pub steps: u32,
+    pub cfg_scale: f32,
+    pub sampler: Sampler,
+    pub width: u32,
+    pub height: u32,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProgressUpdate {
     pub current_step: u32,

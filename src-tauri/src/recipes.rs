@@ -1,4 +1,4 @@
-use crate::types::ModelComponents;
+use crate::types::{GenDefaults, ModelComponents, Sampler};
 use serde::{Deserialize, Serialize};
 
 /// A typed slot in a split model, each wired to one engine flag.
@@ -231,6 +231,37 @@ pub fn recipe_for(family: &str) -> Option<ModelRecipe> {
     recipes().into_iter().find(|r| r.family == family)
 }
 
+/// Recommended generation settings for a model family, or `None` for families
+/// without a meaningful preset (`custom`, single-file "none", or any unknown id
+/// → the UI hides the "Use recommended settings" button). For `flux1`, the
+/// diffusion filename selects the schnell (4-step) vs. dev/krea (20-step)
+/// profile; a missing filename assumes dev. Family keys match `detect_best`
+/// family ids plus the single-file heuristics `"sdxl"` / `"sd15"`.
+pub fn family_defaults(family: &str, diffusion_filename: Option<&str>) -> Option<GenDefaults> {
+    let d = |steps, cfg_scale, sampler, width, height| GenDefaults {
+        steps,
+        cfg_scale,
+        sampler,
+        width,
+        height,
+    };
+    match family {
+        "flux1" => {
+            let is_schnell = diffusion_filename
+                .map(|f| f.to_lowercase().contains("schnell"))
+                .unwrap_or(false);
+            let steps = if is_schnell { 4 } else { 20 };
+            Some(d(steps, 1.0, Sampler::Euler, 1024, 1024))
+        }
+        "flux2" => Some(d(4, 1.0, Sampler::Euler, 1024, 1024)),
+        "sd3" => Some(d(28, 4.5, Sampler::Euler, 1024, 1024)),
+        "qwen-image" => Some(d(20, 2.5, Sampler::Euler, 1024, 1024)),
+        "sdxl" => Some(d(28, 7.0, Sampler::EulerA, 1024, 1024)),
+        "sd15" => Some(d(20, 7.0, Sampler::EulerA, 512, 512)),
+        _ => None,
+    }
+}
+
 /// A recipe flattened for the frontend: roles with labels + defaulted flags.
 #[derive(Debug, Clone, Serialize)]
 pub struct RoleInfo {
@@ -382,5 +413,49 @@ mod tests {
         assert!(missing.contains(&ComponentRole::Vae));
         assert!(!missing.contains(&ComponentRole::Diffusion));
         assert!(!missing.contains(&ComponentRole::ClipL));
+    }
+
+    #[test]
+    fn family_defaults_flux1_schnell_uses_four_steps() {
+        let d = family_defaults("flux1", Some("flux1-schnell-Q4_0.gguf")).unwrap();
+        assert_eq!(d.steps, 4);
+        assert_eq!(d.cfg_scale, 1.0);
+        assert_eq!(d.sampler, crate::types::Sampler::Euler);
+        assert_eq!((d.width, d.height), (1024, 1024));
+    }
+
+    #[test]
+    fn family_defaults_flux1_dev_uses_twenty_steps() {
+        let d = family_defaults("flux1", Some("flux1-dev.safetensors")).unwrap();
+        assert_eq!(d.steps, 20);
+        assert_eq!(d.cfg_scale, 1.0);
+    }
+
+    #[test]
+    fn family_defaults_flux1_without_filename_defaults_to_dev() {
+        // No filename to check for "schnell" → assume the dev/krea profile.
+        let d = family_defaults("flux1", None).unwrap();
+        assert_eq!(d.steps, 20);
+    }
+
+    #[test]
+    fn family_defaults_cover_each_family() {
+        assert_eq!(family_defaults("flux2", None).unwrap().steps, 4);
+        let sd3 = family_defaults("sd3", None).unwrap();
+        assert_eq!((sd3.steps, sd3.cfg_scale), (28, 4.5));
+        let qwen = family_defaults("qwen-image", None).unwrap();
+        assert_eq!((qwen.steps, qwen.cfg_scale), (20, 2.5));
+        let sdxl = family_defaults("sdxl", None).unwrap();
+        assert_eq!((sdxl.steps, sdxl.sampler, (sdxl.width, sdxl.height)),
+                   (28, crate::types::Sampler::EulerA, (1024, 1024)));
+        let sd15 = family_defaults("sd15", None).unwrap();
+        assert_eq!((sd15.steps, sd15.sampler, (sd15.width, sd15.height)),
+                   (20, crate::types::Sampler::EulerA, (512, 512)));
+    }
+
+    #[test]
+    fn family_defaults_unknown_and_custom_are_none() {
+        assert!(family_defaults("custom", None).is_none());
+        assert!(family_defaults("totally-unknown", None).is_none());
     }
 }
