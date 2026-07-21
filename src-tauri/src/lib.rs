@@ -99,6 +99,9 @@ pub fn run() {
             commands::catalog_entries,
             commands::add_catalog_model,
             commands::add_url_model,
+            commands::add_local_model,
+            commands::edit_model,
+            commands::delete_model_entry,
         ])
         .run(tauri::generate_context!())
         .expect("error while running MuchAI");

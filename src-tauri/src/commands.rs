@@ -929,6 +929,90 @@ pub fn delete_model_definition(state: State<AppState>, id: String) -> Result<(),
     config::save_config_to(&config::config_file_path(), &cfg).map_err(|e| e.to_string())
 }
 
+/// Register a model from a diffusion file already on disk, referenced in
+/// place (its absolute path is stored, never copied/moved). Creates a fresh
+/// per-model folder under `models_dir` holding only `model.json`.
+#[tauri::command]
+pub fn add_local_model(
+    state: tauri::State<'_, AppState>,
+    diffusion_path: String,
+    name: String,
+    family: Option<String>,
+) -> Result<library::LibraryEntry, String> {
+    let models_dir = {
+        let cfg = state.config.lock().unwrap();
+        PathBuf::from(&cfg.models_dir)
+    };
+    if models_dir.as_os_str().is_empty() {
+        return Err("models directory is not set".into());
+    }
+    let src = PathBuf::from(&diffusion_path);
+    if !src.is_file() {
+        return Err(format!("no such file: {diffusion_path}"));
+    }
+    let id = new_model_id();
+    let model_dir = safe_child_dir(&models_dir, &id).ok_or_else(|| "invalid model id".to_string())?;
+    std::fs::create_dir_all(&model_dir).map_err(|e| e.to_string())?;
+
+    let filename = basename(&diffusion_path);
+    let fam = family.unwrap_or_else(|| infer_single_file_family(&filename));
+    let mut components = manifest::ManifestComponents::default();
+    // Referenced-local: store the ABSOLUTE path (not relativized).
+    components.set_role(ComponentRole::Diffusion, diffusion_path.clone());
+    let man = manifest::ModelManifest {
+        schema_version: manifest::MANIFEST_SCHEMA_VERSION,
+        id: id.clone(),
+        name: if name.trim().is_empty() { filename } else { name },
+        family: fam,
+        source: manifest::ManifestSource::Local { original_path: diffusion_path },
+        components,
+        flags: manifest::ManifestFlags::default(),
+        recommended_settings: None,
+    };
+    manifest::save_to(&model_dir, &man).map_err(|e| e.to_string())?;
+    Ok(library::entry_from_manifest(&model_dir, &man))
+}
+
+/// Edit an existing manifest's name/family/flags in place. `None` fields are
+/// left unchanged.
+#[tauri::command]
+pub fn edit_model(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    name: Option<String>,
+    family: Option<String>,
+    flags: Option<manifest::ManifestFlags>,
+) -> Result<library::LibraryEntry, String> {
+    let models_dir = {
+        let cfg = state.config.lock().unwrap();
+        PathBuf::from(&cfg.models_dir)
+    };
+    let model_dir = models_dir.join(&id);
+    let mut man = manifest::load_from(&model_dir).map_err(|e| e.to_string())?;
+    man.apply_edit(name, family, flags);
+    manifest::save_to(&model_dir, &man).map_err(|e| e.to_string())?;
+    Ok(library::entry_from_manifest(&model_dir, &man))
+}
+
+/// Delete a library entry: moves its per-model folder to trash. Pooled
+/// `shared/<family>` components referenced by other models are left intact.
+#[tauri::command]
+pub fn delete_model_entry(
+    state: tauri::State<'_, AppState>,
+    id: String,
+) -> Result<(), String> {
+    let models_dir = {
+        let cfg = state.config.lock().unwrap();
+        PathBuf::from(&cfg.models_dir)
+    };
+    let model_dir = safe_model_dir(&models_dir, &id).ok_or_else(|| "invalid model id".to_string())?;
+    if !model_dir.is_dir() {
+        return Err(format!("no such model: {id}"));
+    }
+    // Trash the whole model folder. Pooled shared/<family> components are left intact.
+    trash::delete(&model_dir).map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

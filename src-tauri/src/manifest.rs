@@ -140,6 +140,24 @@ impl ModelManifest {
         }
     }
 
+    /// Apply optional edits. `None` leaves a field unchanged.
+    pub fn apply_edit(
+        &mut self,
+        name: Option<String>,
+        family: Option<String>,
+        flags: Option<ManifestFlags>,
+    ) {
+        if let Some(n) = name {
+            self.name = n;
+        }
+        if let Some(f) = family {
+            self.family = f;
+        }
+        if let Some(fl) = flags {
+            self.flags = fl;
+        }
+    }
+
     /// The engine-ready reference. Single checkpoint → `SingleFile { -m path }`;
     /// any companion or flag → `MultiFile(components)`.
     pub fn to_model_ref(&self, model_dir: &Path) -> ModelRef {
@@ -331,6 +349,28 @@ mod tests {
             "/models/shared/flux1/ae.safetensors"
         );
         assert_eq!(relativize(dir, "/home/me/dl/x.safetensors"), "/home/me/dl/x.safetensors");
+    }
+
+    #[test]
+    fn apply_edit_changes_name_family_flags() {
+        let mut man = ModelManifest {
+            schema_version: MANIFEST_SCHEMA_VERSION,
+            id: "m".into(), name: "Old".into(), family: "sd15".into(),
+            source: ManifestSource::Local { original_path: "/a/b.safetensors".into() },
+            components: ManifestComponents::default(),
+            flags: ManifestFlags::default(),
+            recommended_settings: None,
+        };
+        man.apply_edit(
+            Some("New".into()),
+            Some("sdxl".into()),
+            Some(ManifestFlags { vae_format: Some("fp16".into()), prediction: None }),
+        );
+        assert_eq!(man.name, "New");
+        assert_eq!(man.family, "sdxl");
+        assert_eq!(man.flags.vae_format.as_deref(), Some("fp16"));
+        man.apply_edit(None, None, None);
+        assert_eq!(man.name, "New");
     }
 
     #[test]
