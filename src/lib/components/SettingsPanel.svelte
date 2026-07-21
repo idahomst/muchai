@@ -1,29 +1,30 @@
 <script lang="ts">
-  import { request } from "../stores";
+  import { request, selectedModelId } from "../stores";
   import { SAMPLERS, FORMATS } from "../types";
-  import type { GenDefaults, ModelRef } from "../types";
+  import type { GenDefaults } from "../types";
   import { recommendedSettings } from "../api";
   import InfoHint from "./InfoHint.svelte";
   import { HELP } from "../helpText";
 
   // Recommended settings for the current model (null → family has no preset,
-  // so the button is hidden). Re-fetched only when the model reference changes,
-  // not on every params edit, guarded by a serialized-key comparison.
+  // so the button is hidden). Re-fetched only when the selected model id
+  // changes, not on every params edit.
   let recommended: GenDefaults | null = null;
-  let lastModelKey = "";
+  let lastId: string | null = null;
   $: {
-    const key = JSON.stringify($request.model);
-    if (key !== lastModelKey) {
-      lastModelKey = key;
-      void loadRecommended($request.model, key);
+    const id = $selectedModelId;
+    if (id !== lastId) {
+      lastId = id;
+      void loadRecommended(id);
     }
   }
-  async function loadRecommended(model: ModelRef, key: string) {
+  async function loadRecommended(id: string | null) {
+    if (!id) { recommended = null; return; }
     try {
-      const res = await recommendedSettings(model);
-      if (key === lastModelKey) recommended = res;
+      const res = await recommendedSettings(id);
+      if (id === lastId) recommended = res;   // discard stale fetch (a501753)
     } catch {
-      if (key === lastModelKey) recommended = null;
+      if (id === lastId) recommended = null;
     }
   }
   function applyRecommended() {

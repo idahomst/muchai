@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { currentItem, settings, definitions } from "$lib/stores";
+  import { currentItem, settings } from "$lib/stores";
   import { setSettings } from "$lib/api";
   import { SAMPLERS, modelLabel } from "$lib/types";
 
@@ -44,7 +44,7 @@
     </button>
     {#if expanded}
       <div class="grid">
-        <span class="k">Model</span><span class="v" title={modelLabel(r.model, $definitions)}>{modelLabel(r.model, $definitions)}</span>
+        <span class="k">Model</span><span class="v" title={modelLabel(r.model)}>{modelLabel(r.model)}</span>
         <span class="k">Seed</span><span class="v">{r.seed}</span>
         <span class="k">Steps</span><span class="v">{r.steps}</span>
         <span class="k">CFG</span><span class="v">{r.cfg_scale}</span>

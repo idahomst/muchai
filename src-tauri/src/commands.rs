@@ -1,8 +1,8 @@
 use crate::engine::{self, ChildSlot, GenError};
-use crate::types::{AppConfig, DownloadProgress, GalleryItem, GenerationRequest, GpuDevice, ModelInfo};
+use crate::types::{AppConfig, DownloadProgress, GalleryItem, GenerationRequest, GpuDevice};
 use crate::recipes::{self, ComponentRole};
-use crate::types::{GenDefaults, ModelDefinition, ModelRef};
-use crate::{catalog, config, downloader, gallery, hf, models};
+use crate::types::ModelRef;
+use crate::{catalog, config, downloader, gallery, hf, library, manifest, models, types};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -45,17 +45,6 @@ fn basename(path: &str) -> String {
     path.rsplit(['/', '\\']).next().unwrap_or(path).to_string()
 }
 
-/// Family heuristic for a single-file model, which carries no explicit family:
-/// an "xl" in the filename means SDXL, otherwise assume SD-1.5. Both have a
-/// recommended-settings preset, so a single-file model always gets the button.
-fn single_file_family(filename: &str) -> &'static str {
-    if filename.to_lowercase().contains("xl") {
-        "sdxl"
-    } else {
-        "sd15"
-    }
-}
-
 /// Directory holding `sd-cli` and its sibling `.so` files. Bundled apps resolve
 /// it from the Tauri resource dir (`<resources>/engine`); dev falls back to the
 /// source tree. `RUNPATH=$ORIGIN` then loads the siblings next to `sd-cli`.
@@ -71,6 +60,27 @@ fn engine_dir(app: &AppHandle) -> Option<PathBuf> {
         return Some(dev);
     }
     None
+}
+
+/// Load the bundled catalog from the Tauri resource dir, with a dev fallback to
+/// the source tree. Missing/malformed → empty catalog (never fatal).
+fn load_bundled_catalog(app: &AppHandle) -> Vec<catalog::CatalogEntry> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Ok(res) = app.path().resource_dir() {
+        candidates.push(res.join("catalog.json"));
+    }
+    candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/catalog.json"));
+    for path in candidates {
+        if let Ok(s) = std::fs::read_to_string(&path) {
+            return catalog::load_catalog_from_str(&s);
+        }
+    }
+    Vec::new()
+}
+
+#[tauri::command]
+pub fn catalog_entries(app: AppHandle, vram_total_mb: Option<u64>) -> Vec<catalog::RatedCatalogEntry> {
+    catalog::rated_catalog_entries(load_bundled_catalog(&app), vram_total_mb)
 }
 
 /// Resolve the engine binary: explicit config override, else the bundled engine.
@@ -105,12 +115,11 @@ pub fn list_gpu_devices(app: AppHandle, state: State<AppState>) -> Vec<GpuDevice
 }
 
 /// Merge an incoming settings payload with the current backend state, keeping the
-/// backend-owned fields (`model_definitions`, `last_request`) from `current`. The
-/// UI's copy of those can be stale; they have their own dedicated commands, so a
-/// preference save must never clobber them. Pure so it is unit-testable.
+/// backend-owned `last_request` from `current` (the UI's copy can be stale; it has
+/// its own dedicated command, so a preference save must never clobber it). Pure so
+/// it is unit-testable.
 fn merged_settings(current: &AppConfig, incoming: AppConfig) -> AppConfig {
     AppConfig {
-        model_definitions: current.model_definitions.clone(),
         last_request: current.last_request.clone(),
         ..incoming
     }
@@ -122,11 +131,10 @@ pub fn set_settings(
     state: State<AppState>,
     config: AppConfig,
 ) -> Result<(), String> {
-    // Merge AND persist under the lock so the preserved backend-owned fields
-    // reflect the latest state and no concurrent mutator (e.g. download_multifile
-    // adding a ModelDefinition) can slip a write in between our merge and save —
-    // that would let us clobber their definition. Matches the sibling mutators,
-    // which all persist while still holding the lock.
+    // Merge AND persist under the lock so the preserved backend-owned
+    // `last_request` reflects the latest state and no concurrent mutator can slip
+    // a write in between our merge and save. Matches the sibling mutators, which
+    // all persist while still holding the lock.
     let gallery_dir = {
         let mut cfg = state.config.lock().unwrap();
         // A changed engine path means a different binary that may enumerate devices
@@ -327,73 +335,10 @@ pub async fn pick_gallery_dir(app: AppHandle) -> Option<String> {
     dir.and_then(|d| d.into_path().ok()).map(|p| p.to_string_lossy().into_owned())
 }
 
-/// All model folders to scan: primary first, then the watched extras.
-fn model_dirs(cfg: &AppConfig) -> Vec<PathBuf> {
-    let mut dirs = vec![PathBuf::from(&cfg.models_dir)];
-    dirs.extend(cfg.extra_model_dirs.iter().map(PathBuf::from));
-    dirs
-}
-
-/// Every component file path owned by a saved definition (canonicalized the
-/// same way `models::scan_models_excluding` matches internally, so the exclusion
-/// isn't silently a no-op).
-fn referenced_paths(cfg: &AppConfig) -> std::collections::HashSet<PathBuf> {
-    let mut set = std::collections::HashSet::new();
-    for def in &cfg.model_definitions {
-        let c = &def.components;
-        for p in [
-            Some(&c.diffusion_model),
-            c.vae.as_ref(),
-            c.clip_l.as_ref(),
-            c.clip_g.as_ref(),
-            c.t5xxl.as_ref(),
-            c.llm.as_ref(),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            let pb = PathBuf::from(p);
-            set.insert(pb.canonicalize().unwrap_or(pb));
-        }
-    }
-    set
-}
-
-/// Single-file model list for the UI: scan every watched dir, then drop both the
-/// definition-owned component files AND the entire shared component pool under
-/// `<models_dir>/shared`. The pool exclusion is belt-and-suspenders alongside the
-/// `exclude` set: shared encoder/VAE files are never valid standalone models, so
-/// even when orphaned — the last model of a family is deleted (the pool is left
-/// intact), or a catalog download is cancelled after some shared files landed —
-/// they must not reappear as bogus, ungeneratable single-file models.
-fn scan_single_file_models(
-    dirs: &[PathBuf],
-    exclude: &std::collections::HashSet<PathBuf>,
-    models_dir: &std::path::Path,
-) -> Vec<ModelInfo> {
-    let mut models = models::scan_models_excluding(dirs, exclude);
-    // Canonicalize the shared dir the same way scan canonicalizes file paths so
-    // the prefix test isn't silently a no-op. When it doesn't exist there are no
-    // files under it to filter anyway, so the fallback is harmless.
-    let shared = models_dir.join("shared");
-    let shared = shared.canonicalize().unwrap_or(shared);
-    models.retain(|m| !std::path::Path::new(&m.path).starts_with(&shared));
-    models
-}
-
 #[tauri::command]
-pub fn list_models(state: State<AppState>) -> Vec<ModelInfo> {
-    let cfg = state.config.lock().unwrap().clone();
-    scan_single_file_models(
-        &model_dirs(&cfg),
-        &referenced_paths(&cfg),
-        std::path::Path::new(&cfg.models_dir),
-    )
-}
-
-#[tauri::command]
-pub fn starter_models(vram_total_mb: Option<u64>) -> Vec<catalog::RatedModel> {
-    catalog::rated_catalog(vram_total_mb)
+pub fn list_library(state: State<AppState>) -> Vec<crate::library::LibraryEntry> {
+    let models_dir = state.config.lock().unwrap().models_dir.clone();
+    crate::library::scan_library(std::path::Path::new(&models_dir))
 }
 
 #[tauri::command]
@@ -412,68 +357,235 @@ pub fn cancel_download(state: State<AppState>) {
     state.download_cancel.store(true, Ordering::SeqCst);
 }
 
+/// Infer a model family from a diffusion filename. Falls back to the sd15/sdxl
+/// name heuristic when no family keyword matches.
+fn infer_single_file_family(filename: &str) -> String {
+    let lower = filename.to_lowercase();
+    for (needle, family) in [
+        ("flux2", "flux2"),
+        ("flux", "flux1"),
+        ("qwen", "qwen-image"),
+        ("sd3", "sd3"),
+    ] {
+        if lower.contains(needle) {
+            return family.to_string();
+        }
+    }
+    if lower.contains("xl") { "sdxl".into() } else { "sd15".into() }
+}
+
+/// A filesystem-safe unique model id.
+fn new_model_id() -> String {
+    format!("model-{}", uuid::Uuid::new_v4())
+}
+
+/// Pick the auth token for a download URL by host. HuggingFace → `hf_token`;
+/// Civitai → `civitai_token`; anything else → no token (empty string).
+/// Bearer auth is applied by `downloader::download_to` only when non-empty.
+fn token_for_url(url: &str, hf_token: &str, civitai_token: &str) -> String {
+    let u = url.to_lowercase();
+    if u.contains("huggingface.co") || u.contains("hf.co") {
+        hf_token.to_string()
+    } else if u.contains("civitai.com") {
+        civitai_token.to_string()
+    } else {
+        String::new()
+    }
+}
+
+/// Download every file a catalog entry needs (diffusion + any pooled/override
+/// shared components) and write its `model.json`. Shared components already
+/// present in the pool (from a prior install) are skipped, not re-downloaded.
+/// On any download failure the freshly-created per-model folder is removed;
+/// the shared pool is left untouched since other models may depend on it.
 #[tauri::command]
-pub async fn download_model(
+pub async fn add_catalog_model(
     app: AppHandle,
     state: State<'_, AppState>,
-    url: String,
-    token: String,
-) -> Result<ModelInfo, String> {
-    let dest = {
+    catalog_id: String,
+) -> Result<library::LibraryEntry, String> {
+    let (models_dir, hf_token, civitai_token) = {
         let cfg = state.config.lock().unwrap();
-        PathBuf::from(&cfg.models_dir)
+        (PathBuf::from(&cfg.models_dir), cfg.hf_token.clone().unwrap_or_default(), cfg.civitai_token.clone().unwrap_or_default())
     };
-    std::fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
+    if models_dir.as_os_str().is_empty() {
+        return Err("models directory is not set".into());
+    }
+    let entry = load_bundled_catalog(&app)
+        .into_iter()
+        .find(|e| e.id == catalog_id)
+        .ok_or_else(|| format!("unknown catalog entry {catalog_id}"))?;
+
+    if safe_child_dir(&models_dir, &entry.id).is_none() {
+        return Err("invalid model id".into());
+    }
+    let plan = catalog::plan_entry_downloads(&entry, &models_dir);
+    let model_dir = plan.model_dir.clone();
+    let file_count = plan.files.len() as u32;
 
     let cancel = state.download_cancel.clone();
     // The UI triggers at most one download at a time; this reset assumes that
     // single-flight invariant (concurrent downloads would share one cancel flag).
     cancel.store(false, Ordering::SeqCst);
     let app2 = app.clone();
+    let files = plan.files.clone();
 
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        // Throttle: emit at most every ~4 MiB (or on completion) so multi-GB
-        // downloads don't flood the frontend with ~100k IPC events.
+    let dl = tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        for (i, file) in files.iter().enumerate() {
+            if file.shared && file.dest.exists() {
+                continue;
+            }
+            let token = token_for_url(&file.url, &hf_token, &civitai_token);
+            let name = file.dest.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+            // Throttle: emit at most every ~4 MiB (or on completion) so multi-GB
+            // downloads don't flood the frontend with ~100k IPC events.
+            let mut last_emit: u64 = 0;
+            let app3 = app2.clone();
+            let name2 = name.clone();
+            downloader::download_to(
+                &file.url,
+                &token,
+                &file.dest,
+                move |downloaded, total| {
+                    if downloaded.saturating_sub(last_emit) >= 4 << 20 || Some(downloaded) == total {
+                        last_emit = downloaded;
+                        let _ = app3.emit(
+                            "model:download:progress",
+                            DownloadProgress {
+                                downloaded,
+                                total,
+                                file_index: Some(i as u32),
+                                file_count: Some(file_count),
+                                file_name: Some(name2.clone()),
+                            },
+                        );
+                    }
+                },
+                &cancel,
+            )
+            .map_err(|e| e.message())?;
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+
+    if let Err(e) = dl {
+        let _ = std::fs::remove_dir_all(&model_dir);
+        return Err(e);
+    }
+
+    let mut components = manifest::ManifestComponents::default();
+    for file in &plan.files {
+        components.set_role(file.role, manifest::relativize(&model_dir, &file.dest.to_string_lossy()));
+    }
+    let man = manifest::ModelManifest {
+        schema_version: manifest::MANIFEST_SCHEMA_VERSION,
+        id: entry.id.clone(),
+        name: entry.name.clone(),
+        family: entry.family.clone(),
+        source: manifest::ManifestSource::Catalog {
+            catalog_id: entry.id.clone(),
+            url: entry.source_url.clone(),
+        },
+        components,
+        flags: manifest::ManifestFlags::default(),
+        recommended_settings: None,
+    };
+    manifest::save_to(&model_dir, &man).map_err(|e| e.to_string())?;
+
+    Ok(library::entry_from_manifest(&model_dir, &man))
+}
+
+/// Download a single user-supplied URL into its own `models_dir/<id>/` folder,
+/// infer its family from the filename, and write a manifest. Mirrors
+/// `add_catalog_model`'s download/error-cleanup shape but for one file with no
+/// pooled/shared components.
+#[tauri::command]
+pub async fn add_url_model(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    url: String,
+    name: String,
+) -> Result<library::LibraryEntry, String> {
+    if !url.starts_with("https://") {
+        return Err("URL must be https".into());
+    }
+    let (models_dir, hf_token, civitai_token) = {
+        let cfg = state.config.lock().unwrap();
+        (PathBuf::from(&cfg.models_dir), cfg.hf_token.clone().unwrap_or_default(), cfg.civitai_token.clone().unwrap_or_default())
+    };
+    if models_dir.as_os_str().is_empty() {
+        return Err("models directory is not set".into());
+    }
+    let id = new_model_id();
+    let model_dir = safe_child_dir(&models_dir, &id).ok_or_else(|| "invalid model id".to_string())?;
+    std::fs::create_dir_all(&model_dir).map_err(|e| e.to_string())?;
+
+    let filename = downloader::derive_filename(None, &url);
+    let dest = model_dir.join(&filename);
+
+    let cancel = state.download_cancel.clone();
+    // The UI triggers at most one download at a time; this reset assumes that
+    // single-flight invariant (concurrent downloads would share one cancel flag).
+    cancel.store(false, Ordering::SeqCst);
+    let app2 = app.clone();
+    let url2 = url.clone();
+    let dest2 = dest.clone();
+    let name_for_event = filename.clone();
+
+    let dl = tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        let token = token_for_url(&url2, &hf_token, &civitai_token);
         let mut last_emit: u64 = 0;
-        downloader::download_model(
-            &url,
+        downloader::download_to(
+            &url2,
             &token,
-            &dest,
+            &dest2,
             move |downloaded, total| {
                 if downloaded.saturating_sub(last_emit) >= 4 << 20 || Some(downloaded) == total {
                     last_emit = downloaded;
                     let _ = app2.emit(
                         "model:download:progress",
-                        DownloadProgress { downloaded, total, file_index: None, file_count: None, file_name: None },
+                        DownloadProgress {
+                            downloaded,
+                            total,
+                            file_index: Some(0),
+                            file_count: Some(1),
+                            file_name: Some(name_for_event.clone()),
+                        },
                     );
                 }
             },
             &cancel,
         )
+        .map_err(|e| e.message())
     })
     .await
     .map_err(|e| e.to_string())?;
 
-    match result {
-        Ok(path) => {
-            let size_bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-            let name = path
-                .file_stem()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            Ok(ModelInfo {
-                path: path.to_string_lossy().into_owned(),
-                name,
-                size_bytes,
-            })
-        }
-        Err(e) => Err(e.message()),
+    if let Err(e) = dl {
+        let _ = std::fs::remove_dir_all(&model_dir);
+        return Err(e);
     }
-}
 
-#[tauri::command]
-pub fn multifile_catalog(vram_total_mb: Option<u64>) -> Vec<catalog::RatedMultiFile> {
-    catalog::rated_multi_file_catalog(vram_total_mb)
+    let family = infer_single_file_family(&filename);
+    let mut components = manifest::ManifestComponents::default();
+    components.set_role(
+        crate::recipes::ComponentRole::Diffusion,
+        manifest::relativize(&model_dir, &dest.to_string_lossy()),
+    );
+    let man = manifest::ModelManifest {
+        schema_version: manifest::MANIFEST_SCHEMA_VERSION,
+        id: id.clone(),
+        name: if name.trim().is_empty() { filename.clone() } else { name },
+        family,
+        source: manifest::ManifestSource::Url { url },
+        components,
+        flags: manifest::ManifestFlags::default(),
+        recommended_settings: None,
+    };
+    manifest::save_to(&model_dir, &man).map_err(|e| e.to_string())?;
+    Ok(library::entry_from_manifest(&model_dir, &man))
 }
 
 /// Discover a HuggingFace model's downloadable variants, each with a size + fit
@@ -515,106 +627,6 @@ pub async fn list_hf_variants(
     }
 }
 
-/// Download a curated multi-file model: fetch diffusion + any missing shared
-/// components sequentially, assemble + persist a definition, return it.
-/// On cancel/failure: remove the partial per-model folder, persist nothing.
-#[tauri::command]
-pub async fn download_multifile(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    entry_id: String,
-    token: String,
-) -> Result<ModelDefinition, String> {
-    let (models_dir, entry, recipe) = {
-        let cfg = state.config.lock().unwrap();
-        let entry = catalog::multi_file_catalog()
-            .into_iter()
-            .find(|e| e.id == entry_id)
-            .ok_or_else(|| "Unknown catalog model.".to_string())?;
-        let recipe = recipes::recipe_for(&entry.family).ok_or_else(|| "Unknown family.".to_string())?;
-        (PathBuf::from(&cfg.models_dir), entry, recipe)
-    };
-
-    let plan = catalog::plan_downloads(&entry, &recipe, &models_dir, &|p| p.exists());
-    let file_count = plan.len() as u32;
-
-    let cancel = state.download_cancel.clone();
-    cancel.store(false, Ordering::SeqCst);
-    let app2 = app.clone();
-    let entry2 = entry.clone();
-    let recipe2 = recipe.clone();
-    let models_dir2 = models_dir.clone();
-
-    let result = tauri::async_runtime::spawn_blocking(move || -> Result<ModelDefinition, String> {
-        for (i, item) in plan.iter().enumerate() {
-            let name = item
-                .dest
-                .file_name()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            let mut last_emit: u64 = 0;
-            let app3 = app2.clone();
-            let name2 = name.clone();
-            downloader::download_to(
-                &item.url,
-                &token,
-                &item.dest,
-                move |downloaded, total| {
-                    if downloaded.saturating_sub(last_emit) >= 4 << 20 || Some(downloaded) == total {
-                        last_emit = downloaded;
-                        let _ = app3.emit(
-                            "model:download:progress",
-                            DownloadProgress {
-                                downloaded,
-                                total,
-                                file_index: Some(i as u32),
-                                file_count: Some(file_count),
-                                file_name: Some(name2.clone()),
-                            },
-                        );
-                    }
-                },
-                &cancel,
-            )
-            .map_err(|e| e.message())?;
-        }
-        let components = catalog::assemble_components(&entry2, &recipe2, &models_dir2);
-        Ok(ModelDefinition {
-            id: entry2.id.clone(),
-            name: entry2.name.clone(),
-            family: entry2.family.clone(),
-            components,
-        })
-    })
-    .await
-    .map_err(|e| e.to_string())?;
-
-    match result {
-        Ok(def) => {
-            // Persist (upsert by id).
-            let mut cfg = state.config.lock().unwrap();
-            if let Some(existing) = cfg.model_definitions.iter_mut().find(|d| d.id == def.id) {
-                *existing = def.clone();
-            } else {
-                cfg.model_definitions.push(def.clone());
-            }
-            config::save_config_to(&config::config_file_path(), &cfg).map_err(|e| e.to_string())?;
-            Ok(def)
-        }
-        Err(e) => {
-            // Roll back the per-model folder; leave the shared pool intact. The
-            // shared guard (`safe_model_dir`) only ever yields a genuine direct
-            // subfolder of models_dir — never the shared pool or models_dir
-            // itself — in case a future catalog id is empty, "shared", or bears
-            // a path separator.
-            if let Some(folder) = safe_model_dir(&models_dir, &entry.id) {
-                let _ = std::fs::remove_dir_all(&folder);
-            }
-            Err(e)
-        }
-    }
-}
-
 /// Pick a folder (used for adding watched model folders / changing the primary).
 #[tauri::command]
 pub async fn pick_folder(app: AppHandle) -> Option<String> {
@@ -628,28 +640,34 @@ pub fn list_recipes() -> Vec<recipes::RecipeInfo> {
     recipes::recipe_infos()
 }
 
-/// Recommended generation settings for the given model, or `None` when the
-/// family has no preset (unknown / custom / no model selected) so the UI can
-/// hide the button. Multi-file family comes from filename detection; single-file
-/// falls back to the SDXL/SD-1.5 name heuristic.
+/// Gen defaults for a family + its diffusion filename (schnell/dev detection).
+/// `None` for families without a preset (custom/unknown) — the UI hides the button.
+fn recommended_for_family(family: &str, diffusion_filename: &str) -> Option<types::GenDefaults> {
+    crate::recipes::family_defaults(family, Some(diffusion_filename))
+}
+
+/// Resolve a model's recommended settings: a manifest-level override wins;
+/// otherwise fall back to the family default (schnell/dev detection via the
+/// diffusion filename). `None` when neither applies (custom/unknown family).
+fn resolve_recommended(man: &manifest::ModelManifest) -> Option<types::GenDefaults> {
+    if man.recommended_settings.is_some() {
+        return man.recommended_settings;
+    }
+    recommended_for_family(&man.family, &basename(&man.components.diffusion_model))
+}
+
 #[tauri::command]
-pub fn recommended_settings(model: ModelRef) -> Option<GenDefaults> {
-    let (family, diffusion_filename): (Option<String>, Option<String>) = match &model {
-        ModelRef::MultiFile(c) => {
-            let names: Vec<String> = model.component_paths().iter().map(|p| basename(p)).collect();
-            let fam = recipes::detect_best(&names).map(|(r, _)| r.family.to_string());
-            (fam, Some(basename(&c.diffusion_model)))
-        }
-        ModelRef::SingleFile { path } => {
-            if path.trim().is_empty() {
-                (None, None)
-            } else {
-                let name = basename(path);
-                (Some(single_file_family(&name).to_string()), Some(name))
-            }
-        }
+pub fn recommended_settings(
+    state: tauri::State<'_, AppState>,
+    id: String,
+) -> Result<Option<types::GenDefaults>, String> {
+    let models_dir = {
+        let cfg = state.config.lock().unwrap();
+        PathBuf::from(&cfg.models_dir)
     };
-    family.and_then(|f| recipes::family_defaults(&f, diffusion_filename.as_deref()))
+    let model_dir = models_dir.join(&id);
+    let man = manifest::load_from(&model_dir).map_err(|e| e.to_string())?;
+    Ok(resolve_recommended(&man))
 }
 
 /// Run filename detection over the files in a folder; return the best-matching
@@ -697,133 +715,156 @@ pub fn detect_folder(dir: String) -> DetectionResult {
     }
 }
 
-/// Validate a definition before persisting: id must be non-blank and all
-/// required roles for the family must be filled.
-fn validate_model_definition(def: &ModelDefinition) -> Result<(), String> {
-    if def.id.trim().is_empty() {
-        return Err("Model id must not be empty.".into());
+/// Pure id guard, no filesystem check: `id` must be non-blank, not the shared
+/// pool name, and free of path separators, and the resulting path must land
+/// directly under `models_dir`. Used to validate an id *before* its folder
+/// exists (e.g. a fresh catalog install), unlike `safe_model_dir` below.
+fn safe_child_dir(models_dir: &std::path::Path, id: &str) -> Option<PathBuf> {
+    if id.trim().is_empty() || id == "shared" || id.contains('/') || id.contains('\\') {
+        return None;
     }
-    if let Some(recipe) = recipes::recipe_for(&def.family) {
-        let missing = recipe.missing_required_roles(&def.components);
-        if !missing.is_empty() {
-            return Err(format!("Missing required components: {missing:?}"));
-        }
-    } else {
-        return Err(format!("Unknown model family: {}", def.family));
-    }
-    Ok(())
-}
-
-/// Insert or update a definition (matched by id) and persist. Validates that
-/// the id is non-blank and required roles for the family are filled before saving.
-#[tauri::command]
-pub fn save_model_definition(state: State<AppState>, def: ModelDefinition) -> Result<(), String> {
-    validate_model_definition(&def)?;
-    let mut cfg = state.config.lock().unwrap();
-    if let Some(existing) = cfg.model_definitions.iter_mut().find(|d| d.id == def.id) {
-        *existing = def;
-    } else {
-        cfg.model_definitions.push(def);
-    }
-    config::save_config_to(&config::config_file_path(), &cfg).map_err(|e| e.to_string())
-}
-
-/// Returns the ids of saved model definitions that reference missing files, so
-/// the UI can flag them. Filesystem check lives in `missing_components`.
-#[tauri::command]
-pub fn broken_definitions(state: State<'_, AppState>) -> Vec<String> {
-    let cfg = state.config.lock().unwrap();
-    cfg.model_definitions
-        .iter()
-        .filter(|d| !crate::types::missing_components(&d.components).is_empty())
-        .map(|d| d.id.clone())
-        .collect()
+    let folder = models_dir.join(id);
+    (folder.parent() == Some(models_dir)).then_some(folder)
 }
 
 /// The per-model folder `<models_dir>/<id>`, but only when `id` names a safe,
 /// direct child that actually exists as a directory: non-blank, not the shared
 /// pool, and free of path separators. Returns `None` otherwise so callers can
-/// never trash the shared pool or escape `models_dir` via a crafted id. Shared
-/// by both the delete and the download-rollback paths so they guard identically.
+/// never trash the shared pool or escape `models_dir` via a crafted id. Used
+/// by the delete path, which only ever targets an already-existing folder
+/// (see `safe_child_dir` above for the pre-existence variant used before a
+/// fresh download creates the folder).
 fn safe_model_dir(models_dir: &std::path::Path, id: &str) -> Option<PathBuf> {
-    if id.trim().is_empty() || id == "shared" || id.contains('/') || id.contains('\\') {
-        return None;
-    }
-    let folder = models_dir.join(id);
-    (folder.parent() == Some(models_dir) && folder.is_dir()).then_some(folder)
+    safe_child_dir(models_dir, id).filter(|f| f.is_dir())
 }
 
-/// Delete a definition and move its per-model folder to trash. The shared pool
-/// is left intact (other models may use it).
+/// Register a model from a diffusion file already on disk, referenced in
+/// place (its absolute path is stored, never copied/moved). Creates a fresh
+/// per-model folder under `models_dir` holding only `model.json`.
 #[tauri::command]
-pub fn delete_model_definition(state: State<AppState>, id: String) -> Result<(), String> {
-    let mut cfg = state.config.lock().unwrap();
-    let Some(pos) = cfg.model_definitions.iter().position(|d| d.id == id) else {
-        return Err("That model is no longer in the library.".into());
+pub fn add_local_model(
+    state: tauri::State<'_, AppState>,
+    diffusion_path: String,
+    name: String,
+    family: Option<String>,
+) -> Result<library::LibraryEntry, String> {
+    let models_dir = {
+        let cfg = state.config.lock().unwrap();
+        PathBuf::from(&cfg.models_dir)
     };
-    let def = cfg.model_definitions.remove(pos);
-    // Per-model folder = models_dir/<id>. Trash it if present (ignore if absent).
-    // The guard refuses a blank id, "shared", or a separator-bearing id so a
-    // crafted definition can never trash the pool or escape models_dir.
-    if let Some(folder) = safe_model_dir(std::path::Path::new(&cfg.models_dir), &def.id) {
-        let _ = trash::delete(&folder);
+    if models_dir.as_os_str().is_empty() {
+        return Err("models directory is not set".into());
     }
-    config::save_config_to(&config::config_file_path(), &cfg).map_err(|e| e.to_string())
+    let src = PathBuf::from(&diffusion_path);
+    if !src.is_file() {
+        return Err(format!("no such file: {diffusion_path}"));
+    }
+    let id = new_model_id();
+    let model_dir = safe_child_dir(&models_dir, &id).ok_or_else(|| "invalid model id".to_string())?;
+    std::fs::create_dir_all(&model_dir).map_err(|e| e.to_string())?;
+
+    let filename = basename(&diffusion_path);
+    let fam = family.unwrap_or_else(|| infer_single_file_family(&filename));
+    let mut components = manifest::ManifestComponents::default();
+    // Referenced-local: store the ABSOLUTE path (not relativized).
+    components.set_role(ComponentRole::Diffusion, diffusion_path.clone());
+    let man = manifest::ModelManifest {
+        schema_version: manifest::MANIFEST_SCHEMA_VERSION,
+        id: id.clone(),
+        name: if name.trim().is_empty() { filename } else { name },
+        family: fam,
+        source: manifest::ManifestSource::Local { original_path: diffusion_path },
+        components,
+        flags: manifest::ManifestFlags::default(),
+        recommended_settings: None,
+    };
+    manifest::save_to(&model_dir, &man).map_err(|e| e.to_string())?;
+    Ok(library::entry_from_manifest(&model_dir, &man))
+}
+
+/// Save the full editable surface of a model's manifest: name, family, engine
+/// flags, component paths, and the optional recommended-settings override.
+/// Component paths arrive absolute from the UI and are relativized against the
+/// model folder (in-folder files become relative; pooled/external stay absolute).
+#[tauri::command]
+pub fn edit_model(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    name: String,
+    family: String,
+    flags: manifest::ManifestFlags,
+    components: manifest::ManifestComponents,
+    recommended_settings: Option<types::GenDefaults>,
+) -> Result<library::LibraryEntry, String> {
+    let models_dir = {
+        let cfg = state.config.lock().unwrap();
+        PathBuf::from(&cfg.models_dir)
+    };
+    let model_dir = models_dir.join(&id);
+    let mut man = manifest::load_from(&model_dir).map_err(|e| e.to_string())?;
+
+    // Relativize each provided path; drop empty optional roles to None.
+    let opt = |o: &Option<String>| {
+        o.as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| manifest::relativize(&model_dir, s))
+    };
+    let normalized = manifest::ManifestComponents {
+        diffusion_model: manifest::relativize(&model_dir, components.diffusion_model.trim()),
+        vae: opt(&components.vae),
+        clip_l: opt(&components.clip_l),
+        clip_g: opt(&components.clip_g),
+        t5xxl: opt(&components.t5xxl),
+        llm: opt(&components.llm),
+    };
+
+    man.set_editable(name, family, flags, normalized, recommended_settings);
+    manifest::save_to(&model_dir, &man).map_err(|e| e.to_string())?;
+    Ok(library::entry_from_manifest(&model_dir, &man))
+}
+
+/// Delete a library entry: moves its per-model folder to trash. Pooled
+/// `shared/<family>` components referenced by other models are left intact.
+#[tauri::command]
+pub fn delete_model_entry(
+    state: tauri::State<'_, AppState>,
+    id: String,
+) -> Result<(), String> {
+    let models_dir = {
+        let cfg = state.config.lock().unwrap();
+        PathBuf::from(&cfg.models_dir)
+    };
+    let model_dir = safe_model_dir(&models_dir, &id).ok_or_else(|| "invalid model id".to_string())?;
+    if !model_dir.is_dir() {
+        return Err(format!("no such model: {id}"));
+    }
+    // Trash the whole model folder. Pooled shared/<family> components are left intact.
+    trash::delete(&model_dir).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::ModelComponents;
 
-    fn flux_def(id: &str) -> ModelDefinition {
-        ModelDefinition {
-            id: id.into(),
-            name: "Test".into(),
-            family: "flux1".into(),
-            components: ModelComponents {
-                diffusion_model: "flux1-schnell.safetensors".into(),
-                clip_l: Some("clip_l.safetensors".into()),
-                t5xxl: Some("t5xxl_fp16.safetensors".into()),
-                vae: Some("ae.safetensors".into()),
-                ..Default::default()
-            },
-        }
+    #[test]
+    fn infers_family_from_filename() {
+        assert_eq!(infer_single_file_family("flux1-schnell-Q4_K_M.gguf"), "flux1");
+        assert_eq!(infer_single_file_family("sd_xl_base_1.0.safetensors"), "sdxl");
+        assert_eq!(infer_single_file_family("v1-5-pruned-emaonly.safetensors"), "sd15");
+        assert_eq!(infer_single_file_family("qwen-image-Q4.gguf"), "qwen-image");
     }
 
     #[test]
-    fn rejects_empty_definition_id() {
-        let err = validate_model_definition(&flux_def("")).unwrap_err();
-        assert_eq!(err, "Model id must not be empty.");
+    fn new_model_id_is_unique() {
+        assert_ne!(new_model_id(), new_model_id());
     }
 
     #[test]
-    fn rejects_blank_definition_id() {
-        assert!(validate_model_definition(&flux_def("   ")).is_err());
-    }
-
-    #[test]
-    fn accepts_valid_definition() {
-        assert!(validate_model_definition(&flux_def("flux1-schnell")).is_ok());
-    }
-
-    #[test]
-    fn scan_excludes_shared_pool_but_keeps_real_models() {
-        use std::collections::HashSet;
-        let root = std::env::temp_dir().join(format!("muchai-shared-excl-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        let real = root.join("realmodel.safetensors");
-        let shared = root.join("shared/flux1/t5xxl.safetensors");
-        for p in [&real, &shared] {
-            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
-            std::fs::write(p, b"x").unwrap();
-        }
-
-        let models = scan_single_file_models(&[root.clone()], &HashSet::new(), &root);
-        let names: Vec<&str> = models.iter().map(|m| m.name.as_str()).collect();
-        assert_eq!(names, vec!["realmodel"], "shared-pool component must be excluded, real model kept");
-
-        let _ = std::fs::remove_dir_all(&root);
+    fn token_for_url_selects_by_host() {
+        assert_eq!(token_for_url("https://huggingface.co/x/y.gguf", "HF", "CV"), "HF");
+        assert_eq!(token_for_url("https://civitai.com/api/download/1", "HF", "CV"), "CV");
+        assert_eq!(token_for_url("https://example.com/a.safetensors", "HF", "CV"), "");
     }
 
     #[test]
@@ -846,18 +887,16 @@ mod tests {
     }
 
     #[test]
-    fn set_settings_preserves_definitions_and_last_request() {
-        // Current backend state: has a saved definition and a meaningful last_request.
+    fn set_settings_preserves_last_request() {
+        // Current backend state: has a meaningful, backend-owned last_request.
         let mut current = crate::config::default_config();
-        current.model_definitions = vec![flux_def("keep-me")];
         current.last_request.prompt = "backend-owned prompt".into();
 
         // Incoming payload from the UI: preference fields changed, but it carries a
-        // STALE (empty) definitions list and a default last_request.
+        // STALE (default) last_request.
         let mut incoming = crate::config::default_config();
         incoming.theme = crate::types::Theme::Light;
         incoming.low_vram = true;
-        incoming.model_definitions = Vec::new(); // stale — must NOT clobber
         incoming.last_request = crate::types::GenerationRequest::default(); // stale
 
         let merged = merged_settings(&current, incoming);
@@ -865,8 +904,7 @@ mod tests {
         // Preference fields adopt the incoming values…
         assert_eq!(merged.theme, crate::types::Theme::Light);
         assert!(merged.low_vram);
-        // …but backend-owned fields are preserved from `current`.
-        assert_eq!(merged.model_definitions, current.model_definitions);
+        // …but the backend-owned last_request is preserved from `current`.
         assert_eq!(merged.last_request.prompt, "backend-owned prompt");
     }
 
@@ -895,39 +933,11 @@ mod tests {
     }
 
     #[test]
-    fn recommended_settings_multi_file_flux_schnell() {
-        // A multi-file FLUX schnell model → flux1 schnell profile (4 steps).
-        let model = ModelRef::MultiFile(ModelComponents {
-            diffusion_model: "/m/flux1-schnell-Q4_0.gguf".into(),
-            t5xxl: Some("/m/t5xxl_fp16.safetensors".into()),
-            clip_l: Some("/m/clip_l.safetensors".into()),
-            vae: Some("/m/ae.safetensors".into()),
-            ..Default::default()
-        });
-        let d = recommended_settings(model).expect("flux1 has defaults");
-        assert_eq!(d.steps, 4);
-        assert_eq!(d.cfg_scale, 1.0);
-    }
-
-    #[test]
-    fn recommended_settings_single_file_sdxl_by_name() {
-        let model = ModelRef::SingleFile { path: "/m/sd_xl_base_1.0.safetensors".into() };
-        let d = recommended_settings(model).expect("sdxl has defaults");
-        assert_eq!(d.steps, 28);
-        assert_eq!((d.width, d.height), (1024, 1024));
-    }
-
-    #[test]
-    fn recommended_settings_single_file_defaults_to_sd15() {
-        let model = ModelRef::SingleFile { path: "/m/dreamshaper_8.safetensors".into() };
-        let d = recommended_settings(model).expect("sd15 has defaults");
-        assert_eq!(d.steps, 20);
-        assert_eq!((d.width, d.height), (512, 512));
-    }
-
-    #[test]
-    fn recommended_settings_empty_single_file_is_none() {
-        // No model selected yet → no recommendation (button hidden).
-        assert!(recommended_settings(ModelRef::SingleFile { path: "".into() }).is_none());
+    fn recommended_settings_uses_manifest_family() {
+        let defaults = recommended_for_family("flux1", "flux1-schnell-Q4_K_M.gguf").unwrap();
+        assert_eq!(defaults.steps, 4);
+        let dev = recommended_for_family("flux1", "flux1-dev.safetensors").unwrap();
+        assert_eq!(dev.steps, 20);
+        assert!(recommended_for_family("custom", "whatever.safetensors").is_none());
     }
 }

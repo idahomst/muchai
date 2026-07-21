@@ -1,6 +1,6 @@
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { AppConfig, GalleryItem, GenerationRequest, ProgressUpdate, SystemStats, ModelInfo, RatedModel, DownloadProgress, GpuDevice, RecipeInfo, DetectionResult, RatedMultiFile, ModelDefinition, RatedHfVariant, ModelRef, GenDefaults } from "./types";
+import type { AppConfig, GalleryItem, GenerationRequest, ProgressUpdate, SystemStats, DownloadProgress, GpuDevice, RecipeInfo, GenDefaults, LibraryEntry, RatedCatalogEntry, ManifestFlags, ModelComponents } from "./types";
 
 export const getSettings = () => invoke<AppConfig>("get_settings");
 /** Enumerate Vulkan devices the engine can target (cached server-side). */
@@ -33,12 +33,7 @@ export const onGenNotice = (cb: () => void): Promise<UnlistenFn> =>
 export const onSystemStats = (cb: (s: SystemStats) => void): Promise<UnlistenFn> =>
   listen<SystemStats>("system:stats", (e) => cb(e.payload));
 
-export const listModels = () => invoke<ModelInfo[]>("list_models");
-export const starterModels = (vramTotalMb: number | null) =>
-  invoke<RatedModel[]>("starter_models", { vramTotalMb });
 export const deleteModel = (path: string) => invoke<void>("delete_model", { path });
-export const downloadModel = (url: string, token: string) =>
-  invoke<ModelInfo>("download_model", { url, token });
 export const cancelDownload = () => invoke<void>("cancel_download");
 export const pickFolder = () => invoke<string | null>("pick_folder");
 
@@ -46,17 +41,32 @@ export const onDownloadProgress = (cb: (p: DownloadProgress) => void): Promise<U
   listen<DownloadProgress>("model:download:progress", (e) => cb(e.payload));
 
 export const listRecipes = () => invoke<RecipeInfo[]>("list_recipes");
-export const detectFolder = (dir: string) => invoke<DetectionResult>("detect_folder", { dir });
-export const multifileCatalog = (vramTotalMb: number | null) =>
-  invoke<RatedMultiFile[]>("multifile_catalog", { vramTotalMb });
-export const downloadMultifile = (entryId: string, token: string) =>
-  invoke<ModelDefinition>("download_multifile", { entryId, token });
-export const saveModelDefinition = (def: ModelDefinition) =>
-  invoke<void>("save_model_definition", { def });
-export const deleteModelDefinition = (id: string) =>
-  invoke<void>("delete_model_definition", { id });
-export const brokenDefinitions = () => invoke<string[]>("broken_definitions");
-export const listHfVariants = (url: string, token: string, vramTotalMb: number | null) =>
-  invoke<RatedHfVariant[]>("list_hf_variants", { url, token, vramTotalMb });
-export const recommendedSettings = (model: ModelRef) =>
-  invoke<GenDefaults | null>("recommended_settings", { model });
+
+export const listLibrary = () => invoke<LibraryEntry[]>("list_library");
+
+export const catalogEntries = (vramTotalMb: number | null) =>
+  invoke<RatedCatalogEntry[]>("catalog_entries", { vramTotalMb });
+
+export const addCatalogModel = (catalogId: string) =>
+  invoke<LibraryEntry>("add_catalog_model", { catalogId });
+
+export const addUrlModel = (url: string, name: string) =>
+  invoke<LibraryEntry>("add_url_model", { url, name });
+
+export const addLocalModel = (diffusionPath: string, name: string, family: string | null) =>
+  invoke<LibraryEntry>("add_local_model", { diffusionPath, name, family });
+
+export const editModel = (
+  id: string,
+  name: string,
+  family: string,
+  flags: ManifestFlags,
+  components: ModelComponents,
+  recommendedSettings: GenDefaults | null,
+) => invoke<LibraryEntry>("edit_model", { id, name, family, flags, components, recommendedSettings });
+
+export const deleteModelEntry = (id: string) =>
+  invoke<void>("delete_model_entry", { id });
+
+export const recommendedSettings = (id: string) =>
+  invoke<GenDefaults | null>("recommended_settings", { id });

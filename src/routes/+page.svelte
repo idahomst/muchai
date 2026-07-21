@@ -1,8 +1,11 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { settings, request, history, sysStats, models, gpuDevices, definitions } from "$lib/stores";
-  import { getSettings, setSettings, listHistory, onSystemStats, listModels, listGpuDevices } from "$lib/api";
+  import { settings, request, history, sysStats, gpuDevices, refreshLibrary } from "$lib/stores";
+  import { getSettings, setSettings, listHistory, onSystemStats, listGpuDevices } from "$lib/api";
   import ModelLibrary from "$lib/components/ModelLibrary.svelte";
+  import NewModelDialog from "$lib/components/NewModelDialog.svelte";
+  import ModelEditor from "$lib/components/ModelEditor.svelte";
+  import type { LibraryEntry } from "$lib/types";
   import PromptPanel from "$lib/components/PromptPanel.svelte";
   import SettingsPanel from "$lib/components/SettingsPanel.svelte";
   import GenerateBar from "$lib/components/GenerateBar.svelte";
@@ -17,6 +20,10 @@
 
   let showWelcome = $state(false);
   let showPrefs = $state(false);
+  let showNew = $state(false);
+  let editing = $state<LibraryEntry | null>(null);
+  let vramTotalMb = $state<number | null>(null);
+  sysStats.subscribe((s) => { vramTotalMb = s?.gpu?.vram_total_mb ?? null; });
 
   // Persist dismissal optimistically; the dialog stays closed this session even
   // if the write fails (onboarding is non-critical — worst case it shows once
@@ -40,8 +47,6 @@
       settings.set(cfg);
       applyTheme(cfg.theme); // reconcile against the pre-paint localStorage cache
       showWelcome = !cfg.onboarded;
-      // Seed the saved multi-file library.
-      definitions.set(cfg.model_definitions ?? []);
       // Build the active model: prefer last_request.model; if it's an empty
       // single-file and a legacy default_model_path exists, use that.
       let model = cfg.last_request.model;
@@ -50,7 +55,7 @@
       }
       request.set({ ...cfg.last_request, model });
       history.set(await listHistory());
-      models.set(await listModels());
+      await refreshLibrary();
       gpuDevices.set(await listGpuDevices());
     })();
     const un = onSystemStats((s) => sysStats.set(s));
@@ -68,7 +73,11 @@
         <ThemeToggle />
       </div>
     </header>
-    <ModelLibrary />
+    <ModelLibrary
+      onNew={() => (showNew = true)}
+      onEdit={(e) => (editing = e)}
+      onDelete={(e) => (editing = e)}
+    />
     <PromptPanel />
     <SettingsPanel />
     <div class="spacer"></div>
@@ -89,6 +98,13 @@
 
 {#if showPrefs}
   <PreferencesDialog onclose={() => (showPrefs = false)} />
+{/if}
+
+{#if showNew}
+  <NewModelDialog {vramTotalMb} onClose={() => (showNew = false)} />
+{/if}
+{#if editing}
+  <ModelEditor entry={editing} onClose={() => (editing = null)} />
 {/if}
 
 <style>

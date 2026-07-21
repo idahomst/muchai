@@ -8,6 +8,8 @@ mod engine;
 mod fit;
 mod gallery;
 mod hf;
+mod library;
+mod manifest;
 mod models;
 mod progress_parser;
 mod recipes;
@@ -79,23 +81,22 @@ pub fn run() {
             commands::pick_model_file,
             commands::pick_gallery_dir,
             commands::open_path,
-            commands::list_models,
-            commands::starter_models,
+            commands::list_library,
             commands::delete_model,
-            commands::download_model,
             commands::cancel_download,
             commands::pick_folder,
             commands::list_gpu_devices,
             commands::delete_image,
             commands::list_recipes,
             commands::detect_folder,
-            commands::save_model_definition,
-            commands::delete_model_definition,
-            commands::multifile_catalog,
-            commands::download_multifile,
-            commands::broken_definitions,
             commands::list_hf_variants,
             commands::recommended_settings,
+            commands::catalog_entries,
+            commands::add_catalog_model,
+            commands::add_url_model,
+            commands::add_local_model,
+            commands::edit_model,
+            commands::delete_model_entry,
         ])
         .run(tauri::generate_context!())
         .expect("error while running MuchAI");

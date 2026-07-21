@@ -137,15 +137,6 @@ impl ModelRef {
     }
 }
 
-/// A saved multi-file model — the library entry shown in the Model dropdown.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ModelDefinition {
-    pub id: String,       // stable, generated
-    pub name: String,     // user-facing label
-    pub family: String,   // recipe id: "flux1", "qwen-image", …
-    pub components: ModelComponents,
-}
-
 /// Component slots whose file no longer exists on disk. Empty = all good.
 /// Only *set* slots are checked; a `None` optional slot is never reported.
 pub fn missing_components(c: &ModelComponents) -> Vec<(ComponentRole, String)> {
@@ -330,9 +321,6 @@ pub struct AppConfig {
     /// `false`; pre-feature config files lack this key and deserialize as false.
     #[serde(default)]
     pub onboarded: bool,
-    /// Saved multi-file model library. Empty on pre-feature configs.
-    #[serde(default)]
-    pub model_definitions: Vec<ModelDefinition>,
     /// HuggingFace access token for gated/large downloads. Plaintext; pre-feature
     /// configs lack this key and deserialize as None.
     #[serde(default)]
@@ -416,13 +404,6 @@ mod tests {
     }
 
     #[test]
-    fn app_config_without_model_definitions_defaults_empty() {
-        let json = r#"{"sd_binary_path":null,"default_model_path":null,"gallery_dir":"/tmp/g","models_dir":"/tmp/m","extra_model_dirs":[],"last_request":{"model":{"type":"single_file","path":""},"prompt":"","negative_prompt":"","steps":20,"cfg_scale":7.0,"sampler":"euler_a","width":512,"height":512,"seed":-1,"batch_count":1}}"#;
-        let cfg: AppConfig = serde_json::from_str(json).unwrap();
-        assert!(cfg.model_definitions.is_empty());
-    }
-
-    #[test]
     fn output_format_serializes_snake_case() {
         assert_eq!(serde_json::to_string(&OutputFormat::Png).unwrap(), "\"png\"");
         assert_eq!(serde_json::to_string(&OutputFormat::Jpeg).unwrap(), "\"jpeg\"");
@@ -496,19 +477,6 @@ mod tests {
     }
 
     #[test]
-    fn model_definition_round_trips() {
-        let def = ModelDefinition {
-            id: "abc123".into(),
-            name: "FLUX.1 schnell".into(),
-            family: "flux1".into(),
-            components: ModelComponents { diffusion_model: "/m/d.safetensors".into(), ..Default::default() },
-        };
-        let json = serde_json::to_string(&def).unwrap();
-        let back: ModelDefinition = serde_json::from_str(&json).unwrap();
-        assert_eq!(back, def);
-    }
-
-    #[test]
     fn missing_components_reports_only_set_but_absent_paths() {
         let dir = std::env::temp_dir().join(format!("muchai-missing-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -542,7 +510,6 @@ mod tests {
             "params_expanded": false,
             "theme": "dark",
             "onboarded": false,
-            "model_definitions": [],
             "hf_token": "hf_abc123",
             "civitai_token": "civ_xyz",
             "last_request": {
@@ -582,7 +549,6 @@ mod tests {
             "params_expanded": false,
             "theme": "dark",
             "onboarded": false,
-            "model_definitions": [],
             "last_request": {
                 "model": { "type": "single_file", "path": "" },
                 "prompt": "",

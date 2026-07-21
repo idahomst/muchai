@@ -29,7 +29,8 @@
     "active": true,
     "targets": "all",
     "resources": {
-      "binaries/engine": "engine"
+      "binaries/engine": "engine",
+      "resources/catalog.json": "catalog.json"
     },
     "icon": [
       "icons/32x32.png",
