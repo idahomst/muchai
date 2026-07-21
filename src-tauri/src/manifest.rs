@@ -82,6 +82,29 @@ pub fn resolve_path(model_dir: &Path, stored: &str) -> PathBuf {
     }
 }
 
+/// Inverse of `resolve_path`: a path that lives directly under `model_dir`
+/// becomes relative (just the tail); anything else stays absolute.
+pub fn relativize(model_dir: &Path, abs: &str) -> String {
+    match Path::new(abs).strip_prefix(model_dir) {
+        Ok(rel) => rel.to_string_lossy().into_owned(),
+        Err(_) => abs.to_string(),
+    }
+}
+
+/// Write `<model_dir>/model.json` (pretty). Creates the folder if absent.
+pub fn save_to(model_dir: &Path, manifest: &ModelManifest) -> std::io::Result<()> {
+    std::fs::create_dir_all(model_dir)?;
+    let s = serde_json::to_string_pretty(manifest).expect("manifest serializes");
+    std::fs::write(model_dir.join(MANIFEST_FILENAME), s)
+}
+
+/// Read + parse `<model_dir>/model.json`. Errors on missing/invalid JSON.
+pub fn load_from(model_dir: &Path) -> Result<ModelManifest, String> {
+    let path = model_dir.join(MANIFEST_FILENAME);
+    let s = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    serde_json::from_str(&s).map_err(|e| e.to_string())
+}
+
 impl ModelManifest {
     /// True when the manifest has no companion files and no engine flags — i.e.
     /// a plain single checkpoint that the engine loads with `-m`.
@@ -292,5 +315,34 @@ mod tests {
         let c: ModelComponents = sample().to_components(dir);
         assert_eq!(c.diffusion_model, "/models/flux1-schnell-def456/flux1-schnell-Q4.gguf");
         assert_eq!(c.vae.as_deref(), Some("/models/shared/flux1/ae.safetensors"));
+    }
+
+    #[test]
+    fn relativize_makes_in_folder_paths_relative() {
+        let dir = std::path::Path::new("/models/abc");
+        assert_eq!(relativize(dir, "/models/abc/flux1.gguf"), "flux1.gguf");
+    }
+
+    #[test]
+    fn relativize_leaves_pooled_and_external_absolute() {
+        let dir = std::path::Path::new("/models/abc");
+        assert_eq!(
+            relativize(dir, "/models/shared/flux1/ae.safetensors"),
+            "/models/shared/flux1/ae.safetensors"
+        );
+        assert_eq!(relativize(dir, "/home/me/dl/x.safetensors"), "/home/me/dl/x.safetensors");
+    }
+
+    #[test]
+    fn save_then_load_round_trips_on_disk() {
+        let dir = std::env::temp_dir().join(format!("muchai-manifest-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let m = sample();
+        save_to(&dir, &m).unwrap();
+        assert!(dir.join(MANIFEST_FILENAME).exists());
+        let back = load_from(&dir).unwrap();
+        assert_eq!(m, back);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
