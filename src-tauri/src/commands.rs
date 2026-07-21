@@ -2,7 +2,7 @@ use crate::engine::{self, ChildSlot, GenError};
 use crate::types::{AppConfig, DownloadProgress, GalleryItem, GenerationRequest, GpuDevice, ModelInfo};
 use crate::recipes::{self, ComponentRole};
 use crate::types::{GenDefaults, ModelDefinition, ModelRef};
-use crate::{config, downloader, gallery, hf, models};
+use crate::{catalog, config, downloader, gallery, hf, models};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -71,6 +71,27 @@ fn engine_dir(app: &AppHandle) -> Option<PathBuf> {
         return Some(dev);
     }
     None
+}
+
+/// Load the bundled catalog from the Tauri resource dir, with a dev fallback to
+/// the source tree. Missing/malformed → empty catalog (never fatal).
+fn load_bundled_catalog(app: &AppHandle) -> Vec<catalog::CatalogEntry> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Ok(res) = app.path().resource_dir() {
+        candidates.push(res.join("catalog.json"));
+    }
+    candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/catalog.json"));
+    for path in candidates {
+        if let Ok(s) = std::fs::read_to_string(&path) {
+            return catalog::load_catalog_from_str(&s);
+        }
+    }
+    Vec::new()
+}
+
+#[tauri::command]
+pub fn catalog_entries(app: AppHandle, vram_total_mb: Option<u64>) -> Vec<catalog::RatedCatalogEntry> {
+    catalog::rated_catalog_entries(load_bundled_catalog(&app), vram_total_mb)
 }
 
 /// Resolve the engine binary: explicit config override, else the bundled engine.
