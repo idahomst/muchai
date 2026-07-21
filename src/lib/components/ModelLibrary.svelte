@@ -3,9 +3,9 @@
   import { familyBadge } from "../modelFormat";
   import type { LibraryEntry } from "../types";
 
-  // NOTE: `onDelete` is added in a later task. Until then the Delete button
-  // routes through `onEdit` as an interim so this component compiles on its own.
-  let { onNew, onEdit }: { onNew: () => void; onEdit: (entry: LibraryEntry) => void } = $props();
+  // NOTE: Delete routes through `onDelete`; Edit routes through `onEdit`.
+  let { onNew, onEdit, onDelete }:
+    { onNew: () => void; onEdit: (entry: LibraryEntry) => void; onDelete: (entry: LibraryEntry) => void } = $props();
 
   let entries = $state<LibraryEntry[]>([]);
   library.subscribe((v) => (entries = v));
@@ -52,7 +52,7 @@
   <div class="actions">
     <button class="btn" onclick={onNew}>＋ New</button>
     <button class="btn" disabled={!selected} onclick={() => selected && onEdit(selected)}>Edit</button>
-    <button class="btn" disabled={!selected} onclick={() => selected && onEdit(selected)}>Delete</button>
+    <button class="btn" disabled={!selected} onclick={() => selected && onDelete(selected)}>Delete</button>
   </div>
 </div>
 
