@@ -397,6 +397,12 @@ pub fn starter_models(vram_total_mb: Option<u64>) -> Vec<catalog::RatedModel> {
 }
 
 #[tauri::command]
+pub fn list_library(state: State<AppState>) -> Vec<crate::library::LibraryEntry> {
+    let models_dir = state.config.lock().unwrap().models_dir.clone();
+    crate::library::scan_library(std::path::Path::new(&models_dir))
+}
+
+#[tauri::command]
 pub fn delete_model(path: String) -> Result<(), String> {
     let p = PathBuf::from(&path);
     if !p.is_file() {

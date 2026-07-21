@@ -82,6 +82,7 @@ pub fn run() {
             commands::pick_gallery_dir,
             commands::open_path,
             commands::list_models,
+            commands::list_library,
             commands::starter_models,
             commands::delete_model,
             commands::download_model,
