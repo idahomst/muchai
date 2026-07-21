@@ -13,6 +13,9 @@ pub struct LibraryEntry {
     pub model: ModelRef,
     /// Engine flags copied from the manifest (so the editor can pre-load them).
     pub flags: crate::manifest::ManifestFlags,
+    /// Per-model recommended-settings override from the manifest (None = fall
+    /// back to the family default). Exposed so the editor can pre-load it.
+    pub recommended_settings: Option<crate::types::GenDefaults>,
     /// True when one or more SET component files are missing on disk.
     pub broken: bool,
 }
@@ -52,6 +55,7 @@ pub fn entry_from_manifest(model_dir: &Path, m: &ModelManifest) -> LibraryEntry 
         family: m.family.clone(),
         model: m.to_model_ref(model_dir),
         flags: m.flags.clone(),
+        recommended_settings: m.recommended_settings,
         broken,
     }
 }

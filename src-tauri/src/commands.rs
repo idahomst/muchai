@@ -646,6 +646,16 @@ fn recommended_for_family(family: &str, diffusion_filename: &str) -> Option<type
     crate::recipes::family_defaults(family, Some(diffusion_filename))
 }
 
+/// Resolve a model's recommended settings: a manifest-level override wins;
+/// otherwise fall back to the family default (schnell/dev detection via the
+/// diffusion filename). `None` when neither applies (custom/unknown family).
+fn resolve_recommended(man: &manifest::ModelManifest) -> Option<types::GenDefaults> {
+    if man.recommended_settings.is_some() {
+        return man.recommended_settings;
+    }
+    recommended_for_family(&man.family, &basename(&man.components.diffusion_model))
+}
+
 #[tauri::command]
 pub fn recommended_settings(
     state: tauri::State<'_, AppState>,
@@ -657,8 +667,7 @@ pub fn recommended_settings(
     };
     let model_dir = models_dir.join(&id);
     let man = manifest::load_from(&model_dir).map_err(|e| e.to_string())?;
-    let diffusion = basename(&man.components.diffusion_model);
-    Ok(recommended_for_family(&man.family, &diffusion))
+    Ok(resolve_recommended(&man))
 }
 
 /// Run filename detection over the files in a folder; return the best-matching
@@ -773,15 +782,19 @@ pub fn add_local_model(
     Ok(library::entry_from_manifest(&model_dir, &man))
 }
 
-/// Edit an existing manifest's name/family/flags in place. `None` fields are
-/// left unchanged.
+/// Save the full editable surface of a model's manifest: name, family, engine
+/// flags, component paths, and the optional recommended-settings override.
+/// Component paths arrive absolute from the UI and are relativized against the
+/// model folder (in-folder files become relative; pooled/external stay absolute).
 #[tauri::command]
 pub fn edit_model(
     state: tauri::State<'_, AppState>,
     id: String,
-    name: Option<String>,
-    family: Option<String>,
-    flags: Option<manifest::ManifestFlags>,
+    name: String,
+    family: String,
+    flags: manifest::ManifestFlags,
+    components: manifest::ManifestComponents,
+    recommended_settings: Option<types::GenDefaults>,
 ) -> Result<library::LibraryEntry, String> {
     let models_dir = {
         let cfg = state.config.lock().unwrap();
@@ -789,7 +802,24 @@ pub fn edit_model(
     };
     let model_dir = models_dir.join(&id);
     let mut man = manifest::load_from(&model_dir).map_err(|e| e.to_string())?;
-    man.apply_edit(name, family, flags);
+
+    // Relativize each provided path; drop empty optional roles to None.
+    let opt = |o: &Option<String>| {
+        o.as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| manifest::relativize(&model_dir, s))
+    };
+    let normalized = manifest::ManifestComponents {
+        diffusion_model: manifest::relativize(&model_dir, components.diffusion_model.trim()),
+        vae: opt(&components.vae),
+        clip_l: opt(&components.clip_l),
+        clip_g: opt(&components.clip_g),
+        t5xxl: opt(&components.t5xxl),
+        llm: opt(&components.llm),
+    };
+
+    man.set_editable(name, family, flags, normalized, recommended_settings);
     manifest::save_to(&model_dir, &man).map_err(|e| e.to_string())?;
     Ok(library::entry_from_manifest(&model_dir, &man))
 }

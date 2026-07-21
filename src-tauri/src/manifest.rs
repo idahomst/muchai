@@ -140,22 +140,22 @@ impl ModelManifest {
         }
     }
 
-    /// Apply optional edits. `None` leaves a field unchanged.
-    pub fn apply_edit(
+    /// Overwrite the editable surface wholesale. `components` must already be
+    /// relativized by the caller (which knows the model folder). `recommended`
+    /// is the per-model override (None = use the family default).
+    pub fn set_editable(
         &mut self,
-        name: Option<String>,
-        family: Option<String>,
-        flags: Option<ManifestFlags>,
+        name: String,
+        family: String,
+        flags: ManifestFlags,
+        components: ManifestComponents,
+        recommended: Option<GenDefaults>,
     ) {
-        if let Some(n) = name {
-            self.name = n;
-        }
-        if let Some(f) = family {
-            self.family = f;
-        }
-        if let Some(fl) = flags {
-            self.flags = fl;
-        }
+        self.name = name;
+        self.family = family;
+        self.flags = flags;
+        self.components = components;
+        self.recommended_settings = recommended;
     }
 
     /// The engine-ready reference. Single checkpoint → `SingleFile { -m path }`;
@@ -352,7 +352,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_edit_changes_name_family_flags() {
+    fn set_editable_overwrites_all_editable_fields() {
         let mut man = ModelManifest {
             schema_version: MANIFEST_SCHEMA_VERSION,
             id: "m".into(), name: "Old".into(), family: "sd15".into(),
@@ -361,16 +361,22 @@ mod tests {
             flags: ManifestFlags::default(),
             recommended_settings: None,
         };
-        man.apply_edit(
-            Some("New".into()),
-            Some("sdxl".into()),
-            Some(ManifestFlags { vae_format: Some("fp16".into()), prediction: None }),
+        let rec = GenDefaults {
+            steps: 12, cfg_scale: 5.0, sampler: crate::types::Sampler::Euler,
+            width: 768, height: 768,
+        };
+        man.set_editable(
+            "New".into(),
+            "sdxl".into(),
+            ManifestFlags { vae_format: Some("sdxl".into()), prediction: None },
+            ManifestComponents { diffusion_model: "d.safetensors".into(), ..Default::default() },
+            Some(rec),
         );
         assert_eq!(man.name, "New");
         assert_eq!(man.family, "sdxl");
-        assert_eq!(man.flags.vae_format.as_deref(), Some("fp16"));
-        man.apply_edit(None, None, None);
-        assert_eq!(man.name, "New");
+        assert_eq!(man.flags.vae_format.as_deref(), Some("sdxl"));
+        assert_eq!(man.components.diffusion_model, "d.safetensors");
+        assert_eq!(man.recommended_settings.unwrap().steps, 12);
     }
 
     #[test]
