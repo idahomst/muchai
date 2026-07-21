@@ -1,12 +1,21 @@
 use crate::types::ProgressUpdate;
 
-/// Parse one line of engine output into a progress update, if present.
+/// Parse one line of engine output into a sampling-progress update, if present.
 /// stable-diffusion.cpp prints a sampling bar like:
 ///   "  |==========>            | 5/30 - 2.34it/s"
-/// We only treat a line as progress if it contains a '|' bar, then read the
-/// LAST "<digits>/<digits>" pair on the line. Returns None otherwise.
+///
+/// It prints visually-identical "|...| N/M - <rate>" bars while LOADING model
+/// tensors too, e.g. "  |####| 196/196 - 2.02GB/s" — where N/M is a tensor
+/// count, not a sampling step. Reporting those would show bogus steps like
+/// "196/196" or "686/686" for a 4-step run. The distinguishing feature is the
+/// rate suffix: the sampling bar reports an ITERATION rate ("it/s" or "s/it"),
+/// while loading bars report a BYTE rate ("MB/s"/"GB/s"). So we require the
+/// iteration marker, then read the LAST "<digits>/<digits>" pair. None otherwise.
 pub fn parse_progress_line(line: &str) -> Option<ProgressUpdate> {
     if !line.contains('|') {
+        return None;
+    }
+    if !(line.contains("it/s") || line.contains("s/it")) {
         return None;
     }
     let bytes = line.as_bytes();
@@ -98,9 +107,29 @@ mod tests {
     }
 
     #[test]
+    fn parses_a_seconds_per_iteration_bar() {
+        // Early/slow steps report "s/it" instead of "it/s"; both are sampling.
+        let line = "  |================>                                 | 1/3 - 2.74s/it";
+        assert_eq!(
+            parse_progress_line(line),
+            Some(ProgressUpdate { current_step: 1, total_steps: 3 })
+        );
+    }
+
+    #[test]
     fn ignores_non_bar_lines() {
         assert_eq!(parse_progress_line("[INFO] loading model 1/1"), None);
         assert_eq!(parse_progress_line("done"), None);
+    }
+
+    #[test]
+    fn ignores_model_loading_bars() {
+        // Loading bars have the same "|...| N/M - rate" shape but a BYTE rate.
+        // These are real captured lines; N/M is a tensor count, not a step.
+        assert_eq!(parse_progress_line("  |##################################################| 196/196 - 2.02GB/s"), None);
+        assert_eq!(parse_progress_line("  |################                                  | 212/686 - 1.23GB/s"), None);
+        assert_eq!(parse_progress_line("  |##################################################| 140/140 - 939.25MB/s"), None);
+        assert_eq!(parse_progress_line("  |##################################################| 1/1 - 0.35MB/s"), None);
     }
 
     #[test]

@@ -1,7 +1,7 @@
 use crate::command_builder::{build_args, EngineOptions};
 use crate::progress_parser::{parse_image_seed_line, parse_progress_line, parse_resolved_seed_line};
 use crate::types::{GenerationRequest, ProgressUpdate};
-use std::io::{BufRead, BufReader};
+use std::io::{BufReader, Read};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
@@ -20,6 +20,40 @@ pub enum GenError {
 
 /// Slot holding the running child so a separate `cancel` call can kill it.
 pub type ChildSlot = Arc<Mutex<Option<Child>>>;
+
+/// Read `r` and invoke `on_segment` for each chunk separated by '\n' OR '\r'.
+///
+/// stable-diffusion.cpp redraws its sampling bar in place with carriage returns
+/// ("\r ...1/4... \r ...2/4... \r ...4/4... \n") and only emits a newline when
+/// the phase finishes. `BufReader::lines()` splits on '\n' alone, so it would
+/// collapse every per-step redraw into one line delivered at the very end,
+/// making the step counter jump straight to the final value. Splitting on '\r'
+/// too surfaces each step as it happens. Empty segments (e.g. a "\r\n" pair, or
+/// a leading "\r") are dropped. Trailing ANSI erase codes like "\x1b[K" are left
+/// in the segment; the progress/seed parsers ignore them.
+fn read_segments<R: Read>(r: R, mut on_segment: impl FnMut(String)) {
+    let mut reader = BufReader::new(r);
+    let mut buf: Vec<u8> = Vec::new();
+    let mut byte = [0u8; 1];
+    loop {
+        match reader.read(&mut byte) {
+            Ok(0) => break,
+            Ok(_) => match byte[0] {
+                b'\n' | b'\r' => {
+                    if !buf.is_empty() {
+                        on_segment(String::from_utf8_lossy(&buf).into_owned());
+                        buf.clear();
+                    }
+                }
+                b => buf.push(b),
+            },
+            Err(_) => break,
+        }
+    }
+    if !buf.is_empty() {
+        on_segment(String::from_utf8_lossy(&buf).into_owned());
+    }
+}
 
 fn looks_like_oom(s: &str) -> bool {
     let l = s.to_lowercase();
@@ -64,17 +98,17 @@ pub fn run_generation<F: FnMut(ProgressUpdate)>(
     let (tx, rx) = mpsc::channel::<String>();
     let tx2 = tx.clone();
     let h_out = std::thread::spawn(move || {
-        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+        read_segments(stdout, |line| {
             let _ = tx.send(line);
-        }
+        });
     });
     let h_err_lines = Arc::new(Mutex::new(Vec::<String>::new()));
     let h_err_lines2 = h_err_lines.clone();
     let h_err = std::thread::spawn(move || {
-        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+        read_segments(stderr, |line| {
             h_err_lines2.lock().unwrap().push(line.clone());
             let _ = tx2.send(line);
-        }
+        });
     });
 
     let mut seeds: Vec<(u32, i64)> = Vec::new();
@@ -159,8 +193,10 @@ mod tests {
     #[test]
     fn streams_progress_and_succeeds() {
         let _guard = spawn_lock().lock().unwrap();
+        // Realistic sampling bars: each carries an iteration-rate suffix, which
+        // is what the parser keys on to tell sampling from model-loading bars.
         let bin = write_fake_engine(
-            "#!/bin/sh\necho '  |#####| 1/3'\necho '  |##########| 2/3'\necho '  |###############| 3/3'\nexit 0\n",
+            "#!/bin/sh\nprintf '  |==>| 1/3 - 2.00s/it\\n'\nprintf '  |====>| 2/3 - 1.90s/it\\n'\nprintf '  |======>| 3/3 - 1.85it/s\\n'\nexit 0\n",
             "ok",
         );
         let slot: ChildSlot = Arc::new(Mutex::new(None));
@@ -177,7 +213,74 @@ mod tests {
         );
         assert!(res.is_ok());
         let got = updates.lock().unwrap();
-        assert_eq!(got.last().copied(), Some(ProgressUpdate { current_step: 3, total_steps: 3 }));
+        assert_eq!(
+            *got,
+            vec![
+                ProgressUpdate { current_step: 1, total_steps: 3 },
+                ProgressUpdate { current_step: 2, total_steps: 3 },
+                ProgressUpdate { current_step: 3, total_steps: 3 },
+            ]
+        );
+    }
+
+    #[test]
+    fn splits_carriage_return_redraws() {
+        let _guard = spawn_lock().lock().unwrap();
+        // The engine redraws the sampling bar in place with '\r' and only prints
+        // a trailing '\n' when the phase finishes. All three steps arrive on ONE
+        // physical line; read_segments must split on '\r' so each step surfaces.
+        let bin = write_fake_engine(
+            "#!/bin/sh\nprintf '  |=>| 1/3 - 2.00s/it\\r  |===>| 2/3 - 1.90s/it\\r  |=====>| 3/3 - 1.85it/s\\n'\nexit 0\n",
+            "cr",
+        );
+        let slot: ChildSlot = Arc::new(Mutex::new(None));
+        let updates = Arc::new(Mutex::new(Vec::new()));
+        let u2 = updates.clone();
+        let res = run_generation(
+            &bin,
+            &GenerationRequest::default(),
+            Path::new("/tmp/ignored.png"),
+            None,
+            EngineOptions::default(),
+            &slot,
+            move |p| u2.lock().unwrap().push(p),
+        );
+        assert!(res.is_ok());
+        let got = updates.lock().unwrap();
+        assert_eq!(
+            *got,
+            vec![
+                ProgressUpdate { current_step: 1, total_steps: 3 },
+                ProgressUpdate { current_step: 2, total_steps: 3 },
+                ProgressUpdate { current_step: 3, total_steps: 3 },
+            ]
+        );
+    }
+
+    #[test]
+    fn ignores_loading_bars() {
+        let _guard = spawn_lock().lock().unwrap();
+        // A model-loading bar (byte-rate suffix, tensor counts as N/M) must NOT
+        // be reported as sampling progress; only the real sampling bar counts.
+        let bin = write_fake_engine(
+            "#!/bin/sh\nprintf '  |####| 686/686 - 2.02GB/s\\n'\nprintf '  |==>| 1/4 - 2.00s/it\\n'\nexit 0\n",
+            "loading",
+        );
+        let slot: ChildSlot = Arc::new(Mutex::new(None));
+        let updates = Arc::new(Mutex::new(Vec::new()));
+        let u2 = updates.clone();
+        let res = run_generation(
+            &bin,
+            &GenerationRequest::default(),
+            Path::new("/tmp/ignored.png"),
+            None,
+            EngineOptions::default(),
+            &slot,
+            move |p| u2.lock().unwrap().push(p),
+        );
+        assert!(res.is_ok());
+        let got = updates.lock().unwrap();
+        assert_eq!(*got, vec![ProgressUpdate { current_step: 1, total_steps: 4 }]);
     }
 
     #[test]
