@@ -1,10 +1,11 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { settings, request, history, sysStats, gpuDevices, refreshLibrary } from "$lib/stores";
-  import { getSettings, setSettings, listHistory, onSystemStats, listGpuDevices } from "$lib/api";
+  import { settings, request, history, sysStats, gpuDevices, refreshLibrary, downloadProgress, downloadBusy, downloadError } from "$lib/stores";
+  import { getSettings, setSettings, listHistory, onSystemStats, listGpuDevices, onDownloadProgress } from "$lib/api";
   import ModelLibrary from "$lib/components/ModelLibrary.svelte";
   import NewModelDialog from "$lib/components/NewModelDialog.svelte";
   import ModelEditor from "$lib/components/ModelEditor.svelte";
+  import DownloadStatus from "$lib/components/DownloadStatus.svelte";
   import type { LibraryEntry } from "$lib/types";
   import PromptPanel from "$lib/components/PromptPanel.svelte";
   import SettingsPanel from "$lib/components/SettingsPanel.svelte";
@@ -59,7 +60,10 @@
       gpuDevices.set(await listGpuDevices());
     })();
     const un = onSystemStats((s) => sysStats.set(s));
-    return () => { un.then((f) => f()); };
+    // App-level download-progress feed: keeps the store live regardless of
+    // whether the New-model dialog is open, so DownloadStatus can show it.
+    const unDl = onDownloadProgress((p) => downloadProgress.set(p));
+    return () => { un.then((f) => f()); unDl.then((f) => f()); };
   });
 </script>
 
@@ -105,6 +109,13 @@
 {/if}
 {#if editing}
   <ModelEditor entry={editing} onClose={() => (editing = null)} />
+{/if}
+
+<!-- Persistent download status when the New-model dialog is closed but a
+     download is still running (or just failed). While the dialog is open it
+     shows its own inline bar, so suppress the toast to avoid duplication. -->
+{#if !showNew && ($downloadBusy || $downloadError)}
+  <DownloadStatus />
 {/if}
 
 <style>
