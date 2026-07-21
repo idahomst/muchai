@@ -43,6 +43,33 @@ pub fn fit_verdict(file_size_bytes: Option<u64>, vram_total_mb: Option<u64>) -> 
     }
 }
 
+/// Decide whether to run the engine in Low-VRAM offload mode for one generation.
+/// Returns `(low_vram_enabled, auto_engaged)`. `auto_engaged` is true only when
+/// the fit estimate turned it on (so the caller can surface a one-time notice);
+/// a manual toggle forces it on but is never reported as "auto".
+///
+/// `weights_bytes` is the summed size of the model's weight files in BYTES (fed
+/// straight to `estimate_vram_mb`, which expects bytes). `device_vram_mb` is the
+/// selected GPU's total VRAM in MB. `is_cpu_device` short-circuits to off since
+/// the offload flags only relieve GPU-VRAM pressure.
+pub fn resolve_low_vram(
+    manual_toggle: bool,
+    weights_bytes: Option<u64>,
+    device_vram_mb: Option<u64>,
+    is_cpu_device: bool,
+) -> (bool, bool) {
+    if manual_toggle {
+        return (true, false);
+    }
+    if is_cpu_device {
+        return (false, false);
+    }
+    match (weights_bytes, device_vram_mb) {
+        (Some(w), Some(v)) if estimate_vram_mb(w) > v => (true, true),
+        _ => (false, false),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -101,5 +128,40 @@ mod tests {
     fn verdict_unknown_when_vram_or_size_missing() {
         assert_eq!(fit_verdict(Some(1000 * MB), None), FitVerdict::Unknown);
         assert_eq!(fit_verdict(None, Some(8192)), FitVerdict::Unknown);
+    }
+
+    #[test]
+    fn low_vram_manual_toggle_forces_on_without_auto_flag() {
+        // Manual on wins regardless of fit, and is never reported as "auto".
+        assert_eq!(resolve_low_vram(true, Some(500 * MB), Some(24000), false), (true, false));
+        assert_eq!(resolve_low_vram(true, None, None, false), (true, false));
+    }
+
+    #[test]
+    fn low_vram_auto_engages_when_weights_exceed_vram() {
+        // est(20 GB) ≈ 20480*1.15 + 1500 ≈ 25052 MB > 12000 MB VRAM → auto on.
+        let twenty_gb = 20u64 * 1024 * MB;
+        assert_eq!(resolve_low_vram(false, Some(twenty_gb), Some(12000), false), (true, true));
+    }
+
+    #[test]
+    fn low_vram_stays_off_when_model_fits() {
+        // est(1 GB) = 1024*1.15 + 1500 ≈ 2677 MB < 12000 MB → off.
+        let one_gb = 1024 * MB;
+        assert_eq!(resolve_low_vram(false, Some(one_gb), Some(12000), false), (false, false));
+    }
+
+    #[test]
+    fn low_vram_off_on_cpu_device_even_if_weights_huge() {
+        // CPU has no GPU VRAM to overflow; offload flags don't apply.
+        let twenty_gb = 20u64 * 1024 * MB;
+        assert_eq!(resolve_low_vram(false, Some(twenty_gb), Some(12000), true), (false, false));
+    }
+
+    #[test]
+    fn low_vram_off_when_vram_or_weights_unknown() {
+        // Can't decide a fit → don't auto-engage (manual toggle still available).
+        assert_eq!(resolve_low_vram(false, None, Some(12000), false), (false, false));
+        assert_eq!(resolve_low_vram(false, Some(1024 * MB), None, false), (false, false));
     }
 }

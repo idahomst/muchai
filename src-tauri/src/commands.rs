@@ -1,7 +1,7 @@
 use crate::engine::{self, ChildSlot, GenError};
 use crate::types::{AppConfig, DownloadProgress, GalleryItem, GenerationRequest, GpuDevice, ModelInfo};
 use crate::recipes::{self, ComponentRole};
-use crate::types::{ModelDefinition, ModelRef};
+use crate::types::{GenDefaults, ModelDefinition, ModelRef};
 use crate::{catalog, config, downloader, gallery, hf, models};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -37,6 +37,23 @@ fn now_unix() -> u64 {
 
 fn engine_binary_name() -> &'static str {
     if cfg!(windows) { "sd-cli.exe" } else { "sd-cli" }
+}
+
+/// Last path segment (handles both `/` and `\` separators), for family
+/// heuristics. Returns the whole string when there is no separator.
+fn basename(path: &str) -> String {
+    path.rsplit(['/', '\\']).next().unwrap_or(path).to_string()
+}
+
+/// Family heuristic for a single-file model, which carries no explicit family:
+/// an "xl" in the filename means SDXL, otherwise assume SD-1.5. Both have a
+/// recommended-settings preset, so a single-file model always gets the button.
+fn single_file_family(filename: &str) -> &'static str {
+    if filename.to_lowercase().contains("xl") {
+        "sdxl"
+    } else {
+        "sd15"
+    }
 }
 
 /// Directory holding `sd-cli` and its sibling `.so` files. Bundled apps resolve
@@ -87,28 +104,44 @@ pub fn list_gpu_devices(app: AppHandle, state: State<AppState>) -> Vec<GpuDevice
     devices
 }
 
+/// Merge an incoming settings payload with the current backend state, keeping the
+/// backend-owned fields (`model_definitions`, `last_request`) from `current`. The
+/// UI's copy of those can be stale; they have their own dedicated commands, so a
+/// preference save must never clobber them. Pure so it is unit-testable.
+fn merged_settings(current: &AppConfig, incoming: AppConfig) -> AppConfig {
+    AppConfig {
+        model_definitions: current.model_definitions.clone(),
+        last_request: current.last_request.clone(),
+        ..incoming
+    }
+}
+
 #[tauri::command]
 pub fn set_settings(
     app: AppHandle,
     state: State<AppState>,
     config: AppConfig,
 ) -> Result<(), String> {
-    config::save_config_to(&config::config_file_path(), &config).map_err(|e| e.to_string())?;
-    // Keep the asset-protocol scope in sync so images in a newly chosen gallery
-    // dir can be displayed without restarting the app.
-    let _ = app
-        .asset_protocol_scope()
-        .allow_directory(&config.gallery_dir, true);
-    // A changed engine path means a different binary that may enumerate devices
-    // in a different order — drop the cached list so the next probe re-reads it,
-    // preserving index parity with `--backend vulkanN`.
-    {
+    // Merge AND persist under the lock so the preserved backend-owned fields
+    // reflect the latest state and no concurrent mutator (e.g. download_multifile
+    // adding a ModelDefinition) can slip a write in between our merge and save —
+    // that would let us clobber their definition. Matches the sibling mutators,
+    // which all persist while still holding the lock.
+    let gallery_dir = {
         let mut cfg = state.config.lock().unwrap();
+        // A changed engine path means a different binary that may enumerate devices
+        // in a different order — drop the cached list so the next probe re-reads it,
+        // preserving index parity with `--backend vulkanN`.
         if cfg.sd_binary_path != config.sd_binary_path {
             *state.gpu_devices.lock().unwrap() = None;
         }
-        *cfg = config;
-    }
+        *cfg = merged_settings(&cfg, config);
+        config::save_config_to(&config::config_file_path(), &cfg).map_err(|e| e.to_string())?;
+        cfg.gallery_dir.clone()
+    };
+    // Keep the asset-protocol scope in sync so images in a newly chosen gallery
+    // dir can be displayed without restarting the app.
+    let _ = app.asset_protocol_scope().allow_directory(&gallery_dir, true);
     Ok(())
 }
 
@@ -135,6 +168,7 @@ pub async fn generate(
     app: AppHandle,
     state: State<'_, AppState>,
     request: GenerationRequest,
+    device_vram_mb: Option<u64>,
 ) -> Result<Vec<GalleryItem>, String> {
     let cfg = state.config.lock().unwrap().clone();
     if let ModelRef::MultiFile(c) = &request.model {
@@ -173,7 +207,19 @@ pub async fn generate(
     let req = request.clone();
     let img = image_path.clone();
     let backend_owned = backend;
-    let engine_opts = crate::command_builder::EngineOptions { low_vram: cfg.low_vram };
+    // Decide Low-VRAM for THIS run: manual toggle forces it on; otherwise
+    // auto-engage when the summed weight bytes won't fit the selected GPU's VRAM.
+    // Weights are summed in bytes (what estimate_vram_mb expects). A broken model
+    // (some file un-stat'able) yields None → treated as "unknown", no auto-engage.
+    let is_cpu = backend_owned.as_deref() == Some("cpu");
+    let weights_bytes = models::sum_file_sizes(&request.model.component_paths());
+    let (low_vram, auto_engaged) =
+        crate::fit::resolve_low_vram(cfg.low_vram, weights_bytes, device_vram_mb, is_cpu);
+    if auto_engaged {
+        // One-time, payload-free signal; the note text lives in the frontend.
+        let _ = app.emit("generation:low_vram_auto", ());
+    }
+    let engine_opts = crate::command_builder::EngineOptions { low_vram };
 
     // Run the (blocking) engine on a worker thread so the async command yields.
     let result = tauri::async_runtime::spawn_blocking(move || {
@@ -582,6 +628,30 @@ pub fn list_recipes() -> Vec<recipes::RecipeInfo> {
     recipes::recipe_infos()
 }
 
+/// Recommended generation settings for the given model, or `None` when the
+/// family has no preset (unknown / custom / no model selected) so the UI can
+/// hide the button. Multi-file family comes from filename detection; single-file
+/// falls back to the SDXL/SD-1.5 name heuristic.
+#[tauri::command]
+pub fn recommended_settings(model: ModelRef) -> Option<GenDefaults> {
+    let (family, diffusion_filename): (Option<String>, Option<String>) = match &model {
+        ModelRef::MultiFile(c) => {
+            let names: Vec<String> = model.component_paths().iter().map(|p| basename(p)).collect();
+            let fam = recipes::detect_best(&names).map(|(r, _)| r.family.to_string());
+            (fam, Some(basename(&c.diffusion_model)))
+        }
+        ModelRef::SingleFile { path } => {
+            if path.trim().is_empty() {
+                (None, None)
+            } else {
+                let name = basename(path);
+                (Some(single_file_family(&name).to_string()), Some(name))
+            }
+        }
+    };
+    family.and_then(|f| recipes::family_defaults(&f, diffusion_filename.as_deref()))
+}
+
 /// Run filename detection over the files in a folder; return the best-matching
 /// family with pre-filled absolute-path slots. Falls back to "custom" (no slots)
 /// when nothing matches — never a dead end.
@@ -592,9 +662,10 @@ pub fn detect_folder(dir: String) -> DetectionResult {
     if let Ok(rd) = std::fs::read_dir(&dir) {
         for e in rd.flatten() {
             let p = e.path();
-            if p.is_file()
-                && p.extension().and_then(|x| x.to_str()).map(|x| x.eq_ignore_ascii_case("safetensors")).unwrap_or(false)
-            {
+            // Accept every recognized model extension (safetensors/ckpt/gguf) so a
+            // .gguf diffusion model is auto-detected too. `recipes::detect` matches
+            // on filename substrings, so it is already extension-agnostic.
+            if p.is_file() && models::is_model_file(&p) {
                 entries.push(p);
             }
         }
@@ -772,5 +843,91 @@ mod tests {
         assert!(safe_model_dir(&root, "   ").is_none());
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn set_settings_preserves_definitions_and_last_request() {
+        // Current backend state: has a saved definition and a meaningful last_request.
+        let mut current = crate::config::default_config();
+        current.model_definitions = vec![flux_def("keep-me")];
+        current.last_request.prompt = "backend-owned prompt".into();
+
+        // Incoming payload from the UI: preference fields changed, but it carries a
+        // STALE (empty) definitions list and a default last_request.
+        let mut incoming = crate::config::default_config();
+        incoming.theme = crate::types::Theme::Light;
+        incoming.low_vram = true;
+        incoming.model_definitions = Vec::new(); // stale — must NOT clobber
+        incoming.last_request = crate::types::GenerationRequest::default(); // stale
+
+        let merged = merged_settings(&current, incoming);
+
+        // Preference fields adopt the incoming values…
+        assert_eq!(merged.theme, crate::types::Theme::Light);
+        assert!(merged.low_vram);
+        // …but backend-owned fields are preserved from `current`.
+        assert_eq!(merged.model_definitions, current.model_definitions);
+        assert_eq!(merged.last_request.prompt, "backend-owned prompt");
+    }
+
+    #[test]
+    fn detect_folder_picks_up_gguf_diffusion() {
+        // A FLUX folder whose diffusion model is a .gguf; encoders + VAE are
+        // .safetensors. Detection must find the family and fill the diffusion slot
+        // with the .gguf file.
+        let root = std::env::temp_dir().join(format!("muchai-detect-gguf-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        for f in ["flux1-schnell-Q4_0.gguf", "t5xxl_fp16.safetensors", "clip_l.safetensors", "ae.safetensors"] {
+            std::fs::write(root.join(f), b"x").unwrap();
+        }
+
+        let result = detect_folder(root.to_string_lossy().into_owned());
+        assert_eq!(result.family, "flux1");
+        let diffusion = result
+            .slots
+            .iter()
+            .find(|s| s.role == ComponentRole::Diffusion)
+            .expect("diffusion slot must be filled");
+        assert!(diffusion.path.ends_with("flux1-schnell-Q4_0.gguf"), "got {}", diffusion.path);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn recommended_settings_multi_file_flux_schnell() {
+        // A multi-file FLUX schnell model → flux1 schnell profile (4 steps).
+        let model = ModelRef::MultiFile(ModelComponents {
+            diffusion_model: "/m/flux1-schnell-Q4_0.gguf".into(),
+            t5xxl: Some("/m/t5xxl_fp16.safetensors".into()),
+            clip_l: Some("/m/clip_l.safetensors".into()),
+            vae: Some("/m/ae.safetensors".into()),
+            ..Default::default()
+        });
+        let d = recommended_settings(model).expect("flux1 has defaults");
+        assert_eq!(d.steps, 4);
+        assert_eq!(d.cfg_scale, 1.0);
+    }
+
+    #[test]
+    fn recommended_settings_single_file_sdxl_by_name() {
+        let model = ModelRef::SingleFile { path: "/m/sd_xl_base_1.0.safetensors".into() };
+        let d = recommended_settings(model).expect("sdxl has defaults");
+        assert_eq!(d.steps, 28);
+        assert_eq!((d.width, d.height), (1024, 1024));
+    }
+
+    #[test]
+    fn recommended_settings_single_file_defaults_to_sd15() {
+        let model = ModelRef::SingleFile { path: "/m/dreamshaper_8.safetensors".into() };
+        let d = recommended_settings(model).expect("sd15 has defaults");
+        assert_eq!(d.steps, 20);
+        assert_eq!((d.width, d.height), (512, 512));
+    }
+
+    #[test]
+    fn recommended_settings_empty_single_file_is_none() {
+        // No model selected yet → no recommendation (button hidden).
+        assert!(recommended_settings(ModelRef::SingleFile { path: "".into() }).is_none());
     }
 }

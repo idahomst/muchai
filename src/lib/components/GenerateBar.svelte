@@ -1,17 +1,22 @@
 <script lang="ts">
   import { get } from "svelte/store";
   import { onMount } from "svelte";
-  import { request, genStatus, history, currentImage, currentItem, settings, gpuDevices } from "../stores";
-  import { generate, cancelGeneration, imageSrc, listHistory, onProgress } from "../api";
+  import { request, genStatus, history, currentImage, currentItem, settings, gpuDevices, sysStats } from "../stores";
+  import { generate, cancelGeneration, imageSrc, listHistory, onProgress, onGenNotice } from "../api";
   import { modelIsSet } from "../types";
+
+  let lowVramAuto = false;
 
   async function run() {
     const req = get(request);
     if (!modelIsSet(req.model)) { genStatus.set({ kind: "error", message: "Select a model first." }); return; }
     if (!req.prompt.trim()) { genStatus.set({ kind: "error", message: "Enter a prompt." }); return; }
     genStatus.set({ kind: "running", progress: null });
+    lowVramAuto = false;
+    const vram = get(sysStats)?.gpu?.vram_total_mb ?? 0;
+    const deviceVramMb = vram > 0 ? vram : null;
     try {
-      const items = await generate(req);
+      const items = await generate(req, deviceVramMb);
       if (items.length > 0) {
         currentImage.set(imageSrc(items[0].image_path));
         currentItem.set(items[0]);
@@ -36,7 +41,8 @@
 
   onMount(() => {
     const un = onProgress((p) => genStatus.update((s) => s.kind === "running" ? { kind: "running", progress: p } : s));
-    return () => { un.then((f) => f()); };
+    const unNotice = onGenNotice(() => { lowVramAuto = true; });
+    return () => { un.then((f) => f()); unNotice.then((f) => f()); };
   });
 </script>
 
@@ -51,6 +57,10 @@
 
 {#if $genStatus.kind === "running" && willRunOnCpu}
   <div class="cpu-note" role="status">Running on CPU — this will be much slower.</div>
+{/if}
+
+{#if $genStatus.kind === "running" && lowVramAuto}
+  <div class="cpu-note" role="status">Low-VRAM mode auto-enabled — this model needs more memory than your GPU has, so generation will be slower.</div>
 {/if}
 
 {#if $genStatus.kind === "error"}

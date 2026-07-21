@@ -113,6 +113,30 @@ impl Default for ModelRef {
     }
 }
 
+impl ModelRef {
+    /// The weight files that make up this model, for size/estimation purposes.
+    /// Single-file → just its path. Multi-file → diffusion model plus every SET,
+    /// non-blank optional component (`vae`/`clip_l`/`clip_g`/`t5xxl`/`llm`).
+    /// The `vae_format` / `prediction` fields are engine flags, not files, and
+    /// are excluded. Order: diffusion, vae, clip_l, clip_g, t5xxl, llm.
+    pub fn component_paths(&self) -> Vec<String> {
+        match self {
+            ModelRef::SingleFile { path } => vec![path.clone()],
+            ModelRef::MultiFile(c) => {
+                let mut paths = vec![c.diffusion_model.clone()];
+                for opt in [&c.vae, &c.clip_l, &c.clip_g, &c.t5xxl, &c.llm] {
+                    if let Some(p) = opt {
+                        if !p.trim().is_empty() {
+                            paths.push(p.clone());
+                        }
+                    }
+                }
+                paths
+            }
+        }
+    }
+}
+
 /// A saved multi-file model — the library entry shown in the Model dropdown.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelDefinition {
@@ -178,6 +202,18 @@ impl Default for GenerationRequest {
             output_format: OutputFormat::default(),
         }
     }
+}
+
+/// Recommended generation settings for a model family. Applied only on explicit
+/// user action (the "Use recommended settings" button) — never auto-applied.
+/// `PartialEq` (not `Eq`) because `cfg_scale` is `f32`.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct GenDefaults {
+    pub steps: u32,
+    pub cfg_scale: f32,
+    pub sampler: Sampler,
+    pub width: u32,
+    pub height: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -563,5 +599,34 @@ mod tests {
         let cfg: AppConfig = serde_json::from_str(json).unwrap();
         assert!(cfg.hf_token.is_none());
         assert!(cfg.civitai_token.is_none());
+    }
+
+    #[test]
+    fn component_paths_single_file_is_just_the_path() {
+        let m = ModelRef::SingleFile { path: "/m/model.safetensors".into() };
+        assert_eq!(m.component_paths(), vec!["/m/model.safetensors".to_string()]);
+    }
+
+    #[test]
+    fn component_paths_multi_file_lists_diffusion_plus_set_components() {
+        let m = ModelRef::MultiFile(ModelComponents {
+            diffusion_model: "/m/flux1-dev.safetensors".into(),
+            t5xxl: Some("/m/t5xxl.safetensors".into()),
+            clip_l: Some("/m/clip_l.safetensors".into()),
+            vae: Some("/m/ae.safetensors".into()),
+            clip_g: None,                 // unset → excluded
+            llm: Some("   ".into()),      // blank → excluded
+            vae_format: Some("flux".into()), // NOT a file path → excluded
+            prediction: Some("flux_flow".into()), // NOT a file path → excluded
+        });
+        assert_eq!(
+            m.component_paths(),
+            vec![
+                "/m/flux1-dev.safetensors".to_string(),
+                "/m/ae.safetensors".to_string(),
+                "/m/clip_l.safetensors".to_string(),
+                "/m/t5xxl.safetensors".to_string(),
+            ]
+        );
     }
 }
