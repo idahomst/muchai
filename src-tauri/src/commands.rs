@@ -1,7 +1,7 @@
 use crate::engine::{self, ChildSlot, GenError};
 use crate::types::{AppConfig, DownloadProgress, GalleryItem, GenerationRequest, GpuDevice, ModelInfo};
 use crate::recipes::{self, ComponentRole};
-use crate::types::{ModelDefinition, ModelRef};
+use crate::types::{GenDefaults, ModelDefinition, ModelRef};
 use crate::{catalog, config, downloader, gallery, hf, models};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -37,6 +37,23 @@ fn now_unix() -> u64 {
 
 fn engine_binary_name() -> &'static str {
     if cfg!(windows) { "sd-cli.exe" } else { "sd-cli" }
+}
+
+/// Last path segment (handles both `/` and `\` separators), for family
+/// heuristics. Returns the whole string when there is no separator.
+fn basename(path: &str) -> String {
+    path.rsplit(['/', '\\']).next().unwrap_or(path).to_string()
+}
+
+/// Family heuristic for a single-file model, which carries no explicit family:
+/// an "xl" in the filename means SDXL, otherwise assume SD-1.5. Both have a
+/// recommended-settings preset, so a single-file model always gets the button.
+fn single_file_family(filename: &str) -> &'static str {
+    if filename.to_lowercase().contains("xl") {
+        "sdxl"
+    } else {
+        "sd15"
+    }
 }
 
 /// Directory holding `sd-cli` and its sibling `.so` files. Bundled apps resolve
@@ -611,6 +628,30 @@ pub fn list_recipes() -> Vec<recipes::RecipeInfo> {
     recipes::recipe_infos()
 }
 
+/// Recommended generation settings for the given model, or `None` when the
+/// family has no preset (unknown / custom / no model selected) so the UI can
+/// hide the button. Multi-file family comes from filename detection; single-file
+/// falls back to the SDXL/SD-1.5 name heuristic.
+#[tauri::command]
+pub fn recommended_settings(model: ModelRef) -> Option<GenDefaults> {
+    let (family, diffusion_filename): (Option<String>, Option<String>) = match &model {
+        ModelRef::MultiFile(c) => {
+            let names: Vec<String> = model.component_paths().iter().map(|p| basename(p)).collect();
+            let fam = recipes::detect_best(&names).map(|(r, _)| r.family.to_string());
+            (fam, Some(basename(&c.diffusion_model)))
+        }
+        ModelRef::SingleFile { path } => {
+            if path.trim().is_empty() {
+                (None, None)
+            } else {
+                let name = basename(path);
+                (Some(single_file_family(&name).to_string()), Some(name))
+            }
+        }
+    };
+    family.and_then(|f| recipes::family_defaults(&f, diffusion_filename.as_deref()))
+}
+
 /// Run filename detection over the files in a folder; return the best-matching
 /// family with pre-filled absolute-path slots. Falls back to "custom" (no slots)
 /// when nothing matches — never a dead end.
@@ -851,5 +892,42 @@ mod tests {
         assert!(diffusion.path.ends_with("flux1-schnell-Q4_0.gguf"), "got {}", diffusion.path);
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn recommended_settings_multi_file_flux_schnell() {
+        // A multi-file FLUX schnell model → flux1 schnell profile (4 steps).
+        let model = ModelRef::MultiFile(ModelComponents {
+            diffusion_model: "/m/flux1-schnell-Q4_0.gguf".into(),
+            t5xxl: Some("/m/t5xxl_fp16.safetensors".into()),
+            clip_l: Some("/m/clip_l.safetensors".into()),
+            vae: Some("/m/ae.safetensors".into()),
+            ..Default::default()
+        });
+        let d = recommended_settings(model).expect("flux1 has defaults");
+        assert_eq!(d.steps, 4);
+        assert_eq!(d.cfg_scale, 1.0);
+    }
+
+    #[test]
+    fn recommended_settings_single_file_sdxl_by_name() {
+        let model = ModelRef::SingleFile { path: "/m/sd_xl_base_1.0.safetensors".into() };
+        let d = recommended_settings(model).expect("sdxl has defaults");
+        assert_eq!(d.steps, 28);
+        assert_eq!((d.width, d.height), (1024, 1024));
+    }
+
+    #[test]
+    fn recommended_settings_single_file_defaults_to_sd15() {
+        let model = ModelRef::SingleFile { path: "/m/dreamshaper_8.safetensors".into() };
+        let d = recommended_settings(model).expect("sd15 has defaults");
+        assert_eq!(d.steps, 20);
+        assert_eq!((d.width, d.height), (512, 512));
+    }
+
+    #[test]
+    fn recommended_settings_empty_single_file_is_none() {
+        // No model selected yet → no recommendation (button hidden).
+        assert!(recommended_settings(ModelRef::SingleFile { path: "".into() }).is_none());
     }
 }

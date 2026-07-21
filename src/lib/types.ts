@@ -79,6 +79,16 @@ export interface GenerationRequest {
   output_format: OutputFormat;
 }
 
+// Mirrors Rust `GenDefaults` (src-tauri/src/types.rs). Recommended per-family
+// generation settings, applied only via the "Use recommended settings" button.
+export interface GenDefaults {
+  steps: number;
+  cfg_scale: number;
+  sampler: Sampler;
+  width: number;
+  height: number;
+}
+
 export interface ProgressUpdate { current_step: number; total_steps: number; }
 
 export interface GpuStats {

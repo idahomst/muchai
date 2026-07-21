@@ -95,6 +95,7 @@ pub fn run() {
             commands::download_multifile,
             commands::broken_definitions,
             commands::list_hf_variants,
+            commands::recommended_settings,
         ])
         .run(tauri::generate_context!())
         .expect("error while running MuchAI");

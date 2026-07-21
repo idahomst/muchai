@@ -1,6 +1,6 @@
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { AppConfig, GalleryItem, GenerationRequest, ProgressUpdate, SystemStats, ModelInfo, RatedModel, DownloadProgress, GpuDevice, RecipeInfo, DetectionResult, RatedMultiFile, ModelDefinition, RatedHfVariant } from "./types";
+import type { AppConfig, GalleryItem, GenerationRequest, ProgressUpdate, SystemStats, ModelInfo, RatedModel, DownloadProgress, GpuDevice, RecipeInfo, DetectionResult, RatedMultiFile, ModelDefinition, RatedHfVariant, ModelRef, GenDefaults } from "./types";
 
 export const getSettings = () => invoke<AppConfig>("get_settings");
 /** Enumerate Vulkan devices the engine can target (cached server-side). */
@@ -58,3 +58,5 @@ export const deleteModelDefinition = (id: string) =>
 export const brokenDefinitions = () => invoke<string[]>("broken_definitions");
 export const listHfVariants = (url: string, token: string, vramTotalMb: number | null) =>
   invoke<RatedHfVariant[]>("list_hf_variants", { url, token, vramTotalMb });
+export const recommendedSettings = (model: ModelRef) =>
+  invoke<GenDefaults | null>("recommended_settings", { model });
