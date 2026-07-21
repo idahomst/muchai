@@ -1,5 +1,6 @@
 use crate::types::GenDefaults;
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 
 pub const MANIFEST_FILENAME: &str = "model.json";
 pub const MANIFEST_SCHEMA_VERSION: u32 = 1;
@@ -67,6 +68,17 @@ impl ManifestComponents {
             T5xxl => self.t5xxl = Some(stored),
             Llm => self.llm = Some(stored),
         }
+    }
+}
+
+/// Resolve a stored component path to an absolute path. Relative paths resolve
+/// against the model's own folder; absolute paths pass through unchanged.
+pub fn resolve_path(model_dir: &Path, stored: &str) -> PathBuf {
+    let p = Path::new(stored);
+    if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        model_dir.join(p)
     }
 }
 
@@ -151,5 +163,21 @@ mod tests {
         assert_eq!(c.diffusion_model, "d.gguf");
         assert_eq!(c.t5xxl.as_deref(), Some("/pool/t5.safetensors"));
         assert!(c.vae.is_none() && c.clip_l.is_none());
+    }
+
+    #[test]
+    fn resolve_path_joins_relative_against_model_dir() {
+        let dir = std::path::Path::new("/models/flux1-schnell-def456");
+        assert_eq!(
+            resolve_path(dir, "flux1-schnell-Q4.gguf"),
+            std::path::PathBuf::from("/models/flux1-schnell-def456/flux1-schnell-Q4.gguf")
+        );
+    }
+
+    #[test]
+    fn resolve_path_passes_absolute_through() {
+        let dir = std::path::Path::new("/models/flux1-schnell-def456");
+        let abs = "/models/shared/flux1/t5xxl_fp16.safetensors";
+        assert_eq!(resolve_path(dir, abs), std::path::PathBuf::from(abs));
     }
 }
