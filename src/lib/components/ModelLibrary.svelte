@@ -1,6 +1,6 @@
 <script lang="ts">
   import { library, request, selectedModelId } from "../stores";
-  import { familyBadge } from "../modelFormat";
+  import { familyBadge, sameModel } from "../modelFormat";
   import type { LibraryEntry } from "../types";
 
   // NOTE: Delete routes through `onDelete`; Edit routes through `onEdit`.
@@ -13,10 +13,15 @@
   let selId = $state<string | null>(null);
   selectedModelId.subscribe((v) => (selId = v));
 
+  let reqModel = $state<import("../types").ModelRef | null>(null);
+  request.subscribe((r) => (reqModel = r.model));
+
   $effect(() => {
-    // Keep a valid selection as the library changes.
+    // Keep a valid selection; on (re)load prefer the entry matching the active
+    // request.model so the highlight/recommended-settings track the real model.
     if (entries.length && !entries.some((e) => e.id === selId)) {
-      selectedModelId.set(entries[0].id);
+      const match = reqModel ? entries.find((e) => sameModel(e.model, reqModel!)) : undefined;
+      selectedModelId.set((match ?? entries[0]).id);
     }
   });
 

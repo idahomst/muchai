@@ -1,6 +1,6 @@
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { AppConfig, GalleryItem, GenerationRequest, ProgressUpdate, SystemStats, DownloadProgress, GpuDevice, RecipeInfo, GenDefaults, LibraryEntry, RatedCatalogEntry, ManifestFlags } from "./types";
+import type { AppConfig, GalleryItem, GenerationRequest, ProgressUpdate, SystemStats, DownloadProgress, GpuDevice, RecipeInfo, GenDefaults, LibraryEntry, RatedCatalogEntry, ManifestFlags, ModelComponents } from "./types";
 
 export const getSettings = () => invoke<AppConfig>("get_settings");
 /** Enumerate Vulkan devices the engine can target (cached server-side). */
@@ -58,10 +58,12 @@ export const addLocalModel = (diffusionPath: string, name: string, family: strin
 
 export const editModel = (
   id: string,
-  name: string | null,
-  family: string | null,
-  flags: ManifestFlags | null,
-) => invoke<LibraryEntry>("edit_model", { id, name, family, flags });
+  name: string,
+  family: string,
+  flags: ManifestFlags,
+  components: ModelComponents,
+  recommendedSettings: GenDefaults | null,
+) => invoke<LibraryEntry>("edit_model", { id, name, family, flags, components, recommendedSettings });
 
 export const deleteModelEntry = (id: string) =>
   invoke<void>("delete_model_entry", { id });

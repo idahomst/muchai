@@ -56,6 +56,7 @@ export type LibraryEntry = {
   family: string;
   model: ModelRef;
   flags: ManifestFlags;
+  recommended_settings: GenDefaults | null;
   broken: boolean;
 };
 
