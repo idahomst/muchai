@@ -15,14 +15,15 @@
     const key = JSON.stringify($request.model);
     if (key !== lastModelKey) {
       lastModelKey = key;
-      void loadRecommended($request.model);
+      void loadRecommended($request.model, key);
     }
   }
-  async function loadRecommended(model: ModelRef) {
+  async function loadRecommended(model: ModelRef, key: string) {
     try {
-      recommended = await recommendedSettings(model);
+      const res = await recommendedSettings(model);
+      if (key === lastModelKey) recommended = res;
     } catch {
-      recommended = null;
+      if (key === lastModelKey) recommended = null;
     }
   }
   function applyRecommended() {
