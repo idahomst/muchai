@@ -182,19 +182,57 @@ pub fn recipes() -> Vec<ModelRecipe> {
             ],
             vae_format: Some("sd3"),
             prediction: Some("sd3_flow"),
-            shared: vec![],
+            shared: vec![
+                SharedComponent {
+                    role: ComponentRole::ClipL,
+                    url: "https://huggingface.co/Comfy-Org/stable-diffusion-3.5-fp8/resolve/main/text_encoders/clip_l.safetensors",
+                    size_bytes: 246_144_152,
+                    filename: "clip_l.safetensors",
+                },
+                SharedComponent {
+                    role: ComponentRole::ClipG,
+                    url: "https://huggingface.co/Comfy-Org/stable-diffusion-3.5-fp8/resolve/main/text_encoders/clip_g.safetensors",
+                    size_bytes: 1_389_382_176,
+                    filename: "clip_g.safetensors",
+                },
+                SharedComponent {
+                    role: ComponentRole::T5xxl,
+                    url: "https://huggingface.co/Comfy-Org/stable-diffusion-3.5-fp8/resolve/main/text_encoders/t5xxl_fp8_e4m3fn.safetensors",
+                    size_bytes: 4_893_934_904,
+                    filename: "t5xxl_fp8_e4m3fn.safetensors",
+                },
+                SharedComponent {
+                    role: ComponentRole::Vae,
+                    url: "https://huggingface.co/stabilityai/stable-diffusion-3.5-large/resolve/main/vae/diffusion_pytorch_model.safetensors",
+                    size_bytes: 167_666_902,
+                    filename: "sd3.5_vae.safetensors",
+                },
+            ],
         },
         ModelRecipe {
             family: "qwen-image",
             name: "Qwen-Image",
             roles: vec![
                 role(ComponentRole::Diffusion, true, &["qwen-image", "qwen_image", "qwen"]),
-                role(ComponentRole::Llm, true, &["qwenvl", "qwen2.5", "qwen2_5", "llm"]),
+                role(ComponentRole::Llm, true, &["qwenvl", "qwen2.5", "qwen2_5", "qwen_2.5", "llm"]),
                 role(ComponentRole::Vae, true, &["vae", "ae."]),
             ],
             vae_format: Some("auto"),
             prediction: None,
-            shared: vec![],
+            shared: vec![
+                SharedComponent {
+                    role: ComponentRole::Llm,
+                    url: "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+                    size_bytes: 9_384_670_680,
+                    filename: "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+                },
+                SharedComponent {
+                    role: ComponentRole::Vae,
+                    url: "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/vae/qwen_image_vae.safetensors",
+                    size_bytes: 253_806_246,
+                    filename: "qwen_image_vae.safetensors",
+                },
+            ],
         },
         ModelRecipe {
             family: "flux2",
@@ -206,7 +244,20 @@ pub fn recipes() -> Vec<ModelRecipe> {
             ],
             vae_format: Some("flux2"),
             prediction: Some("flux2_flow"),
-            shared: vec![],
+            shared: vec![
+                SharedComponent {
+                    role: ComponentRole::Llm,
+                    url: "https://huggingface.co/unsloth/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q4_K_M.gguf",
+                    size_bytes: 5_027_784_512,
+                    filename: "Qwen3-8B-Q4_K_M.gguf",
+                },
+                SharedComponent {
+                    role: ComponentRole::Vae,
+                    url: "https://huggingface.co/Comfy-Org/flux2-dev/resolve/main/split_files/vae/flux2-vae.safetensors",
+                    size_bytes: 336_213_556,
+                    filename: "flux2-vae.safetensors",
+                },
+            ],
         },
         ModelRecipe {
             family: "custom",
@@ -475,5 +526,47 @@ mod tests {
         let ae = r.shared.iter().find(|s| s.role == ComponentRole::Vae).unwrap();
         assert!(ae.url.contains("camenduru/FLUX.1-dev-ungated"), "AE must be the ungated mirror");
         assert_eq!(ae.size_bytes, 335_304_388);
+    }
+
+    #[test]
+    fn sd3_pool_has_encoders_and_gated_vae() {
+        let r = recipe_for("sd3").unwrap();
+        let roles: Vec<ComponentRole> = r.shared.iter().map(|s| s.role).collect();
+        assert!(roles.contains(&ComponentRole::ClipL));
+        assert!(roles.contains(&ComponentRole::ClipG));
+        assert!(roles.contains(&ComponentRole::T5xxl));
+        let vae = r.shared.iter().find(|s| s.role == ComponentRole::Vae).unwrap();
+        assert_eq!(vae.filename, "sd3.5_vae.safetensors");
+        assert!(vae.url.contains("stabilityai/stable-diffusion-3.5-large"));
+        let cg = r.shared.iter().find(|s| s.role == ComponentRole::ClipG).unwrap();
+        assert_eq!(cg.size_bytes, 1_389_382_176);
+    }
+
+    #[test]
+    fn qwen_image_pool_has_llm_and_vae_and_detects_underscored_llm() {
+        let r = recipe_for("qwen-image").unwrap();
+        let llm = r.shared.iter().find(|s| s.role == ComponentRole::Llm).unwrap();
+        assert_eq!(llm.filename, "qwen_2.5_vl_7b_fp8_scaled.safetensors");
+        assert_eq!(llm.size_bytes, 9_384_670_680);
+        assert!(r.shared.iter().any(|s| s.role == ComponentRole::Vae));
+        let files = vec![
+            "qwen-image-Q4_K_S.gguf".to_string(),
+            "qwen_2.5_vl_7b_fp8_scaled.safetensors".to_string(),
+            "qwen_image_vae.safetensors".to_string(),
+        ];
+        let d = detect(&r, &files);
+        assert_eq!(d.get(ComponentRole::Llm), Some("qwen_2.5_vl_7b_fp8_scaled.safetensors"));
+        assert_eq!(d.get(ComponentRole::Diffusion), Some("qwen-image-Q4_K_S.gguf"));
+    }
+
+    #[test]
+    fn flux2_pool_has_qwen3_llm_and_vae() {
+        let r = recipe_for("flux2").unwrap();
+        let llm = r.shared.iter().find(|s| s.role == ComponentRole::Llm).unwrap();
+        assert_eq!(llm.filename, "Qwen3-8B-Q4_K_M.gguf");
+        assert_eq!(llm.size_bytes, 5_027_784_512);
+        let vae = r.shared.iter().find(|s| s.role == ComponentRole::Vae).unwrap();
+        assert_eq!(vae.filename, "flux2-vae.safetensors");
+        assert_eq!(vae.size_bytes, 336_213_556);
     }
 }
