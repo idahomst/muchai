@@ -260,6 +260,31 @@ pub fn recipes() -> Vec<ModelRecipe> {
             ],
         },
         ModelRecipe {
+            family: "z-image",
+            name: "Z-Image (Turbo)",
+            roles: vec![
+                role(ComponentRole::Diffusion, true, &["z_image", "z-image", "zimage"]),
+                role(ComponentRole::Llm, true, &["qwen3", "qwen", "llm"]),
+                role(ComponentRole::Vae, true, &["ae.", "vae"]),
+            ],
+            vae_format: None,
+            prediction: None,
+            shared: vec![
+                SharedComponent {
+                    role: ComponentRole::Llm,
+                    url: "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+                    size_bytes: 2_497_281_120,
+                    filename: "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+                },
+                SharedComponent {
+                    role: ComponentRole::Vae,
+                    url: "https://huggingface.co/camenduru/FLUX.1-dev-ungated/resolve/main/ae.safetensors",
+                    size_bytes: 335_304_388,
+                    filename: "ae.safetensors",
+                },
+            ],
+        },
+        ModelRecipe {
             family: "custom",
             name: "Custom (assign files manually)",
             roles: vec![
@@ -307,6 +332,7 @@ pub fn family_defaults(family: &str, diffusion_filename: Option<&str>) -> Option
         "flux2" => Some(d(4, 1.0, Sampler::Euler, 1024, 1024)),
         "sd3" => Some(d(28, 4.5, Sampler::Euler, 1024, 1024)),
         "qwen-image" => Some(d(20, 2.5, Sampler::Euler, 1024, 1024)),
+        "z-image" => Some(d(8, 1.0, Sampler::Euler, 1024, 1024)),
         "sdxl" => Some(d(28, 7.0, Sampler::EulerA, 1024, 1024)),
         "sd15" => Some(d(20, 7.0, Sampler::EulerA, 512, 512)),
         _ => None,
@@ -568,5 +594,42 @@ mod tests {
         let vae = r.shared.iter().find(|s| s.role == ComponentRole::Vae).unwrap();
         assert_eq!(vae.filename, "flux2-vae.safetensors");
         assert_eq!(vae.size_bytes, 336_213_556);
+    }
+
+    #[test]
+    fn z_image_recipe_registered() {
+        let r = recipe_for("z-image").expect("z-image recipe must exist");
+        assert_eq!(r.vae_format, None);
+        assert_eq!(r.prediction, None);
+        let required: Vec<ComponentRole> =
+            r.roles.iter().filter(|s| s.required).map(|s| s.role).collect();
+        assert!(required.contains(&ComponentRole::Diffusion));
+        assert!(required.contains(&ComponentRole::Llm));
+        assert!(required.contains(&ComponentRole::Vae));
+        let llm = r.shared.iter().find(|s| s.role == ComponentRole::Llm).unwrap();
+        assert_eq!(llm.filename, "Qwen3-4B-Instruct-2507-Q4_K_M.gguf");
+        assert_eq!(llm.size_bytes, 2_497_281_120);
+        let vae = r.shared.iter().find(|s| s.role == ComponentRole::Vae).unwrap();
+        assert_eq!(vae.size_bytes, 335_304_388);
+    }
+
+    #[test]
+    fn detect_best_picks_z_image_for_z_image_files() {
+        let files = vec![
+            "z_image_turbo-Q4_K.gguf".to_string(),
+            "Qwen3-4B-Instruct-2507-Q4_K_M.gguf".to_string(),
+            "ae.safetensors".to_string(),
+        ];
+        let (recipe, _d) = detect_best(&files).unwrap();
+        assert_eq!(recipe.family, "z-image");
+    }
+
+    #[test]
+    fn family_defaults_z_image_uses_eight_steps() {
+        let d = family_defaults("z-image", None).unwrap();
+        assert_eq!(d.steps, 8);
+        assert_eq!(d.cfg_scale, 1.0);
+        assert_eq!(d.sampler, crate::types::Sampler::Euler);
+        assert_eq!((d.width, d.height), (1024, 1024));
     }
 }
