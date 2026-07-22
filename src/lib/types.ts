@@ -24,8 +24,11 @@ export const ROLE_LABELS: Record<ComponentRole, string> = {
 };
 
 // Engine enums, from src-tauri/fixtures/sd-help.txt. Empty = let engine auto-detect.
-export const VAE_FORMATS = ["", "auto", "flux", "sd3", "flux2"] as const;
-export const PREDICTIONS = ["", "eps", "v", "edm_v", "sd3_flow", "flux_flow", "flux2_flow"] as const;
+// Mirror the pinned stable-diffusion.cpp build's `--vae-format` / `--prediction`
+// value sets (see src-tauri/fixtures/sd-help.txt, engine b290693). FLUX.2 klein
+// uses `sefi_flow` (SeFi-Image FLOW mode), NOT `flux2_flow`.
+export const VAE_FORMATS = ["", "auto", "flux", "sd3", "flux2", "wan"] as const;
+export const PREDICTIONS = ["", "eps", "v", "edm_v", "sd3_flow", "flux_flow", "sefi_flow"] as const;
 
 // Mirrors Rust `ModelComponents`. Optional fields are omitted or null.
 export interface ModelComponents {

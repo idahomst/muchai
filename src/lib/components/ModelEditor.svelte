@@ -33,7 +33,7 @@
   let error = $state<string | null>(null);
   let confirmingDelete = $state(false);
 
-  const FAMILIES = ["sd15", "sdxl", "flux1", "flux2", "sd3", "qwen-image", "custom"];
+  const FAMILIES = ["sd15", "sdxl", "flux1", "flux2", "sd3", "qwen-image", "z-image", "custom"];
   type SlotKey = "diffusion_model" | "vae" | "clip_l" | "clip_g" | "t5xxl" | "llm";
   const OPTIONAL_ROLES: { key: SlotKey; label: string }[] = [
     { key: "vae", label: "VAE" },

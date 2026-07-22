@@ -338,7 +338,19 @@ pub fn family_defaults(family: &str, diffusion_filename: Option<&str>) -> Option
             Some(d(steps, 1.0, Sampler::Euler, 1024, 1024))
         }
         "flux2" => Some(d(4, 1.0, Sampler::Euler, 1024, 1024)),
-        "sd3" => Some(d(28, 4.5, Sampler::Euler, 1024, 1024)),
+        "sd3" => {
+            // SD3.5 Large Turbo is timestep-distilled: it bakes guidance in, so
+            // CFG must be ~1.0 and steps low. Applying the non-turbo default
+            // (cfg 4.5) to the distilled model produces a solid/blue image.
+            let is_turbo = diffusion_filename
+                .map(|f| f.to_lowercase().contains("turbo"))
+                .unwrap_or(false);
+            if is_turbo {
+                Some(d(4, 1.0, Sampler::Euler, 1024, 1024))
+            } else {
+                Some(d(28, 4.5, Sampler::Euler, 1024, 1024))
+            }
+        }
         "qwen-image" => Some(d(20, 2.5, Sampler::Euler, 1024, 1024)),
         "z-image" => Some(d(8, 1.0, Sampler::Euler, 1024, 1024)),
         "sdxl" => Some(d(28, 7.0, Sampler::EulerA, 1024, 1024)),
@@ -524,6 +536,16 @@ mod tests {
         // No filename to check for "schnell" → assume the dev/krea profile.
         let d = family_defaults("flux1", None).unwrap();
         assert_eq!(d.steps, 20);
+    }
+
+    #[test]
+    fn family_defaults_sd3_turbo_uses_distilled_settings() {
+        // SD3.5 Large Turbo is distilled: cfg 4.5 (the non-turbo default) makes
+        // it emit a solid/blue image, so a "turbo" filename must drop to cfg 1.0.
+        let turbo = family_defaults("sd3", Some("sd3.5_large_turbo-Q4_0.gguf")).unwrap();
+        assert_eq!((turbo.steps, turbo.cfg_scale), (4, 1.0));
+        let large = family_defaults("sd3", Some("sd3.5_large-Q5_0.gguf")).unwrap();
+        assert_eq!((large.steps, large.cfg_scale), (28, 4.5));
     }
 
     #[test]
