@@ -899,7 +899,7 @@ mod tests {
 
         let flux2 = flags_for_family("flux2");
         assert_eq!(flux2.vae_format.as_deref(), Some("flux2"));
-        assert_eq!(flux2.prediction.as_deref(), Some("flux2_flow"));
+        assert_eq!(flux2.prediction.as_deref(), Some("sefi_flow"));
 
         let qwen = flags_for_family("qwen-image");
         assert_eq!(qwen.vae_format.as_deref(), Some("auto"));

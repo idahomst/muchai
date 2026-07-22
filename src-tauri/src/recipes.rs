@@ -202,8 +202,13 @@ pub fn recipes() -> Vec<ModelRecipe> {
                     filename: "t5xxl_fp8_e4m3fn.safetensors",
                 },
                 SharedComponent {
+                    // Ungated mirror of the SD3.5 VAE. Byte-identical to
+                    // stabilityai/stable-diffusion-3.5-large's vae, but that repo
+                    // is license-gated (401 even with a valid token unless the
+                    // account accepted its terms), so we use a public re-upload —
+                    // same precedent as the flux1 camenduru ungated AE above.
                     role: ComponentRole::Vae,
-                    url: "https://huggingface.co/stabilityai/stable-diffusion-3.5-large/resolve/main/vae/diffusion_pytorch_model.safetensors",
+                    url: "https://huggingface.co/Shio-Koube/SD-3.5-vae/resolve/main/diffusion_pytorch_model.safetensors",
                     size_bytes: 167_666_902,
                     filename: "sd3.5_vae.safetensors",
                 },
@@ -243,7 +248,10 @@ pub fn recipes() -> Vec<ModelRecipe> {
                 role(ComponentRole::Vae, true, &["vae", "ae."]),
             ],
             vae_format: Some("flux2"),
-            prediction: Some("flux2_flow"),
+            // FLUX.2 klein runs as the engine's "SeFi-Image dual-time FLOW" mode
+            // (Flux2Scheduler + SefiFlowDenoiser); its prediction override is
+            // `sefi_flow`. The pinned binary does NOT accept `flux2_flow`.
+            prediction: Some("sefi_flow"),
             shared: vec![
                 SharedComponent {
                     role: ComponentRole::Llm,
@@ -440,9 +448,12 @@ mod tests {
                     assert!(!spec.patterns.is_empty(), "{} {:?} needs a pattern", r.family, spec.role);
                 }
             }
-            // vae_format / prediction within the engine's known sets.
-            const VAE: [&str; 4] = ["auto", "flux", "sd3", "flux2"];
-            const PRED: [&str; 6] = ["eps", "v", "edm_v", "sd3_flow", "flux_flow", "flux2_flow"];
+            // vae_format / prediction within the engine's known sets. These
+            // MUST mirror the pinned binary's `--help` (see fixtures/sd-help.txt),
+            // not any newer upstream build — the pinned engine names FLUX.2's
+            // prediction `sefi_flow`, not `flux2_flow`.
+            const VAE: [&str; 5] = ["auto", "flux", "sd3", "flux2", "wan"];
+            const PRED: [&str; 6] = ["eps", "v", "edm_v", "sd3_flow", "flux_flow", "sefi_flow"];
             if let Some(v) = r.vae_format {
                 assert!(VAE.contains(&v), "{} bad vae_format {v}", r.family);
             }
@@ -456,7 +467,7 @@ mod tests {
     fn flux2_recipe_is_registered_with_expected_shape() {
         let r = recipe_for("flux2").expect("flux2 recipe must exist");
         assert_eq!(r.vae_format, Some("flux2"));
-        assert_eq!(r.prediction, Some("flux2_flow"));
+        assert_eq!(r.prediction, Some("sefi_flow"));
         // Required roles: diffusion + llm + vae; no t5xxl/clip.
         let required: Vec<ComponentRole> =
             r.roles.iter().filter(|s| s.required).map(|s| s.role).collect();
@@ -555,7 +566,7 @@ mod tests {
     }
 
     #[test]
-    fn sd3_pool_has_encoders_and_gated_vae() {
+    fn sd3_pool_has_encoders_and_ungated_vae() {
         let r = recipe_for("sd3").unwrap();
         let roles: Vec<ComponentRole> = r.shared.iter().map(|s| s.role).collect();
         assert!(roles.contains(&ComponentRole::ClipL));
@@ -563,7 +574,11 @@ mod tests {
         assert!(roles.contains(&ComponentRole::T5xxl));
         let vae = r.shared.iter().find(|s| s.role == ComponentRole::Vae).unwrap();
         assert_eq!(vae.filename, "sd3.5_vae.safetensors");
-        assert!(vae.url.contains("stabilityai/stable-diffusion-3.5-large"));
+        // Must be an ungated source: the stabilityai repo is license-gated and
+        // 401s even with a valid token. The mirror is byte-identical.
+        assert!(!vae.url.contains("stabilityai"), "sd3 vae must not use the gated stabilityai repo");
+        assert!(vae.url.starts_with("https://huggingface.co/"));
+        assert_eq!(vae.size_bytes, 167_666_902);
         let cg = r.shared.iter().find(|s| s.role == ComponentRole::ClipG).unwrap();
         assert_eq!(cg.size_bytes, 1_389_382_176);
     }
