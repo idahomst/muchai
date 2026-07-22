@@ -152,9 +152,9 @@ pub fn recipes() -> Vec<ModelRecipe> {
             shared: vec![
                 SharedComponent {
                     role: ComponentRole::T5xxl,
-                    url: "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/t5xxl_fp16.safetensors",
-                    size_bytes: 9_787_841_024,
-                    filename: "t5xxl_fp16.safetensors",
+                    url: "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/t5xxl_fp8_e4m3fn.safetensors",
+                    size_bytes: 4_893_934_904,
+                    filename: "t5xxl_fp8_e4m3fn.safetensors",
                 },
                 SharedComponent {
                     role: ComponentRole::ClipL,
@@ -164,7 +164,7 @@ pub fn recipes() -> Vec<ModelRecipe> {
                 },
                 SharedComponent {
                     role: ComponentRole::Vae,
-                    url: "https://huggingface.co/black-forest-labs/FLUX.1-schnell/resolve/main/ae.safetensors",
+                    url: "https://huggingface.co/camenduru/FLUX.1-dev-ungated/resolve/main/ae.safetensors",
                     size_bytes: 335_304_388,
                     filename: "ae.safetensors",
                 },
@@ -464,5 +464,16 @@ mod tests {
     fn family_defaults_unknown_and_custom_are_none() {
         assert!(family_defaults("custom", None).is_none());
         assert!(family_defaults("totally-unknown", None).is_none());
+    }
+
+    #[test]
+    fn flux1_pool_uses_fp8_t5_and_ungated_ae() {
+        let r = recipe_for("flux1").unwrap();
+        let t5 = r.shared.iter().find(|s| s.role == ComponentRole::T5xxl).unwrap();
+        assert_eq!(t5.filename, "t5xxl_fp8_e4m3fn.safetensors");
+        assert_eq!(t5.size_bytes, 4_893_934_904);
+        let ae = r.shared.iter().find(|s| s.role == ComponentRole::Vae).unwrap();
+        assert!(ae.url.contains("camenduru/FLUX.1-dev-ungated"), "AE must be the ungated mirror");
+        assert_eq!(ae.size_bytes, 335_304_388);
     }
 }
