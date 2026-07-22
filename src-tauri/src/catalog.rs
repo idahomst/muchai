@@ -385,4 +385,18 @@ mod tests {
             validate_entry(e).unwrap_or_else(|why| panic!("{} invalid: {why}", e.id));
         }
     }
+
+    #[test]
+    fn bundled_catalog_spans_tiers_and_families() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/resources/catalog.json");
+        let s = std::fs::read_to_string(path).unwrap();
+        let entries = parse_catalog(&s).unwrap();
+        // Tier floor + ceiling present.
+        assert!(entries.iter().any(|e| e.recommended_vram_mb <= 4096), "need an ultra-light entry");
+        assert!(entries.iter().any(|e| e.recommended_vram_mb > 16000), "need a 24GB-tier entry");
+        // Every engine family represented.
+        for fam in ["sd15", "sdxl", "flux1", "flux2", "sd3", "qwen-image", "z-image"] {
+            assert!(entries.iter().any(|e| e.family == fam), "family {fam} missing from catalog");
+        }
+    }
 }

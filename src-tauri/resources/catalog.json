@@ -17,6 +17,88 @@
       "recommended_vram_mb": 4096
     },
     {
+      "id": "sdxl-lightning-4step",
+      "name": "SDXL Lightning 4-step (GGUF Q4_0)",
+      "family": "sdxl",
+      "license": "openrail++",
+      "source_url": "https://huggingface.co/mzwing/SDXL-Lightning-GGUF",
+      "diffusion": {
+        "url": "https://huggingface.co/mzwing/SDXL-Lightning-GGUF/resolve/main/sdxl_lightning_4step.q4_0.gguf",
+        "filename": "sdxl_lightning_4step.q4_0.gguf",
+        "size_bytes": 2584858432
+      },
+      "shared": [],
+      "min_vram_mb": 3072,
+      "recommended_vram_mb": 4096
+    },
+    {
+      "id": "z-image-turbo-q2k",
+      "name": "Z-Image Turbo (GGUF Q2_K)",
+      "family": "z-image",
+      "license": "Apache-2.0",
+      "source_url": "https://huggingface.co/leejet/Z-Image-Turbo-GGUF",
+      "diffusion": {
+        "url": "https://huggingface.co/leejet/Z-Image-Turbo-GGUF/resolve/main/z_image_turbo-Q2_K.gguf",
+        "filename": "z_image_turbo-Q2_K.gguf",
+        "size_bytes": 2592442304
+      },
+      "shared": [],
+      "min_vram_mb": 3072,
+      "recommended_vram_mb": 4096
+    },
+    {
+      "id": "flux2-klein-4b-q4",
+      "name": "FLUX.2 klein 4B (GGUF Q4_0)",
+      "family": "flux2",
+      "license": "Apache-2.0",
+      "source_url": "https://huggingface.co/unsloth/FLUX.2-klein-4B-GGUF",
+      "diffusion": {
+        "url": "https://huggingface.co/unsloth/FLUX.2-klein-4B-GGUF/resolve/main/flux-2-klein-4b-Q4_0.gguf",
+        "filename": "flux-2-klein-4b-Q4_0.gguf",
+        "size_bytes": 2460394048
+      },
+      "shared": [
+        {
+          "role": "llm",
+          "url": "https://huggingface.co/unsloth/Qwen3-4B-GGUF/resolve/main/Qwen3-4B-Q4_K_M.gguf",
+          "filename": "Qwen3-4B-Q4_K_M.gguf",
+          "size_bytes": 2497281312
+        }
+      ],
+      "min_vram_mb": 4096,
+      "recommended_vram_mb": 6144
+    },
+    {
+      "id": "flux1-schnell-q2k",
+      "name": "FLUX.1 schnell (GGUF Q2_K)",
+      "family": "flux1",
+      "license": "Apache-2.0",
+      "source_url": "https://huggingface.co/city96/FLUX.1-schnell-gguf",
+      "diffusion": {
+        "url": "https://huggingface.co/city96/FLUX.1-schnell-gguf/resolve/main/flux1-schnell-Q2_K.gguf",
+        "filename": "flux1-schnell-Q2_K.gguf",
+        "size_bytes": 4010296352
+      },
+      "shared": [],
+      "min_vram_mb": 4096,
+      "recommended_vram_mb": 6144
+    },
+    {
+      "id": "z-image-turbo-q4k",
+      "name": "Z-Image Turbo (GGUF Q4_K)",
+      "family": "z-image",
+      "license": "Apache-2.0",
+      "source_url": "https://huggingface.co/leejet/Z-Image-Turbo-GGUF",
+      "diffusion": {
+        "url": "https://huggingface.co/leejet/Z-Image-Turbo-GGUF/resolve/main/z_image_turbo-Q4_K.gguf",
+        "filename": "z_image_turbo-Q4_K.gguf",
+        "size_bytes": 3864250304
+      },
+      "shared": [],
+      "min_vram_mb": 4096,
+      "recommended_vram_mb": 6144
+    },
+    {
       "id": "sdxl-base-1.0",
       "name": "Stable Diffusion XL 1.0 (base)",
       "family": "sdxl",
@@ -32,6 +114,36 @@
       "recommended_vram_mb": 8192
     },
     {
+      "id": "sd35-large-turbo-q4",
+      "name": "SD 3.5 Large Turbo (GGUF Q4_0)",
+      "family": "sd3",
+      "license": "Stability AI Community License",
+      "source_url": "https://huggingface.co/city96/stable-diffusion-3.5-large-turbo-gguf",
+      "diffusion": {
+        "url": "https://huggingface.co/city96/stable-diffusion-3.5-large-turbo-gguf/resolve/main/sd3.5_large_turbo-Q4_0.gguf",
+        "filename": "sd3.5_large_turbo-Q4_0.gguf",
+        "size_bytes": 4772054752
+      },
+      "shared": [],
+      "min_vram_mb": 6144,
+      "recommended_vram_mb": 8192
+    },
+    {
+      "id": "flux2-klein-9b-q4",
+      "name": "FLUX.2 klein 9B (GGUF Q4_0)",
+      "family": "flux2",
+      "license": "Apache-2.0",
+      "source_url": "https://huggingface.co/leejet/FLUX.2-klein-9B-GGUF",
+      "diffusion": {
+        "url": "https://huggingface.co/leejet/FLUX.2-klein-9B-GGUF/resolve/main/flux-2-klein-9b-Q4_0.gguf",
+        "filename": "flux-2-klein-9b-Q4_0.gguf",
+        "size_bytes": 5616208032
+      },
+      "shared": [],
+      "min_vram_mb": 6144,
+      "recommended_vram_mb": 8192
+    },
+    {
       "id": "flux1-schnell-q4ks",
       "name": "FLUX.1 schnell (GGUF Q4_K_S)",
       "family": "flux1",
@@ -40,7 +152,7 @@
       "diffusion": {
         "url": "https://huggingface.co/city96/FLUX.1-schnell-gguf/resolve/main/flux1-schnell-Q4_K_S.gguf",
         "filename": "flux1-schnell-Q4_K_S.gguf",
-        "size_bytes": 6780000000
+        "size_bytes": 6783943712
       },
       "shared": [],
       "min_vram_mb": 8192,
@@ -55,11 +167,86 @@
       "diffusion": {
         "url": "https://huggingface.co/city96/FLUX.1-dev-gguf/resolve/main/flux1-dev-Q4_K_S.gguf",
         "filename": "flux1-dev-Q4_K_S.gguf",
-        "size_bytes": 6810000000
+        "size_bytes": 6805988640
       },
       "shared": [],
       "min_vram_mb": 8192,
       "recommended_vram_mb": 12288
+    },
+    {
+      "id": "sd35-large-q5",
+      "name": "SD 3.5 Large (GGUF Q5_0)",
+      "family": "sd3",
+      "license": "Stability AI Community License",
+      "source_url": "https://huggingface.co/city96/stable-diffusion-3.5-large-gguf",
+      "diffusion": {
+        "url": "https://huggingface.co/city96/stable-diffusion-3.5-large-gguf/resolve/main/sd3.5_large-Q5_0.gguf",
+        "filename": "sd3.5_large-Q5_0.gguf",
+        "size_bytes": 5773844192
+      },
+      "shared": [],
+      "min_vram_mb": 8192,
+      "recommended_vram_mb": 12288
+    },
+    {
+      "id": "flux2-klein-9b-q8",
+      "name": "FLUX.2 klein 9B (GGUF Q8_0)",
+      "family": "flux2",
+      "license": "Apache-2.0",
+      "source_url": "https://huggingface.co/leejet/FLUX.2-klein-9B-GGUF",
+      "diffusion": {
+        "url": "https://huggingface.co/leejet/FLUX.2-klein-9B-GGUF/resolve/main/flux-2-klein-9b-Q8_0.gguf",
+        "filename": "flux-2-klein-9b-Q8_0.gguf",
+        "size_bytes": 9978284192
+      },
+      "shared": [],
+      "min_vram_mb": 10240,
+      "recommended_vram_mb": 12288
+    },
+    {
+      "id": "sd35-large-q8",
+      "name": "SD 3.5 Large (GGUF Q8_0)",
+      "family": "sd3",
+      "license": "Stability AI Community License",
+      "source_url": "https://huggingface.co/city96/stable-diffusion-3.5-large-gguf",
+      "diffusion": {
+        "url": "https://huggingface.co/city96/stable-diffusion-3.5-large-gguf/resolve/main/sd3.5_large-Q8_0.gguf",
+        "filename": "sd3.5_large-Q8_0.gguf",
+        "size_bytes": 8779212512
+      },
+      "shared": [],
+      "min_vram_mb": 12288,
+      "recommended_vram_mb": 16384
+    },
+    {
+      "id": "qwen-image-q4ks",
+      "name": "Qwen-Image (GGUF Q4_K_S)",
+      "family": "qwen-image",
+      "license": "Apache-2.0",
+      "source_url": "https://huggingface.co/city96/Qwen-Image-gguf",
+      "diffusion": {
+        "url": "https://huggingface.co/city96/Qwen-Image-gguf/resolve/main/qwen-image-Q4_K_S.gguf",
+        "filename": "qwen-image-Q4_K_S.gguf",
+        "size_bytes": 12140608032
+      },
+      "shared": [],
+      "min_vram_mb": 12288,
+      "recommended_vram_mb": 16384
+    },
+    {
+      "id": "qwen-image-q8",
+      "name": "Qwen-Image (GGUF Q8_0)",
+      "family": "qwen-image",
+      "license": "Apache-2.0",
+      "source_url": "https://huggingface.co/city96/Qwen-Image-gguf",
+      "diffusion": {
+        "url": "https://huggingface.co/city96/Qwen-Image-gguf/resolve/main/qwen-image-Q8_0.gguf",
+        "filename": "qwen-image-Q8_0.gguf",
+        "size_bytes": 21761817120
+      },
+      "shared": [],
+      "min_vram_mb": 16384,
+      "recommended_vram_mb": 24576
     }
   ]
 }
