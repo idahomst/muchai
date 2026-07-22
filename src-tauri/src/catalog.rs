@@ -10,6 +10,16 @@ pub enum Suitability {
     Unknown,
 }
 
+/// What the fit verdict was computed against. `Ram` means no usable GPU was
+/// found, so the entry was rated against system RAM (CPU/iGPU path).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RatingBasis {
+    Vram,
+    Ram,
+    None,
+}
+
 /// One diffusion file in a catalog entry.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CatalogFile {
@@ -102,31 +112,54 @@ pub fn load_catalog_from_str(json: &str) -> Vec<CatalogEntry> {
         .collect()
 }
 
-/// A catalog entry plus its VRAM fit verdict, for the New… dialog.
+/// A catalog entry plus its fit verdict + what it was rated against, for the New… dialog.
 #[derive(Debug, Clone, Serialize)]
 pub struct RatedCatalogEntry {
     #[serde(flatten)]
     pub entry: CatalogEntry,
     pub suitability: Suitability,
+    pub basis: RatingBasis,
 }
 
-/// Rate an entry against total VRAM (mirrors the old `rate`).
-pub fn rate_entry(entry: &CatalogEntry, vram_total_mb: Option<u64>) -> Suitability {
-    match vram_total_mb {
-        None => Suitability::Unknown,
-        Some(v) if v >= entry.recommended_vram_mb => Suitability::Recommended,
-        Some(v) if v >= entry.min_vram_mb => Suitability::Tight,
-        Some(_) => Suitability::TooBig,
+/// Rate a memory total (MB) against an entry's thresholds.
+fn rate_value(entry: &CatalogEntry, total_mb: u64) -> Suitability {
+    if total_mb >= entry.recommended_vram_mb {
+        Suitability::Recommended
+    } else if total_mb >= entry.min_vram_mb {
+        Suitability::Tight
+    } else {
+        Suitability::TooBig
     }
 }
 
-/// The full catalog rated against the given VRAM.
-pub fn rated_catalog_entries(entries: Vec<CatalogEntry>, vram_total_mb: Option<u64>) -> Vec<RatedCatalogEntry> {
+/// Rate an entry against total VRAM, falling back to system RAM when no usable
+/// GPU is present (0 or unknown VRAM). Returns the verdict and which memory it
+/// was computed against.
+pub fn rate_entry(
+    entry: &CatalogEntry,
+    vram_total_mb: Option<u64>,
+    ram_total_mb: Option<u64>,
+) -> (Suitability, RatingBasis) {
+    if let Some(v) = vram_total_mb.filter(|v| *v > 0) {
+        (rate_value(entry, v), RatingBasis::Vram)
+    } else if let Some(r) = ram_total_mb.filter(|r| *r > 0) {
+        (rate_value(entry, r), RatingBasis::Ram)
+    } else {
+        (Suitability::Unknown, RatingBasis::None)
+    }
+}
+
+/// The full catalog rated against VRAM (RAM fallback). See `rate_entry`.
+pub fn rated_catalog_entries(
+    entries: Vec<CatalogEntry>,
+    vram_total_mb: Option<u64>,
+    ram_total_mb: Option<u64>,
+) -> Vec<RatedCatalogEntry> {
     entries
         .into_iter()
         .map(|entry| {
-            let suitability = rate_entry(&entry, vram_total_mb);
-            RatedCatalogEntry { entry, suitability }
+            let (suitability, basis) = rate_entry(&entry, vram_total_mb, ram_total_mb);
+            RatedCatalogEntry { entry, suitability, basis }
         })
         .collect()
 }
@@ -300,6 +333,46 @@ mod tests {
         };
         let plan = plan_entry_downloads(&entry, std::path::Path::new("/models"));
         assert_eq!(plan.files.len(), 1, "single-file family downloads only the diffusion weight");
+    }
+
+    fn sample_entry() -> CatalogEntry {
+        CatalogEntry {
+            id: "e".into(), name: "E".into(), family: "flux1".into(),
+            license: "Apache-2.0".into(), source_url: "https://h/e".into(),
+            diffusion: CatalogFile { url: "https://h/e.gguf".into(), filename: "e.gguf".into(), size_bytes: 0 },
+            shared: vec![], min_vram_mb: 8192, recommended_vram_mb: 12288,
+        }
+    }
+
+    #[test]
+    fn rate_entry_prefers_vram_basis() {
+        let e = sample_entry();
+        assert_eq!(rate_entry(&e, Some(16384), Some(4096)), (Suitability::Recommended, RatingBasis::Vram));
+        assert_eq!(rate_entry(&e, Some(10240), Some(65536)), (Suitability::Tight, RatingBasis::Vram));
+        assert_eq!(rate_entry(&e, Some(4096), Some(65536)), (Suitability::TooBig, RatingBasis::Vram));
+    }
+
+    #[test]
+    fn rate_entry_falls_back_to_ram_when_no_vram() {
+        let e = sample_entry();
+        assert_eq!(rate_entry(&e, None, Some(16384)), (Suitability::Recommended, RatingBasis::Ram));
+        assert_eq!(rate_entry(&e, Some(0), Some(10240)), (Suitability::Tight, RatingBasis::Ram));
+        assert_eq!(rate_entry(&e, None, Some(4096)), (Suitability::TooBig, RatingBasis::Ram));
+    }
+
+    #[test]
+    fn rate_entry_unknown_when_neither_known() {
+        let e = sample_entry();
+        assert_eq!(rate_entry(&e, None, None), (Suitability::Unknown, RatingBasis::None));
+        assert_eq!(rate_entry(&e, Some(0), Some(0)), (Suitability::Unknown, RatingBasis::None));
+    }
+
+    #[test]
+    fn rated_entries_carry_basis() {
+        let rated = rated_catalog_entries(vec![sample_entry()], None, Some(16384));
+        assert_eq!(rated.len(), 1);
+        assert_eq!(rated[0].suitability, Suitability::Recommended);
+        assert_eq!(rated[0].basis, RatingBasis::Ram);
     }
 
     #[test]

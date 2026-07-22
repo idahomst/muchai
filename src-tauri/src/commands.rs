@@ -79,8 +79,12 @@ fn load_bundled_catalog(app: &AppHandle) -> Vec<catalog::CatalogEntry> {
 }
 
 #[tauri::command]
-pub fn catalog_entries(app: AppHandle, vram_total_mb: Option<u64>) -> Vec<catalog::RatedCatalogEntry> {
-    catalog::rated_catalog_entries(load_bundled_catalog(&app), vram_total_mb)
+pub fn catalog_entries(
+    app: AppHandle,
+    vram_total_mb: Option<u64>,
+    ram_total_mb: Option<u64>,
+) -> Vec<catalog::RatedCatalogEntry> {
+    catalog::rated_catalog_entries(load_bundled_catalog(&app), vram_total_mb, ram_total_mb)
 }
 
 /// Resolve the engine binary: explicit config override, else the bundled engine.
