@@ -113,27 +113,70 @@ The dialog's context header (currently "Your VRAM: X GB"):
 
 ## 4. Catalog content — full tier spread, hand-curated HF-only
 
-Entries grouped by fit tier. Single-file SD-family models stay self-contained. Multi-file
-FLUX / SD 3.x / Qwen entries in the small tiers carry **per-entry quantized-encoder
-overrides** via the existing `shared` field (dest = model folder, not the fp16 pool);
-high-tier entries keep the pooled fp16 encoder.
+All entries below are **HF-API-verified** (exact repo, filename, byte size, gating) as of
+2026-07-22. Single-file families (SD 1.5, SDXL, SDXL-Lightning-GGUF) stay self-contained.
+Every DiT family (FLUX.1, FLUX.2, SD 3.5, Qwen-Image, Z-Image) is diffusion-only and pulls
+its text-encoder(s) + VAE as components (§4.1).
 
-`size_bytes` and every resolve URL are **HEAD-verified at implementation time** (see §5).
-Preferred quantized text-encoder = **fp8 safetensors** (`t5xxl_fp8_e4m3fn.safetensors`
-~4.9 GB, comfyanonymous/flux_text_encoders — known-good) over GGUF T5, unless a GGUF
-encoder is verified to load through `--t5xxl`.
+### 4.1 Encoder pooling (all multi-file families)
 
-| Tier (rec. VRAM / CPU-RAM) | Entries |
-|---|---|
-| **Ultra-light** ≤4 GB (CPU-friendly) | SD 1.5 *(existing)* |
-| **Light** 4–8 GB | SDXL base 1.0 *(existing)*; SD 3.5 **Medium** (mmdit + fp8 clips/t5 override) |
-| **Mid** 8–12 GB | FLUX.1-schnell **Q4** + fp8 T5 override; FLUX.1-dev **Q4** + fp8 T5 override; SD 3.5 **Large Q4/GGUF**; Qwen-Image **Q4 GGUF** + quantized LLM override |
-| **High** 12–16 GB | FLUX.1-dev **Q8**; SD 3.5 Large (fp16) |
-| **Max** 16–24 GB+ | FLUX.1-dev **fp16/fp8**; Qwen-Image (fp16); FLUX.2-klein *(tentative — only if it loads cleanly in acceptance)* |
+Per the "never enough disk" decision, **every** multi-file family recipe carries a
+`shared` pool so entries that use the same encoder precision download it **once** (pooled
+under `models_dir/shared/<family>/`). An entry that needs a *lighter* encoder to fit a
+small tier lists a per-entry `shared` override (existing mechanism → lands in the model
+folder, pool copy skipped). Pool precision is chosen as the one the majority of that
+family's entries use:
+
+| Family | Pooled components (default precision) | Per-entry override cases |
+|---|---|---|
+| `flux1` | `t5xxl_fp8_e4m3fn` 4.89 GB · `clip_l` 246 MB · **`ae` 335 MB (camenduru ungated — replaces the current gated BFL url)** | ultra-light entry overrides T5 → `t5-v1_1-xxl-encoder-Q4_K_S.gguf` 2.74 GB |
+| `sd3` | `clip_l` 246 MB · `clip_g` 1.39 GB · `t5xxl_fp8_e4m3fn` 4.89 GB *(all `Comfy-Org/stable-diffusion-3.5-fp8`, ungated)* · **`vae` 168 MB (`stabilityai/stable-diffusion-3.5-large`, gated `is_gated`)** | none (all sd3 entries share the pool) |
+| `qwen-image` | `qwen_2.5_vl_7b_fp8` LLM 9.38 GB · `qwen_image_vae` 254 MB *(both `Comfy-Org/Qwen-Image_ComfyUI`, ungated)* | none |
+| `flux2` *(tentative)* | `flux2-vae` 336 MB *(`Comfy-Org/flux2-dev`, ungated)* · Qwen3 LLM | 9B entries override LLM if it differs from the 4B pool default |
+| `z-image` *(new family)* | Qwen3-4B-Instruct-2507 LLM · `ae` 335 MB *(shares FLUX's ungated camenduru ae)* | none |
+
+The **only gated component** is the SD 3.5 VAE (auto-approve on login); it is marked
+`is_gated` and covered by the app's existing HF-token support. If an ungated SD 3.5 VAE
+mirror surfaces, it is a one-line swap.
+
+### 4.2 Entry list by fit tier
+
+| Tier (rec. VRAM / CPU-RAM) | Entry | Family | Diffusion (verified) |
+|---|---|---|---|
+| **Ultra-light** ≤4 GB (CPU-friendly) | SD 1.5 *(existing)* | sd15 | `v1-5-pruned-emaonly.safetensors` 3.97 GB |
+| | SDXL-Lightning 4-step Q4_0 | sdxl | `mzwing/…/sdxl_lightning_4step.q4_0.gguf` 2.41 GB (single-file GGUF) |
+| | Z-Image-Turbo Q2_K | z-image | `leejet/…/z_image_turbo-Q2_K.gguf` 2.59 GB |
+| **Light** 4–8 GB | FLUX.1-schnell Q2_K (+ GGUF-T5 override) | flux1 | `city96/…/flux1-schnell-Q2_K.gguf` ~4.0 GB |
+| | Z-Image-Turbo Q4_K | z-image | `leejet/…/z_image_turbo-Q4_K.gguf` 3.86 GB |
+| | SD 3.5 Large-Turbo Q4_0 | sd3 | `city96/…/sd3.5_large_turbo-Q4_0.gguf` 4.44 GB |
+| | FLUX.2-klein 4B Q4_0 *(tentative)* | flux2 | `unsloth/…/flux-2-klein-4b-Q4_0.gguf` 2.46 GB |
+| **Mid** 8–12 GB | FLUX.1-schnell Q4_K_S *(existing)* | flux1 | `city96/…/flux1-schnell-Q4_K_S.gguf` 6.78 GB |
+| | FLUX.1-dev Q4_K_S *(existing)* | flux1 | `city96/…/flux1-dev-Q4_K_S.gguf` 6.81 GB |
+| | SD 3.5 Large Q5_0 | sd3 | `city96/…/sd3.5_large-Q5_0.gguf` 5.77 GB |
+| | Qwen-Image Q4_K_S | qwen-image | `city96/…/qwen-image-Q4_K_S.gguf` 12.14 GB |
+| | FLUX.2-klein 9B Q4_0 *(tentative)* | flux2 | `leejet/…/flux-2-klein-9b-Q4_0.gguf` 5.62 GB |
+| **High** 12–16 GB | SDXL base 1.0 *(existing)* | sdxl | `sd_xl_base_1.0.safetensors` 6.94 GB |
+| | SD 3.5 Large Q8_0 | sd3 | `city96/…/sd3.5_large-Q8_0.gguf` 8.78 GB |
+| | FLUX.2-klein 9B Q8_0 *(tentative)* | flux2 | `leejet/…/flux-2-klein-9b-Q8_0.gguf` 9.98 GB |
+| **Max** 16–24 GB+ | Qwen-Image Q8_0 | qwen-image | `city96/…/qwen-image-Q8_0.gguf` 21.76 GB |
+
+`is_gated` is a **catalog-metadata** note in the design; whether it becomes a real
+`CatalogFile`/`CatalogShared` field or is inferred from the license is decided in the
+plan. FLUX.2 entries are shipped but **flagged tentative** — they only stay if they load
+in manual acceptance (§5); their exact Qwen3 LLM file is verified at plan-write time.
+
+### 4.3 New family: `z-image`
+
+Z-Image is a new recipe family (engine support landed upstream ~2025-12-01; our pinned
+`b290693`, dated 2026-07-16, includes it). Invocation (from `docs/z_image.md`):
+`--diffusion-model z_image_turbo-*.gguf --llm Qwen3-4B-Instruct-2507-*.gguf --vae ae.sft`,
+`--cfg-scale 1.0`. **No `--vae-format` / `--prediction`** → the recipe sets both to
+`None`, so the family-agnostic command builder needs no change. `family_defaults` gains a
+`z-image` arm (≈8 steps, cfg 1.0, Euler, 1024²).
 
 License note: each entry records its upstream license (`FLUX.1-dev` non-commercial,
-`Apache-2.0` for schnell, OpenRAIL for SD, etc.) as it does today — surfaced, not
-altered.
+`Apache-2.0` for schnell, `stabilityai-ai-community` for SD 3.5, etc.) as it does today —
+surfaced, not altered.
 
 ## 5. Testing & acceptance
 
