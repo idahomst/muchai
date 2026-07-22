@@ -1,7 +1,8 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import { library, request, selectedModelId } from "../stores";
   import { familyBadge, sameModel } from "../modelFormat";
-  import type { LibraryEntry } from "../types";
+  import type { LibraryEntry, ModelRef } from "../types";
 
   // NOTE: Delete routes through `onDelete`; Edit routes through `onEdit`.
   let { onNew, onEdit, onDelete }:
@@ -13,15 +14,33 @@
   let selId = $state<string | null>(null);
   selectedModelId.subscribe((v) => (selId = v));
 
-  let reqModel = $state<import("../types").ModelRef | null>(null);
+  let reqModel = $state<ModelRef | null>(null);
   request.subscribe((r) => (reqModel = r.model));
 
+  // Change-detector for request.model: opening a history/preview image swaps
+  // request.model without touching selectedModelId, so we must actively move the
+  // highlight. Tracks the last-seen model to fire only on real changes (not on
+  // library reloads, and not when a broken entry is selected for editing —
+  // which deliberately leaves request.model untouched). Plain (non-reactive) so
+  // updating it inside the effect doesn't re-trigger the effect.
+  let lastReqModel: ModelRef | null = null;
+
   $effect(() => {
-    // Keep a valid selection; on (re)load prefer the entry matching the active
-    // request.model so the highlight/recommended-settings track the real model.
-    if (entries.length && !entries.some((e) => e.id === selId)) {
-      const match = reqModel ? entries.find((e) => sameModel(e.model, reqModel!)) : undefined;
-      selectedModelId.set((match ?? entries[0]).id);
+    if (!entries.length) return;
+    const changed = !lastReqModel || (reqModel != null && !sameModel(lastReqModel, reqModel));
+    if (changed && reqModel) {
+      lastReqModel = reqModel;
+      const match = entries.find((e) => sameModel(e.model, reqModel!));
+      if (match) {
+        selectedModelId.set(match.id);
+        return;
+      }
+    }
+    // No matching entry for the active model (or model unchanged): just keep the
+    // selection valid. Read selId untracked so selecting a broken entry (which
+    // changes only selectedModelId) isn't reverted by this effect.
+    if (!untrack(() => entries.some((e) => e.id === selId))) {
+      selectedModelId.set(entries[0].id);
     }
   });
 

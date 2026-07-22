@@ -1,12 +1,12 @@
 <script lang="ts">
   import { get } from "svelte/store";
-  import { catalogEntries, addCatalogModel, addUrlModel, addLocalModel, pickModelFile } from "../api";
+  import { catalogEntries, addCatalogModel, addUrlModel, addLocalModel, pickModelFile, openExternal } from "../api";
   import { settings, runDownload, downloadBusy, downloadProgress, downloadError } from "../stores";
   import { suitabilityBadge, formatBytes, catalogTotalBytes } from "../modelFormat";
   import DownloadProgressBar from "./DownloadProgressBar.svelte";
   import type { RatedCatalogEntry } from "../types";
 
-  let { vramTotalMb, onClose }: { vramTotalMb: number | null; onClose: () => void } = $props();
+  let { vramTotalMb, ramTotalMb, onClose }: { vramTotalMb: number | null; ramTotalMb: number | null; onClose: () => void } = $props();
 
   type Tab = "catalog" | "url" | "local";
   let tab = $state<Tab>("catalog");
@@ -14,11 +14,17 @@
 
   let catalog = $state<RatedCatalogEntry[]>([]);
   $effect(() => {
-    catalogEntries(vramTotalMb).then((c) => (catalog = c)).catch((e) => (catalogError = String(e)));
+    catalogEntries(vramTotalMb, ramTotalMb).then((c) => (catalog = c)).catch((e) => (catalogError = String(e)));
   });
 
-  // VRAM is reported in MiB; show it in GB so the fit badge has visible basis.
-  const vramLabel = $derived(vramTotalMb ? `${+(vramTotalMb / 1024).toFixed(1)} GB` : "unknown");
+  // Show what fit is rated against: VRAM if a GPU is present, else RAM (CPU path).
+  const fitLabel = $derived(
+    vramTotalMb
+      ? `Your VRAM: ${+(vramTotalMb / 1024).toFixed(1)} GB`
+      : ramTotalMb
+        ? `No GPU detected — fit vs. RAM: ${+(ramTotalMb / 1024).toFixed(1)} GB (CPU generation is slow)`
+        : "Hardware unknown — fit not rated",
+  );
 
   let url = $state("");
   let urlName = $state("");
@@ -29,6 +35,19 @@
   // survive this dialog closing mid-download. Close only on success.
   async function run(fn: () => Promise<unknown>) {
     if (await runDownload(fn)) onClose();
+  }
+
+  // Which catalog entry is currently downloading, so its progress bar renders
+  // inline under that row (not at the bottom of the whole list). Cleared when
+  // the download settles (success closes the dialog; failure returns here).
+  let downloadingId = $state<string | null>(null);
+  async function runCatalog(id: string) {
+    downloadingId = id;
+    try {
+      await run(() => addCatalogModel(id));
+    } finally {
+      downloadingId = null;
+    }
   }
 
   async function pickLocal() {
@@ -54,18 +73,26 @@
     {#if $downloadError}<p class="error">{$downloadError}</p>{/if}
 
     {#if tab === "catalog"}
-      <p class="vram-note">Your VRAM: <b>{vramLabel}</b></p>
+      <p class="vram-note">{fitLabel}</p>
       <ul class="catalog">
         {#each catalog as e (e.id)}
-          {@const b = suitabilityBadge(e.suitability)}
+          {@const b = suitabilityBadge(e.suitability, e.basis)}
           <li>
-            <div class="ci">
-              <b>{e.name}</b>
-              <span class="fam">{e.family} · {formatBytes(catalogTotalBytes(e))}</span>
-              <span class="fit {b.tone}">{b.text}</span>
-              <span class="lic">{e.license}</span>
+            <div class="row">
+              <div class="ci">
+                <b>{e.name}</b>
+                <span class="fam">{e.family} · {formatBytes(catalogTotalBytes(e))}</span>
+                <span class="fit {b.tone}">{b.text}</span>
+                <span class="lic">{e.license}</span>
+                {#if e.source_url}
+                  <button type="button" class="src" title={e.source_url} onclick={() => openExternal(e.source_url)}>Source ↗</button>
+                {/if}
+              </div>
+              <button disabled={$downloadBusy} onclick={() => runCatalog(e.id)}>Add</button>
             </div>
-            <button disabled={$downloadBusy} onclick={() => run(() => addCatalogModel(e.id))}>Add</button>
+            {#if downloadingId === e.id && $downloadBusy}
+              <div class="progress"><DownloadProgressBar progress={$downloadProgress} /></div>
+            {/if}
           </li>
         {/each}
       </ul>
@@ -92,7 +119,7 @@
       </div>
     {/if}
 
-    {#if $downloadBusy}
+    {#if $downloadBusy && tab !== "catalog"}
       <div class="progress"><DownloadProgressBar progress={$downloadProgress} /></div>
     {/if}
   </div>
@@ -108,9 +135,11 @@
   .tabs button.active { background: var(--accent-tint); border-color: var(--accent); }
   .vram-note { font-size: 12px; opacity: .75; margin: 0 0 8px; }
   .catalog { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-  .catalog li { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px; border: 1px solid var(--border); border-radius: 6px; }
-  .ci { display: flex; flex-direction: column; gap: 2px; }
+  .catalog li { display: flex; flex-direction: column; gap: 8px; padding: 8px; border: 1px solid var(--border); border-radius: 6px; }
+  .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .ci { display: flex; flex-direction: column; gap: 2px; align-items: flex-start; }
   .fam, .lic { font-size: 11px; opacity: .6; }
+  .src { background: none; border: none; padding: 0; margin-top: 2px; font-size: 11px; color: var(--accent); cursor: pointer; text-decoration: underline; }
   .fit { font-size: 11px; }
   .fit.good { color: var(--success); } .fit.warn { color: var(--warn); } .fit.bad { color: var(--danger); } .fit.muted { opacity: .6; }
   .form { display: flex; flex-direction: column; gap: 10px; }

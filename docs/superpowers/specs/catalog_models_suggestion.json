@@ -1,0 +1,1068 @@
+{
+  "version": "1.0.0",
+  "vram_tiers": {
+    "ultra_light": {
+      "label": "Ultra-Light",
+      "vram_range": "≤4 GB / CPU",
+      "description": "Optimized for budget GPUs, integrated graphics, or CPU execution."
+    },
+    "light": {
+      "label": "Light",
+      "vram_range": "4–8 GB",
+      "description": "Designed for entry-level desktop GPUs (GTX 1060/1650, RTX 3050)."
+    },
+    "mid": {
+      "label": "Mid",
+      "vram_range": "8–12 GB",
+      "description": "Standard performance for mid-range GPUs (RTX 3060/4070, RX 6700)."
+    },
+    "high": {
+      "label": "High",
+      "vram_range": "12–16 GB",
+      "description": "High-precision models for high-end consumer GPUs."
+    },
+    "max": {
+      "label": "Max",
+      "vram_range": "16–24 GB+",
+      "description": "Unquantized, full-precision models for enthusiast & workstation GPUs."
+    }
+  },
+  "models": [
+    {
+      "id": "sd15-pruned-ema",
+      "name": "Stable Diffusion v1.5",
+      "family": "SD 1.5",
+      "vram_tier": "ultra_light",
+      "license": "CreativeML OpenRAIL-M",
+      "is_gated": false,
+      "description": "Classic, lightweight model with huge community ecosystem and fast generation times.",
+      "files": [
+        {
+          "role": "model",
+          "cli_flag": "-m",
+          "repo_id": "runwayml/stable-diffusion-v1-5",
+          "filename": "v1-5-pruned-emaonly.safetensors",
+          "destination_subpath": "models/sd15/v1-5-pruned-emaonly.safetensors",
+          "size_bytes": 4268686208
+        }
+      ],
+      "default_params": {
+        "steps": 20,
+        "cfg_scale": 7.5,
+        "sampling_method": "euler_a",
+        "width": 512,
+        "height": 512
+      }
+    },
+    {
+      "id": "sdxl-lightning-q2",
+      "name": "SDXL Lightning (Q2_K GGUF)",
+      "family": "SDXL",
+      "vram_tier": "ultra_light",
+      "license": "OpenRAIL++-M",
+      "is_gated": false,
+      "description": "Ultra-compressed 2-4 step SDXL model for low VRAM systems.",
+      "files": [
+        {
+          "role": "model",
+          "cli_flag": "-m",
+          "repo_id": "mzwing/SDXL-Lightning-GGUF",
+          "filename": "sdxl_lightning_4step-Q2_K.gguf",
+          "destination_subpath": "models/sdxl/sdxl_lightning_4step-Q2_K.gguf",
+          "size_bytes": 2500000000
+        }
+      ],
+      "default_params": {
+        "steps": 4,
+        "cfg_scale": 1.0,
+        "sampling_method": "euler",
+        "width": 1024,
+        "height": 1024
+      }
+    },
+    {
+      "id": "sdxl-lightning-q4",
+      "name": "SDXL Lightning (Q4_0 GGUF)",
+      "family": "SDXL",
+      "vram_tier": "ultra_light",
+      "license": "OpenRAIL++-M",
+      "is_gated": false,
+      "description": "Fast 4-step SDXL generation compressed for budget GPUs.",
+      "files": [
+        {
+          "role": "model",
+          "cli_flag": "-m",
+          "repo_id": "mzwing/SDXL-Lightning-GGUF",
+          "filename": "sdxl_lightning_4step-Q4_0.gguf",
+          "destination_subpath": "models/sdxl/sdxl_lightning_4step-Q4_0.gguf",
+          "size_bytes": 3620000000
+        }
+      ],
+      "default_params": {
+        "steps": 4,
+        "cfg_scale": 1.0,
+        "sampling_method": "euler",
+        "width": 1024,
+        "height": 1024
+      }
+    },
+    {
+      "id": "flux1-schnell-q2",
+      "name": "FLUX.1 Schnell (Q2_K GGUF)",
+      "family": "Flux.1",
+      "vram_tier": "ultra_light",
+      "license": "Apache-2.0",
+      "is_gated": false,
+      "description": "Ultra-compressed 4-step Flux model capable of running on low VRAM.",
+      "files": [
+        {
+          "role": "diffusion_model",
+          "cli_flag": "--diffusion-model",
+          "repo_id": "city96/FLUX.1-schnell-gguf",
+          "filename": "flux1-schnell-Q2_K.gguf",
+          "destination_subpath": "models/flux/flux1-schnell-Q2_K.gguf",
+          "size_bytes": 4300000000
+        },
+        {
+          "role": "vae",
+          "cli_flag": "--vae",
+          "repo_id": "black-forest-labs/FLUX.1-schnell",
+          "filename": "ae.safetensors",
+          "destination_subpath": "models/vae/ae.safetensors",
+          "size_bytes": 335000000
+        },
+        {
+          "role": "clip_l",
+          "cli_flag": "--clip_l",
+          "repo_id": "comfyanonymous/flux_text_encoders",
+          "filename": "clip_l.safetensors",
+          "destination_subpath": "models/clip/clip_l.safetensors",
+          "size_bytes": 246000000
+        },
+        {
+          "role": "t5xxl",
+          "cli_flag": "--t5xxl",
+          "repo_id": "city96/FLUX.1-schnell-gguf",
+          "filename": "t5xxl_q4_0.gguf",
+          "destination_subpath": "models/clip/t5xxl_q4_0.gguf",
+          "size_bytes": 2800000000
+        }
+      ],
+      "default_params": {
+        "steps": 4,
+        "cfg_scale": 1.0,
+        "sampling_method": "euler",
+        "width": 1024,
+        "height": 1024
+      }
+    },
+    {
+      "id": "flux2-klein-4b-q3",
+      "name": "FLUX.2 Klein 4B (Q3_K GGUF)",
+      "family": "Flux.2",
+      "vram_tier": "ultra_light",
+      "license": "Non-Commercial",
+      "is_gated": false,
+      "description": "Compact 4B parameter Flux.2 variant optimized for low VRAM systems.",
+      "files": [
+        {
+          "role": "diffusion_model",
+          "cli_flag": "--diffusion-model",
+          "repo_id": "unsloth/FLUX.2-klein-4B-GGUF",
+          "filename": "flux2-klein-4b-q3_k.gguf",
+          "destination_subpath": "models/flux2/flux2-klein-4b-q3_k.gguf",
+          "size_bytes": 2600000000
+        },
+        {
+          "role": "vae",
+          "cli_flag": "--vae",
+          "repo_id": "black-forest-labs/FLUX.1-schnell",
+          "filename": "ae.safetensors",
+          "destination_subpath": "models/vae/ae.safetensors",
+          "size_bytes": 335000000
+        },
+        {
+          "role": "clip_l",
+          "cli_flag": "--clip_l",
+          "repo_id": "comfyanonymous/flux_text_encoders",
+          "filename": "clip_l.safetensors",
+          "destination_subpath": "models/clip/clip_l.safetensors",
+          "size_bytes": 246000000
+        }
+      ],
+      "default_params": {
+        "steps": 20,
+        "cfg_scale": 3.5,
+        "sampling_method": "euler",
+        "width": 1024,
+        "height": 1024
+      }
+    },
+    {
+      "id": "z-image-turbo-q2",
+      "name": "Z-Image Turbo (Q2_K GGUF)",
+      "family": "Z-Image",
+      "vram_tier": "ultra_light",
+      "license": "Apache-2.0",
+      "is_gated": false,
+      "description": "Ultra-lightweight real-time generation model tuned by leejet for 4GB systems.",
+      "files": [
+        {
+          "role": "diffusion_model",
+          "cli_flag": "--diffusion-model",
+          "repo_id": "leejet/Z-Image-Turbo-GGUF",
+          "filename": "z-image-turbo-q2_k.gguf",
+          "destination_subpath": "models/zimage/z-image-turbo-q2_k.gguf",
+          "size_bytes": 2590000000
+        },
+        {
+          "role": "vae",
+          "cli_flag": "--vae",
+          "repo_id": "black-forest-labs/FLUX.1-schnell",
+          "filename": "ae.safetensors",
+          "destination_subpath": "models/vae/ae.safetensors",
+          "size_bytes": 335000000
+        }
+      ],
+      "default_params": {
+        "steps": 8,
+        "cfg_scale": 1.5,
+        "sampling_method": "euler",
+        "width": 512,
+        "height": 512
+      }
+    },
+    {
+      "id": "z-image-turbo-q3",
+      "name": "Z-Image Turbo (Q3_K GGUF)",
+      "family": "Z-Image",
+      "vram_tier": "ultra_light",
+      "license": "Apache-2.0",
+      "is_gated": false,
+      "description": "Lightweight real-time generation model tuned by leejet.",
+      "files": [
+        {
+          "role": "diffusion_model",
+          "cli_flag": "--diffusion-model",
+          "repo_id": "leejet/Z-Image-Turbo-GGUF",
+          "filename": "z-image-turbo-q3_k.gguf",
+          "destination_subpath": "models/zimage/z-image-turbo-q3_k.gguf",
+          "size_bytes": 3500000000
+        },
+        {
+          "role": "vae",
+          "cli_flag": "--vae",
+          "repo_id": "black-forest-labs/FLUX.1-schnell",
+          "filename": "ae.safetensors",
+          "destination_subpath": "models/vae/ae.safetensors",
+          "size_bytes": 335000000
+        }
+      ],
+      "default_params": {
+        "steps": 8,
+        "cfg_scale": 1.5,
+        "sampling_method": "euler",
+        "width": 512,
+        "height": 512
+      }
+    },
+    {
+      "id": "sd35-large-turbo-q4",
+      "name": "Stable Diffusion 3.5 Large Turbo (Q4_0 GGUF)",
+      "family": "SD 3.5",
+      "vram_tier": "light",
+      "license": "Community License",
+      "is_gated": false,
+      "description": "Fast 4-step generation with Stability AI's SD 3.5 architecture.",
+      "files": [
+        {
+          "role": "model",
+          "cli_flag": "-m",
+          "repo_id": "city96/stable-diffusion-3.5-large-turbo-gguf",
+          "filename": "sd3.5_large_turbo-Q4_0.gguf",
+          "destination_subpath": "models/sd35/sd3.5_large_turbo-Q4_0.gguf",
+          "size_bytes": 4770000000
+        }
+      ],
+      "default_params": {
+        "steps": 4,
+        "cfg_scale": 1.0,
+        "sampling_method": "euler",
+        "width": 1024,
+        "height": 1024
+      }
+    },
+    {
+      "id": "sdxl-silveroxides-q4",
+      "name": "SDXL Base (Q4_0 GGUF)",
+      "family": "SDXL",
+      "vram_tier": "light",
+      "license": "OpenRAIL++-M",
+      "is_gated": false,
+      "description": "Standard SDXL base capability running cleanly under 8GB VRAM.",
+      "files": [
+        {
+          "role": "model",
+          "cli_flag": "-m",
+          "repo_id": "silveroxides/sdxl-gguf",
+          "filename": "sdxl-base-q4_0.gguf",
+          "destination_subpath": "models/sdxl/sdxl-base-q4_0.gguf",
+          "size_bytes": 5200000000
+        }
+      ],
+      "default_params": {
+        "steps": 25,
+        "cfg_scale": 7.0,
+        "sampling_method": "euler",
+        "width": 1024,
+        "height": 1024
+      }
+    },
+    {
+      "id": "sdxl-turbo",
+      "name": "SDXL Turbo (FP16)",
+      "family": "SDXL",
+      "vram_tier": "light",
+      "license": "Non-Commercial",
+      "is_gated": false,
+      "description": "Real-time single-step image generation model by Stability AI.",
+      "files": [
+        {
+          "role": "model",
+          "cli_flag": "-m",
+          "repo_id": "stabilityai/sdxl-turbo",
+          "filename": "sd_xl_turbo_1.0_fp16.safetensors",
+          "destination_subpath": "models/sdxl/sd_xl_turbo_1.0_fp16.safetensors",
+          "size_bytes": 6940000000
+        }
+      ],
+      "default_params": {
+        "steps": 1,
+        "cfg_scale": 1.0,
+        "sampling_method": "euler",
+        "width": 512,
+        "height": 512
+      }
+    },
+    {
+      "id": "flux1-schnell-q4",
+      "name": "FLUX.1 Schnell (Q4_0 GGUF)",
+      "family": "Flux.1",
+      "vram_tier": "light",
+      "license": "Apache-2.0",
+      "is_gated": false,
+      "description": "High quality 4-step generation with balanced speed and memory footprint.",
+      "files": [
+        {
+          "role": "diffusion_model",
+          "cli_flag": "--diffusion-model",
+          "repo_id": "leejet/FLUX.1-schnell-gguf",
+          "filename": "flux1-schnell-q4_0.gguf",
+          "destination_subpath": "models/flux/flux1-schnell-q4_0.gguf",
+          "size_bytes": 7380000000
+        },
+        {
+          "role": "vae",
+          "cli_flag": "--vae",
+          "repo_id": "black-forest-labs/FLUX.1-schnell",
+          "filename": "ae.safetensors",
+          "destination_subpath": "models/vae/ae.safetensors",
+          "size_bytes": 335000000
+        },
+        {
+          "role": "clip_l",
+          "cli_flag": "--clip_l",
+          "repo_id": "comfyanonymous/flux_text_encoders",
+          "filename": "clip_l.safetensors",
+          "destination_subpath": "models/clip/clip_l.safetensors",
+          "size_bytes": 246000000
+        },
+        {
+          "role": "t5xxl",
+          "cli_flag": "--t5xxl",
+          "repo_id": "city96/FLUX.1-schnell-gguf",
+          "filename": "t5xxl_q4_0.gguf",
+          "destination_subpath": "models/clip/t5xxl_q4_0.gguf",
+          "size_bytes": 2800000000
+        }
+      ],
+      "default_params": {
+        "steps": 4,
+        "cfg_scale": 1.0,
+        "sampling_method": "euler",
+        "width": 1024,
+        "height": 1024
+      }
+    },
+    {
+      "id": "flux2-klein-9b-q4",
+      "name": "FLUX.2 Klein 9B (Q4_0 GGUF)",
+      "family": "Flux.2",
+      "vram_tier": "light",
+      "license": "Non-Commercial",
+      "is_gated": false,
+      "description": "Next-gen Flux architecture running in 4-bit precision for 8GB GPUs.",
+      "files": [
+        {
+          "role": "diffusion_model",
+          "cli_flag": "--diffusion-model",
+          "repo_id": "leejet/FLUX.2-klein-base-9B-GGUF",
+          "filename": "flux2-klein-base-9b-q4_0.gguf",
+          "destination_subpath": "models/flux2/flux2-klein-base-9b-q4_0.gguf",
+          "size_bytes": 5620000000
+        },
+        {
+          "role": "vae",
+          "cli_flag": "--vae",
+          "repo_id": "black-forest-labs/FLUX.1-schnell",
+          "filename": "ae.safetensors",
+          "destination_subpath": "models/vae/ae.safetensors",
+          "size_bytes": 335000000
+        },
+        {
+          "role": "clip_l",
+          "cli_flag": "--clip_l",
+          "repo_id": "comfyanonymous/flux_text_encoders",
+          "filename": "clip_l.safetensors",
+          "destination_subpath": "models/clip/clip_l.safetensors",
+          "size_bytes": 246000000
+        }
+      ],
+      "default_params": {
+        "steps": 20,
+        "cfg_scale": 3.5,
+        "sampling_method": "euler",
+        "width": 1024,
+        "height": 1024
+      }
+    },
+    {
+      "id": "z-image-turbo-q4",
+      "name": "Z-Image Turbo (Q4_0 GGUF)",
+      "family": "Z-Image",
+      "vram_tier": "light",
+      "license": "Apache-2.0",
+      "is_gated": false,
+      "description": "Super lightweight real-time generation model tuned by leejet.",
+      "files": [
+        {
+          "role": "diffusion_model",
+          "cli_flag": "--diffusion-model",
+          "repo_id": "leejet/Z-Image-Turbo-GGUF",
+          "filename": "z-image-turbo-q4_0.gguf",
+          "destination_subpath": "models/zimage/z-image-turbo-q4_0.gguf",
+          "size_bytes": 3680000000
+        },
+        {
+          "role": "vae",
+          "cli_flag": "--vae",
+          "repo_id": "black-forest-labs/FLUX.1-schnell",
+          "filename": "ae.safetensors",
+          "destination_subpath": "models/vae/ae.safetensors",
+          "size_bytes": 335000000
+        }
+      ],
+      "default_params": {
+        "steps": 8,
+        "cfg_scale": 1.5,
+        "sampling_method": "euler",
+        "width": 512,
+        "height": 512
+      }
+    },
+    {
+      "id": "z-image-turbo-q6",
+      "name": "Z-Image Turbo (Q6_K GGUF)",
+      "family": "Z-Image",
+      "vram_tier": "light",
+      "license": "Apache-2.0",
+      "is_gated": false,
+      "description": "Higher precision real-time generation model tuned by leejet.",
+      "files": [
+        {
+          "role": "diffusion_model",
+          "cli_flag": "--diffusion-model",
+          "repo_id": "leejet/Z-Image-Turbo-GGUF",
+          "filename": "z-image-turbo-q6_k.gguf",
+          "destination_subpath": "models/zimage/z-image-turbo-q6_k.gguf",
+          "size_bytes": 5260000000
+        },
+        {
+          "role": "vae",
+          "cli_flag": "--vae",
+          "repo_id": "black-forest-labs/FLUX.1-schnell",
+          "filename": "ae.safetensors",
+          "destination_subpath": "models/vae/ae.safetensors",
+          "size_bytes": 335000000
+        }
+      ],
+      "default_params": {
+        "steps": 8,
+        "cfg_scale": 1.5,
+        "sampling_method": "euler",
+        "width": 512,
+        "height": 512
+      }
+    },
+    {
+      "id": "sd35-large-q5",
+      "name": "Stable Diffusion 3.5 Large (Q5_0 GGUF)",
+      "family": "SD 3.5",
+      "vram_tier": "mid",
+      "license": "Community License",
+      "is_gated": false,
+      "description": "High-quality 8B parameter SD 3.5 model with strong prompt adherence.",
+      "files": [
+        {
+          "role": "model",
+          "cli_flag": "-m",
+          "repo_id": "city96/stable-diffusion-3.5-large-gguf",
+          "filename": "sd3.5_large-Q5_0.gguf",
+          "destination_subpath": "models/sd35/sd3.5_large-Q5_0.gguf",
+          "size_bytes": 5770000000
+        }
+      ],
+      "default_params": {
+        "steps": 28,
+        "cfg_scale": 4.5,
+        "sampling_method": "euler",
+        "width": 1024,
+        "height": 1024
+      }
+    },
+    {
+      "id": "sd35-large-q8",
+      "name": "Stable Diffusion 3.5 Large (Q8_0 GGUF)",
+      "family": "SD 3.5",
+      "vram_tier": "mid",
+      "license": "Community License",
+      "is_gated": false,
+      "description": "Near lossless 8B parameter SD 3.5 model quantization.",
+      "files": [
+        {
+          "role": "model",
+          "cli_flag": "-m",
+          "repo_id": "city96/stable-diffusion-3.5-large-gguf",
+          "filename": "sd3.5_large-Q8_0.gguf",
+          "destination_subpath": "models/sd35/sd3.5_large-Q8_0.gguf",
+          "size_bytes": 8780000000
+        }
+      ],
+      "default_params": {
+        "steps": 28,
+        "cfg_scale": 4.5,
+        "sampling_method": "euler",
+        "width": 1024,
+        "height": 1024
+      }
+    },
+    {
+      "id": "sdxl-base-10",
+      "name": "SDXL Base 1.0 (FP16)",
+      "family": "SDXL",
+      "vram_tier": "mid",
+      "license": "OpenRAIL++-M",
+      "is_gated": false,
+      "description": "Full fidelity SDXL base model running native FP16 safetensors.",
+      "files": [
+        {
+          "role": "model",
+          "cli_flag": "-m",
+          "repo_id": "stabilityai/stable-diffusion-xl-base-1.0",
+          "filename": "sd_xl_base_1.0.safetensors",
+          "destination_subpath": "models/sdxl/sd_xl_base_1.0.safetensors",
+          "size_bytes": 6940000000
+        }
+      ],
+      "default_params": {
+        "steps": 30,
+        "cfg_scale": 7.0,
+        "sampling_method": "dpm++2m",
+        "width": 1024,
+        "height": 1024
+      }
+    },
+    {
+      "id": "flux1-dev-q5",
+      "name": "FLUX.1 Dev (Q5_K_S GGUF)",
+      "family": "Flux.1",
+      "vram_tier": "mid",
+      "license": "Non-Commercial",
+      "is_gated": false,
+      "description": "Balanced high-quality Flux Dev output for GPUs with 8–12 GB VRAM.",
+      "files": [
+        {
+          "role": "diffusion_model",
+          "cli_flag": "--diffusion-model",
+          "repo_id": "city96/FLUX.1-dev-gguf",
+          "filename": "flux1-dev-Q5_K_S.gguf",
+          "destination_subpath": "models/flux/flux1-dev-Q5_K_S.gguf",
+          "size_bytes": 8200000000
+        },
+        {
+          "role": "vae",
+          "cli_flag": "--vae",
+          "repo_id": "black-forest-labs/FLUX.1-dev",
+          "filename": "ae.safetensors",
+          "destination_subpath": "models/vae/ae.safetensors",
+          "size_bytes": 335000000
+        },
+        {
+          "role": "clip_l",
+          "cli_flag": "--clip_l",
+          "repo_id": "comfyanonymous/flux_text_encoders",
+          "filename": "clip_l.safetensors",
+          "destination_subpath": "models/clip/clip_l.safetensors",
+          "size_bytes": 246000000
+        },
+        {
+          "role": "t5xxl",
+          "cli_flag": "--t5xxl",
+          "repo_id": "city96/FLUX.1-schnell-gguf",
+          "filename": "t5xxl_q4_0.gguf",
+          "destination_subpath": "models/clip/t5xxl_q4_0.gguf",
+          "size_bytes": 2800000000
+        }
+      ],
+      "default_params": {
+        "steps": 28,
+        "cfg_scale": 3.5,
+        "sampling_method": "euler",
+        "width": 1024,
+        "height": 1024
+      }
+    },
+    {
+      "id": "flux1-dev-q6",
+      "name": "FLUX.1 Dev (Q6_K GGUF)",
+      "family": "Flux.1",
+      "vram_tier": "mid",
+      "license": "Non-Commercial",
+      "is_gated": false,
+      "description": "Higher precision Flux Dev output with minimal quantization loss.",
+      "files": [
+        {
+          "role": "diffusion_model",
+          "cli_flag": "--diffusion-model",
+          "repo_id": "city96/FLUX.1-dev-gguf",
+          "filename": "flux1-dev-Q6_K.gguf",
+          "destination_subpath": "models/flux/flux1-dev-Q6_K.gguf",
+          "size_bytes": 9860000000
+        },
+        {
+          "role": "vae",
+          "cli_flag": "--vae",
+          "repo_id": "black-forest-labs/FLUX.1-dev",
+          "filename": "ae.safetensors",
+          "destination_subpath": "models/vae/ae.safetensors",
+          "size_bytes": 335000000
+        },
+        {
+          "role": "clip_l",
+          "cli_flag": "--clip_l",
+          "repo_id": "comfyanonymous/flux_text_encoders",
+          "filename": "clip_l.safetensors",
+          "destination_subpath": "models/clip/clip_l.safetensors",
+          "size_bytes": 246000000
+        },
+        {
+          "role": "t5xxl",
+          "cli_flag": "--t5xxl",
+          "repo_id": "city96/FLUX.1-schnell-gguf",
+          "filename": "t5xxl_q4_0.gguf",
+          "destination_subpath": "models/clip/t5xxl_q4_0.gguf",
+          "size_bytes": 2800000000
+        }
+      ],
+      "default_params": {
+        "steps": 28,
+        "cfg_scale": 3.5,
+        "sampling_method": "euler",
+        "width": 1024,
+        "height": 1024
+      }
+    },
+    {
+      "id": "flux2-klein-9b-q8",
+      "name": "FLUX.2 Klein 9B (Q8_0 GGUF)",
+      "family": "Flux.2",
+      "vram_tier": "mid",
+      "license": "Non-Commercial",
+      "is_gated": false,
+      "description": "Near-lossless precision for the Flux.2 Klein 9B model.",
+      "files": [
+        {
+          "role": "diffusion_model",
+          "cli_flag": "--diffusion-model",
+          "repo_id": "leejet/FLUX.2-klein-base-9B-GGUF",
+          "filename": "flux2-klein-base-9b-q8_0.gguf",
+          "destination_subpath": "models/flux2/flux2-klein-base-9b-q8_0.gguf",
+          "size_bytes": 9980000000
+        },
+        {
+          "role": "vae",
+          "cli_flag": "--vae",
+          "repo_id": "black-forest-labs/FLUX.1-schnell",
+          "filename": "ae.safetensors",
+          "destination_subpath": "models/vae/ae.safetensors",
+          "size_bytes": 335000000
+        },
+        {
+          "role": "clip_l",
+          "cli_flag": "--clip_l",
+          "repo_id": "comfyanonymous/flux_text_encoders",
+          "filename": "clip_l.safetensors",
+          "destination_subpath": "models/clip/clip_l.safetensors",
+          "size_bytes": 246000000
+        }
+      ],
+      "default_params": {
+        "steps": 20,
+        "cfg_scale": 3.5,
+        "sampling_method": "euler",
+        "width": 1024,
+        "height": 1024
+      }
+    },
+    {
+      "id": "qwen-image-quantized",
+      "name": "Qwen-Image (Distilled/Quantized)",
+      "family": "Qwen-Image",
+      "vram_tier": "mid",
+      "license": "Apache-2.0",
+      "is_gated": false,
+      "description": "Quantized weights for the Qwen-Image generation pipeline (~8-10GB footprint).",
+      "files": [
+        {
+          "role": "diffusion_model",
+          "cli_flag": "--diffusion-model",
+          "repo_id": "Qwen/Qwen-Image",
+          "filename": "qwen_image_quantized.safetensors",
+          "destination_subpath": "models/qwen/qwen_image_quantized.safetensors",
+          "size_bytes": 8500000000
+        }
+      ],
+      "default_params": {
+        "steps": 20,
+        "cfg_scale": 5.0,
+        "sampling_method": "euler",
+        "width": 1024,
+        "height": 1024
+      }
+    },
+    {
+      "id": "sd35-large-fp16",
+      "name": "Stable Diffusion 3.5 Large (FP16/BF16)",
+      "family": "SD 3.5",
+      "vram_tier": "high",
+      "license": "Community License",
+      "is_gated": false,
+      "description": "Full precision bfloat16/fp16 standard checkpoint (~16 GB VRAM peak).",
+      "files": [
+        {
+          "role": "model",
+          "cli_flag": "-m",
+          "repo_id": "stabilityai/stable-diffusion-3.5-large",
+          "filename": "sd3.5_large.safetensors",
+          "destination_subpath": "models/sd35/sd3.5_large.safetensors",
+          "size_bytes": 16000000000
+        }
+      ],
+      "default_params": {
+        "steps": 28,
+        "cfg_scale": 4.5,
+        "sampling_method": "euler",
+        "width": 1024,
+        "height": 1024
+      }
+    },
+    {
+      "id": "sdxl-pipeline-base-refiner",
+      "name": "SDXL Base 1.0 + Refiner Pipeline",
+      "family": "SDXL",
+      "vram_tier": "high",
+      "license": "OpenRAIL++-M",
+      "is_gated": false,
+      "description": "Full precision SDXL Base + Refiner pipeline running simultaneously.",
+      "files": [
+        {
+          "role": "model",
+          "cli_flag": "-m",
+          "repo_id": "stabilityai/stable-diffusion-xl-base-1.0",
+          "filename": "sd_xl_base_1.0.safetensors",
+          "destination_subpath": "models/sdxl/sd_xl_base_1.0.safetensors",
+          "size_bytes": 6940000000
+        },
+        {
+          "role": "refiner",
+          "cli_flag": "--refiner",
+          "repo_id": "stabilityai/stable-diffusion-xl-refiner-1.0",
+          "filename": "sd_xl_refiner_1.0.safetensors",
+          "destination_subpath": "models/sdxl/sd_xl_refiner_1.0.safetensors",
+          "size_bytes": 6080000000
+        }
+      ],
+      "default_params": {
+        "steps": 30,
+        "cfg_scale": 7.0,
+        "sampling_method": "dpm++2m",
+        "width": 1024,
+        "height": 1024
+      }
+    },
+    {
+      "id": "flux1-dev-q8",
+      "name": "FLUX.1 Dev (Q8_0 GGUF)",
+      "family": "Flux.1",
+      "vram_tier": "high",
+      "license": "Non-Commercial",
+      "is_gated": false,
+      "description": "Near-lossless 8-bit quantization for 12–16 GB GPUs.",
+      "files": [
+        {
+          "role": "diffusion_model",
+          "cli_flag": "--diffusion-model",
+          "repo_id": "city96/FLUX.1-dev-gguf",
+          "filename": "flux1-dev-Q8_0.gguf",
+          "destination_subpath": "models/flux/flux1-dev-Q8_0.gguf",
+          "size_bytes": 12700000000
+        },
+        {
+          "role": "vae",
+          "cli_flag": "--vae",
+          "repo_id": "black-forest-labs/FLUX.1-dev",
+          "filename": "ae.safetensors",
+          "destination_subpath": "models/vae/ae.safetensors",
+          "size_bytes": 335000000
+        },
+        {
+          "role": "clip_l",
+          "cli_flag": "--clip_l",
+          "repo_id": "comfyanonymous/flux_text_encoders",
+          "filename": "clip_l.safetensors",
+          "destination_subpath": "models/clip/clip_l.safetensors",
+          "size_bytes": 246000000
+        },
+        {
+          "role": "t5xxl",
+          "cli_flag": "--t5xxl",
+          "repo_id": "city96/FLUX.1-schnell-gguf",
+          "filename": "t5xxl_q8_0.gguf",
+          "destination_subpath": "models/clip/t5xxl_q8_0.gguf",
+          "size_bytes": 5200000000
+        }
+      ],
+      "default_params": {
+        "steps": 28,
+        "cfg_scale": 3.5,
+        "sampling_method": "euler",
+        "width": 1024,
+        "height": 1024
+      }
+    },
+    {
+      "id": "flux1-schnell-fp8",
+      "name": "FLUX.1 Schnell (FP8)",
+      "family": "Flux.1",
+      "vram_tier": "high",
+      "license": "Apache-2.0",
+      "is_gated": false,
+      "description": "Full precision FP8 Flux Schnell 4-step generator.",
+      "files": [
+        {
+          "role": "diffusion_model",
+          "cli_flag": "--diffusion-model",
+          "repo_id": "black-forest-labs/FLUX.1-schnell",
+          "filename": "flux1-schnell-fp8.safetensors",
+          "destination_subpath": "models/flux/flux1-schnell-fp8.safetensors",
+          "size_bytes": 11900000000
+        },
+        {
+          "role": "vae",
+          "cli_flag": "--vae",
+          "repo_id": "black-forest-labs/FLUX.1-schnell",
+          "filename": "ae.safetensors",
+          "destination_subpath": "models/vae/ae.safetensors",
+          "size_bytes": 335000000
+        }
+      ],
+      "default_params": {
+        "steps": 4,
+        "cfg_scale": 1.0,
+        "sampling_method": "euler",
+        "width": 1024,
+        "height": 1024
+      }
+    },
+    {
+      "id": "flux2-klein-9b-fp8",
+      "name": "FLUX.2 Klein 9B (FP8)",
+      "family": "Flux.2",
+      "vram_tier": "high",
+      "license": "Non-Commercial",
+      "is_gated": false,
+      "description": "Unquantized / FP8 multi-file Flux.2 Klein 9B model.",
+      "files": [
+        {
+          "role": "diffusion_model",
+          "cli_flag": "--diffusion-model",
+          "repo_id": "black-forest-labs/FLUX.2-klein-base-9B",
+          "filename": "flux2-klein-base-9b-fp8.safetensors",
+          "destination_subpath": "models/flux2/flux2-klein-base-9b-fp8.safetensors",
+          "size_bytes": 14500000000
+        },
+        {
+          "role": "vae",
+          "cli_flag": "--vae",
+          "repo_id": "black-forest-labs/FLUX.1-schnell",
+          "filename": "ae.safetensors",
+          "destination_subpath": "models/vae/ae.safetensors",
+          "size_bytes": 335000000
+        }
+      ],
+      "default_params": {
+        "steps": 20,
+        "cfg_scale": 3.5,
+        "sampling_method": "euler",
+        "width": 1024,
+        "height": 1024
+      }
+    },
+    {
+      "id": "qwen-image-full",
+      "name": "Qwen-Image (High-Precision Pipeline)",
+      "family": "Qwen-Image",
+      "vram_tier": "high",
+      "license": "Apache-2.0",
+      "is_gated": false,
+      "description": "High precision pipeline weights for Qwen-Image.",
+      "files": [
+        {
+          "role": "diffusion_model",
+          "cli_flag": "--diffusion-model",
+          "repo_id": "Qwen/Qwen-Image",
+          "filename": "qwen_image_pipeline_fp16.safetensors",
+          "destination_subpath": "models/qwen/qwen_image_pipeline_fp16.safetensors",
+          "size_bytes": 15200000000
+        }
+      ],
+      "default_params": {
+        "steps": 20,
+        "cfg_scale": 5.0,
+        "sampling_method": "euler",
+        "width": 1024,
+        "height": 1024
+      }
+    },
+    {
+      "id": "flux1-dev-fp16",
+      "name": "FLUX.1 Dev (Native FP16)",
+      "family": "Flux.1",
+      "vram_tier": "max",
+      "license": "Non-Commercial",
+      "is_gated": false,
+      "description": "Maximum visual fidelity, uncompressed state-of-the-art model.",
+      "files": [
+        {
+          "role": "diffusion_model",
+          "cli_flag": "--diffusion-model",
+          "repo_id": "black-forest-labs/FLUX.1-dev",
+          "filename": "flux1-dev.safetensors",
+          "destination_subpath": "models/flux/flux1-dev.safetensors",
+          "size_bytes": 23800000000
+        },
+        {
+          "role": "vae",
+          "cli_flag": "--vae",
+          "repo_id": "black-forest-labs/FLUX.1-dev",
+          "filename": "ae.safetensors",
+          "destination_subpath": "models/vae/ae.safetensors",
+          "size_bytes": 335000000
+        },
+        {
+          "role": "clip_l",
+          "cli_flag": "--clip_l",
+          "repo_id": "comfyanonymous/flux_text_encoders",
+          "filename": "clip_l.safetensors",
+          "destination_subpath": "models/clip/clip_l.safetensors",
+          "size_bytes": 246000000
+        },
+        {
+          "role": "t5xxl",
+          "cli_flag": "--t5xxl",
+          "repo_id": "comfyanonymous/flux_text_encoders",
+          "filename": "t5xxl_fp16.safetensors",
+          "destination_subpath": "models/clip/t5xxl_fp16.safetensors",
+          "size_bytes": 9700000000
+        }
+      ],
+      "default_params": {
+        "steps": 28,
+        "cfg_scale": 3.5,
+        "sampling_method": "euler",
+        "width": 1024,
+        "height": 1024
+      }
+    },
+    {
+      "id": "flux2-klein-9b-native",
+      "name": "FLUX.2 Klein 9B (Native FP16 Multi-File)",
+      "family": "Flux.2",
+      "vram_tier": "max",
+      "license": "Non-Commercial",
+      "is_gated": false,
+      "description": "Full native precision multi-file specification based on DrawThings Community Models.",
+      "files": [
+        {
+          "role": "diffusion_model",
+          "cli_flag": "--diffusion-model",
+          "repo_id": "black-forest-labs/FLUX.2-klein-base-9B",
+          "filename": "flux2-klein-base-9b.safetensors",
+          "destination_subpath": "models/flux2/flux2-klein-base-9b.safetensors",
+          "size_bytes": 18000000000
+        },
+        {
+          "role": "vae",
+          "cli_flag": "--vae",
+          "repo_id": "black-forest-labs/FLUX.1-schnell",
+          "filename": "ae.safetensors",
+          "destination_subpath": "models/vae/ae.safetensors",
+          "size_bytes": 335000000
+        }
+      ],
+      "default_params": {
+        "steps": 25,
+        "cfg_scale": 3.5,
+        "sampling_method": "euler",
+        "width": 1024,
+        "height": 1024
+      }
+    },
+    {
+      "id": "qwen-image-2512",
+      "name": "Qwen-Image-2512 (20B Parameter Native)",
+      "family": "Qwen-Image",
+      "vram_tier": "max",
+      "license": "Apache-2.0",
+      "is_gated": false,
+      "description": "Full 20B parameter multi-file release running in native precision.",
+      "files": [
+        {
+          "role": "diffusion_model",
+          "cli_flag": "--diffusion-model",
+          "repo_id": "Qwen/Qwen-Image-2512",
+          "filename": "qwen_image_2512_fp16.safetensors",
+          "destination_subpath": "models/qwen/qwen_image_2512_fp16.safetensors",
+          "size_bytes": 22000000000
+        }
+      ],
+      "default_params": {
+        "steps": 25,
+        "cfg_scale": 5.0,
+        "sampling_method": "euler",
+        "width": 1024,
+        "height": 1024
+      }
+    }
+  ]
+}

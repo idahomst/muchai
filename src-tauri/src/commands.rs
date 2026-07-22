@@ -79,8 +79,12 @@ fn load_bundled_catalog(app: &AppHandle) -> Vec<catalog::CatalogEntry> {
 }
 
 #[tauri::command]
-pub fn catalog_entries(app: AppHandle, vram_total_mb: Option<u64>) -> Vec<catalog::RatedCatalogEntry> {
-    catalog::rated_catalog_entries(load_bundled_catalog(&app), vram_total_mb)
+pub fn catalog_entries(
+    app: AppHandle,
+    vram_total_mb: Option<u64>,
+    ram_total_mb: Option<u64>,
+) -> Vec<catalog::RatedCatalogEntry> {
+    catalog::rated_catalog_entries(load_bundled_catalog(&app), vram_total_mb, ram_total_mb)
 }
 
 /// Resolve the engine binary: explicit config override, else the bundled engine.
@@ -336,6 +340,17 @@ pub fn open_path(path: String) -> Result<(), String> {
     tauri_plugin_opener::open_path(path, None::<&str>).map_err(|e| e.to_string())
 }
 
+/// Open an external URL in the user's default browser (e.g. a catalog entry's
+/// source page, so we honestly surface where a model is downloaded from).
+/// https-only, to avoid opening arbitrary local/file schemes.
+#[tauri::command]
+pub fn open_url(url: String) -> Result<(), String> {
+    if !url.starts_with("https://") {
+        return Err("only https URLs may be opened".into());
+    }
+    tauri_plugin_opener::open_url(url, None::<&str>).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub async fn pick_gallery_dir(app: AppHandle) -> Option<String> {
     use tauri_plugin_dialog::DialogExt;
@@ -399,6 +414,18 @@ fn token_for_url(url: &str, hf_token: &str, civitai_token: &str) -> String {
     } else {
         String::new()
     }
+}
+
+/// Engine flags (`vae_format`/`prediction`) for a family, derived from its
+/// recipe. Unknown families and recipes that declare no flags (e.g. z-image)
+/// yield empty defaults.
+fn flags_for_family(family: &str) -> manifest::ManifestFlags {
+    recipes::recipe_for(family)
+        .map(|r| manifest::ManifestFlags {
+            vae_format: r.vae_format.map(str::to_string),
+            prediction: r.prediction.map(str::to_string),
+        })
+        .unwrap_or_default()
 }
 
 /// Download every file a catalog entry needs (diffusion + any pooled/override
@@ -487,6 +514,10 @@ pub async fn add_catalog_model(
     for file in &plan.files {
         components.set_role(file.role, manifest::relativize(&model_dir, &file.dest.to_string_lossy()));
     }
+    // Seed engine flags from the family recipe so vae_format/prediction are
+    // applied on install (e.g. sd3, flux1/2, qwen-image). Unknown families and
+    // recipes with no flags (e.g. z-image) fall back to empty defaults.
+    let flags = flags_for_family(&entry.family);
     let man = manifest::ModelManifest {
         schema_version: manifest::MANIFEST_SCHEMA_VERSION,
         id: entry.id.clone(),
@@ -497,7 +528,7 @@ pub async fn add_catalog_model(
             url: entry.source_url.clone(),
         },
         components,
-        flags: manifest::ManifestFlags::default(),
+        flags,
         recommended_settings: None,
     };
     manifest::save_to(&model_dir, &man).map_err(|e| e.to_string())?;
@@ -866,6 +897,29 @@ mod tests {
     #[test]
     fn new_model_id_is_unique() {
         assert_ne!(new_model_id(), new_model_id());
+    }
+
+    #[test]
+    fn catalog_install_backfills_engine_flags_from_recipe() {
+        // Families whose recipe declares engine flags must carry them on install,
+        // so a freshly catalog-installed model generates with the right flags
+        // without the user editing the manifest.
+        let sd3 = flags_for_family("sd3");
+        assert_eq!(sd3.vae_format.as_deref(), Some("sd3"));
+        assert_eq!(sd3.prediction.as_deref(), Some("sd3_flow"));
+
+        let flux2 = flags_for_family("flux2");
+        assert_eq!(flux2.vae_format.as_deref(), Some("flux2"));
+        assert_eq!(flux2.prediction.as_deref(), Some("sefi_flow"));
+
+        let qwen = flags_for_family("qwen-image");
+        assert_eq!(qwen.vae_format.as_deref(), Some("auto"));
+        assert_eq!(qwen.prediction, None);
+
+        // z-image intentionally declares no flags; unknown families fall back to
+        // empty defaults too.
+        assert_eq!(flags_for_family("z-image"), manifest::ManifestFlags::default());
+        assert_eq!(flags_for_family("not-a-family"), manifest::ManifestFlags::default());
     }
 
     #[test]

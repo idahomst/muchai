@@ -24,8 +24,11 @@ export const ROLE_LABELS: Record<ComponentRole, string> = {
 };
 
 // Engine enums, from src-tauri/fixtures/sd-help.txt. Empty = let engine auto-detect.
-export const VAE_FORMATS = ["", "auto", "flux", "sd3", "flux2"] as const;
-export const PREDICTIONS = ["", "eps", "v", "edm_v", "sd3_flow", "flux_flow", "flux2_flow"] as const;
+// Mirror the pinned stable-diffusion.cpp build's `--vae-format` / `--prediction`
+// value sets (see src-tauri/fixtures/sd-help.txt, engine b290693). FLUX.2 klein
+// uses `sefi_flow` (SeFi-Image FLOW mode), NOT `flux2_flow`.
+export const VAE_FORMATS = ["", "auto", "flux", "sd3", "flux2", "wan"] as const;
+export const PREDICTIONS = ["", "eps", "v", "edm_v", "sd3_flow", "flux_flow", "sefi_flow"] as const;
 
 // Mirrors Rust `ModelComponents`. Optional fields are omitted or null.
 export interface ModelComponents {
@@ -73,7 +76,7 @@ export type CatalogEntry = {
   min_vram_mb: number;
   recommended_vram_mb: number;
 };
-export type RatedCatalogEntry = CatalogEntry & { suitability: Suitability };
+export type RatedCatalogEntry = CatalogEntry & { suitability: Suitability; basis: RatingBasis };
 
 /** True when the model is selectable/usable (path or diffusion set). */
 export function modelIsSet(m: ModelRef): boolean {
@@ -196,6 +199,10 @@ export interface ModelInfo { path: string; name: string; size_bytes: number; }
 
 export type ModelKind = "sd15" | "sdxl";
 export type Suitability = "recommended" | "tight" | "too_big" | "unknown";
+
+// Wire values MUST match the Rust `RatingBasis` enum's serde snake_case form
+// (src-tauri/src/catalog.rs). "ram" = no GPU found, rated against system RAM.
+export type RatingBasis = "vram" | "ram" | "none";
 
 // Wire values MUST match the Rust `FitVerdict` enum's serde snake_case form
 // (src-tauri/src/fit.rs).

@@ -22,6 +22,9 @@ export const pickGalleryDir = () => invoke<string | null>("pick_gallery_dir");
 /** Open a folder (or file) in the OS file manager / default app. */
 export const openFolder = (path: string) => invoke<void>("open_path", { path });
 
+/** Open an external https URL in the user's default browser. */
+export const openExternal = (url: string) => invoke<void>("open_url", { url });
+
 export const imageSrc = (path: string) => convertFileSrc(path);
 
 export const onProgress = (cb: (p: ProgressUpdate) => void): Promise<UnlistenFn> =>
@@ -45,8 +48,8 @@ export const listRecipes = () => invoke<RecipeInfo[]>("list_recipes");
 
 export const listLibrary = () => invoke<LibraryEntry[]>("list_library");
 
-export const catalogEntries = (vramTotalMb: number | null) =>
-  invoke<RatedCatalogEntry[]>("catalog_entries", { vramTotalMb });
+export const catalogEntries = (vramTotalMb: number | null, ramTotalMb: number | null) =>
+  invoke<RatedCatalogEntry[]>("catalog_entries", { vramTotalMb, ramTotalMb });
 
 export const addCatalogModel = (catalogId: string) =>
   invoke<LibraryEntry>("add_catalog_model", { catalogId });
