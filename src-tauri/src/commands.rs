@@ -340,6 +340,17 @@ pub fn open_path(path: String) -> Result<(), String> {
     tauri_plugin_opener::open_path(path, None::<&str>).map_err(|e| e.to_string())
 }
 
+/// Open an external URL in the user's default browser (e.g. a catalog entry's
+/// source page, so we honestly surface where a model is downloaded from).
+/// https-only, to avoid opening arbitrary local/file schemes.
+#[tauri::command]
+pub fn open_url(url: String) -> Result<(), String> {
+    if !url.starts_with("https://") {
+        return Err("only https URLs may be opened".into());
+    }
+    tauri_plugin_opener::open_url(url, None::<&str>).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub async fn pick_gallery_dir(app: AppHandle) -> Option<String> {
     use tauri_plugin_dialog::DialogExt;

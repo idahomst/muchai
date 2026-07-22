@@ -1,6 +1,6 @@
 <script lang="ts">
   import { get } from "svelte/store";
-  import { catalogEntries, addCatalogModel, addUrlModel, addLocalModel, pickModelFile } from "../api";
+  import { catalogEntries, addCatalogModel, addUrlModel, addLocalModel, pickModelFile, openExternal } from "../api";
   import { settings, runDownload, downloadBusy, downloadProgress, downloadError } from "../stores";
   import { suitabilityBadge, formatBytes, catalogTotalBytes } from "../modelFormat";
   import DownloadProgressBar from "./DownloadProgressBar.svelte";
@@ -37,6 +37,19 @@
     if (await runDownload(fn)) onClose();
   }
 
+  // Which catalog entry is currently downloading, so its progress bar renders
+  // inline under that row (not at the bottom of the whole list). Cleared when
+  // the download settles (success closes the dialog; failure returns here).
+  let downloadingId = $state<string | null>(null);
+  async function runCatalog(id: string) {
+    downloadingId = id;
+    try {
+      await run(() => addCatalogModel(id));
+    } finally {
+      downloadingId = null;
+    }
+  }
+
   async function pickLocal() {
     const picked = await pickModelFile(get(settings)?.models_dir ?? undefined);
     if (picked) localPath = picked;
@@ -65,13 +78,21 @@
         {#each catalog as e (e.id)}
           {@const b = suitabilityBadge(e.suitability, e.basis)}
           <li>
-            <div class="ci">
-              <b>{e.name}</b>
-              <span class="fam">{e.family} · {formatBytes(catalogTotalBytes(e))}</span>
-              <span class="fit {b.tone}">{b.text}</span>
-              <span class="lic">{e.license}</span>
+            <div class="row">
+              <div class="ci">
+                <b>{e.name}</b>
+                <span class="fam">{e.family} · {formatBytes(catalogTotalBytes(e))}</span>
+                <span class="fit {b.tone}">{b.text}</span>
+                <span class="lic">{e.license}</span>
+                {#if e.source_url}
+                  <button type="button" class="src" title={e.source_url} onclick={() => openExternal(e.source_url)}>Source ↗</button>
+                {/if}
+              </div>
+              <button disabled={$downloadBusy} onclick={() => runCatalog(e.id)}>Add</button>
             </div>
-            <button disabled={$downloadBusy} onclick={() => run(() => addCatalogModel(e.id))}>Add</button>
+            {#if downloadingId === e.id && $downloadBusy}
+              <div class="progress"><DownloadProgressBar progress={$downloadProgress} /></div>
+            {/if}
           </li>
         {/each}
       </ul>
@@ -98,7 +119,7 @@
       </div>
     {/if}
 
-    {#if $downloadBusy}
+    {#if $downloadBusy && tab !== "catalog"}
       <div class="progress"><DownloadProgressBar progress={$downloadProgress} /></div>
     {/if}
   </div>
@@ -114,9 +135,11 @@
   .tabs button.active { background: var(--accent-tint); border-color: var(--accent); }
   .vram-note { font-size: 12px; opacity: .75; margin: 0 0 8px; }
   .catalog { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-  .catalog li { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px; border: 1px solid var(--border); border-radius: 6px; }
-  .ci { display: flex; flex-direction: column; gap: 2px; }
+  .catalog li { display: flex; flex-direction: column; gap: 8px; padding: 8px; border: 1px solid var(--border); border-radius: 6px; }
+  .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .ci { display: flex; flex-direction: column; gap: 2px; align-items: flex-start; }
   .fam, .lic { font-size: 11px; opacity: .6; }
+  .src { background: none; border: none; padding: 0; margin-top: 2px; font-size: 11px; color: var(--accent); cursor: pointer; text-decoration: underline; }
   .fit { font-size: 11px; }
   .fit.good { color: var(--success); } .fit.warn { color: var(--warn); } .fit.bad { color: var(--danger); } .fit.muted { opacity: .6; }
   .form { display: flex; flex-direction: column; gap: 10px; }
