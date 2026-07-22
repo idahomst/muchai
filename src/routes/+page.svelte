@@ -24,7 +24,11 @@
   let showNew = $state(false);
   let editing = $state<LibraryEntry | null>(null);
   let vramTotalMb = $state<number | null>(null);
-  sysStats.subscribe((s) => { vramTotalMb = s?.gpu?.vram_total_mb ?? null; });
+  let ramTotalMb = $state<number | null>(null);
+  sysStats.subscribe((s) => {
+    vramTotalMb = s?.gpu?.vram_total_mb ?? null;
+    ramTotalMb = s?.ram_total_mb ?? null;
+  });
 
   // Persist dismissal optimistically; the dialog stays closed this session even
   // if the write fails (onboarding is non-critical — worst case it shows once
@@ -105,7 +109,7 @@
 {/if}
 
 {#if showNew}
-  <NewModelDialog {vramTotalMb} onClose={() => (showNew = false)} />
+  <NewModelDialog {vramTotalMb} {ramTotalMb} onClose={() => (showNew = false)} />
 {/if}
 {#if editing}
   <ModelEditor entry={editing} onClose={() => (editing = null)} />

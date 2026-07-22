@@ -45,8 +45,8 @@ export const listRecipes = () => invoke<RecipeInfo[]>("list_recipes");
 
 export const listLibrary = () => invoke<LibraryEntry[]>("list_library");
 
-export const catalogEntries = (vramTotalMb: number | null) =>
-  invoke<RatedCatalogEntry[]>("catalog_entries", { vramTotalMb });
+export const catalogEntries = (vramTotalMb: number | null, ramTotalMb: number | null) =>
+  invoke<RatedCatalogEntry[]>("catalog_entries", { vramTotalMb, ramTotalMb });
 
 export const addCatalogModel = (catalogId: string) =>
   invoke<LibraryEntry>("add_catalog_model", { catalogId });

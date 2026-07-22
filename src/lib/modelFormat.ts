@@ -1,4 +1,4 @@
-import type { LibraryEntry, Suitability, ModelRef, CatalogEntry } from "./types";
+import type { LibraryEntry, Suitability, RatingBasis, ModelRef, CatalogEntry } from "./types";
 
 /** Bytes → compact decimal size, e.g. 6_780_000_000 → "6.8 GB". Model/catalog
  *  sizes are decimal (matching HuggingFace), so divide by 1000, not 1024. */
@@ -35,8 +35,20 @@ export function sameModel(a: ModelRef, b: ModelRef): boolean {
   return false;
 }
 
-/** VRAM-fit badge text + tone for a catalog row. */
-export function suitabilityBadge(s: Suitability): { text: string; tone: "good" | "warn" | "bad" | "muted" } {
+/** Fit badge text + tone for a catalog row. When `basis` is "ram" (no GPU found)
+ *  the copy names RAM and flags that CPU generation is slow. */
+export function suitabilityBadge(
+  s: Suitability,
+  basis: RatingBasis = "vram",
+): { text: string; tone: "good" | "warn" | "bad" | "muted" } {
+  if (basis === "ram") {
+    switch (s) {
+      case "recommended": return { text: "Fits in RAM · CPU: slow", tone: "good" };
+      case "tight": return { text: "Tight in RAM · CPU: slow", tone: "warn" };
+      case "too_big": return { text: "Too big for RAM", tone: "bad" };
+      default: return { text: "Unknown", tone: "muted" };
+    }
+  }
   switch (s) {
     case "recommended": return { text: "Recommended", tone: "good" };
     case "tight": return { text: "Tight fit", tone: "warn" };

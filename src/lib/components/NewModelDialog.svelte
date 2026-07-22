@@ -6,7 +6,7 @@
   import DownloadProgressBar from "./DownloadProgressBar.svelte";
   import type { RatedCatalogEntry } from "../types";
 
-  let { vramTotalMb, onClose }: { vramTotalMb: number | null; onClose: () => void } = $props();
+  let { vramTotalMb, ramTotalMb, onClose }: { vramTotalMb: number | null; ramTotalMb: number | null; onClose: () => void } = $props();
 
   type Tab = "catalog" | "url" | "local";
   let tab = $state<Tab>("catalog");
@@ -14,11 +14,17 @@
 
   let catalog = $state<RatedCatalogEntry[]>([]);
   $effect(() => {
-    catalogEntries(vramTotalMb).then((c) => (catalog = c)).catch((e) => (catalogError = String(e)));
+    catalogEntries(vramTotalMb, ramTotalMb).then((c) => (catalog = c)).catch((e) => (catalogError = String(e)));
   });
 
-  // VRAM is reported in MiB; show it in GB so the fit badge has visible basis.
-  const vramLabel = $derived(vramTotalMb ? `${+(vramTotalMb / 1024).toFixed(1)} GB` : "unknown");
+  // Show what fit is rated against: VRAM if a GPU is present, else RAM (CPU path).
+  const fitLabel = $derived(
+    vramTotalMb
+      ? `Your VRAM: ${+(vramTotalMb / 1024).toFixed(1)} GB`
+      : ramTotalMb
+        ? `No GPU detected — fit vs. RAM: ${+(ramTotalMb / 1024).toFixed(1)} GB (CPU generation is slow)`
+        : "Hardware unknown — fit not rated",
+  );
 
   let url = $state("");
   let urlName = $state("");
@@ -54,10 +60,10 @@
     {#if $downloadError}<p class="error">{$downloadError}</p>{/if}
 
     {#if tab === "catalog"}
-      <p class="vram-note">Your VRAM: <b>{vramLabel}</b></p>
+      <p class="vram-note">{fitLabel}</p>
       <ul class="catalog">
         {#each catalog as e (e.id)}
-          {@const b = suitabilityBadge(e.suitability)}
+          {@const b = suitabilityBadge(e.suitability, e.basis)}
           <li>
             <div class="ci">
               <b>{e.name}</b>
