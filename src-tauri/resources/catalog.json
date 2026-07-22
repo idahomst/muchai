@@ -114,21 +114,6 @@
       "recommended_vram_mb": 8192
     },
     {
-      "id": "sd35-large-turbo-q4",
-      "name": "SD 3.5 Large Turbo (GGUF Q4_0)",
-      "family": "sd3",
-      "license": "Stability AI Community License",
-      "source_url": "https://huggingface.co/city96/stable-diffusion-3.5-large-turbo-gguf",
-      "diffusion": {
-        "url": "https://huggingface.co/city96/stable-diffusion-3.5-large-turbo-gguf/resolve/main/sd3.5_large_turbo-Q4_0.gguf",
-        "filename": "sd3.5_large_turbo-Q4_0.gguf",
-        "size_bytes": 4772054752
-      },
-      "shared": [],
-      "min_vram_mb": 6144,
-      "recommended_vram_mb": 8192
-    },
-    {
       "id": "flux2-klein-9b-q4",
       "name": "FLUX.2 klein 9B (GGUF Q4_0)",
       "family": "flux2",
@@ -174,21 +159,6 @@
       "recommended_vram_mb": 12288
     },
     {
-      "id": "sd35-large-q5",
-      "name": "SD 3.5 Large (GGUF Q5_0)",
-      "family": "sd3",
-      "license": "Stability AI Community License",
-      "source_url": "https://huggingface.co/city96/stable-diffusion-3.5-large-gguf",
-      "diffusion": {
-        "url": "https://huggingface.co/city96/stable-diffusion-3.5-large-gguf/resolve/main/sd3.5_large-Q5_0.gguf",
-        "filename": "sd3.5_large-Q5_0.gguf",
-        "size_bytes": 5773844192
-      },
-      "shared": [],
-      "min_vram_mb": 8192,
-      "recommended_vram_mb": 12288
-    },
-    {
       "id": "flux2-klein-9b-q8",
       "name": "FLUX.2 klein 9B (GGUF Q8_0)",
       "family": "flux2",
@@ -202,21 +172,6 @@
       "shared": [],
       "min_vram_mb": 10240,
       "recommended_vram_mb": 12288
-    },
-    {
-      "id": "sd35-large-q8",
-      "name": "SD 3.5 Large (GGUF Q8_0)",
-      "family": "sd3",
-      "license": "Stability AI Community License",
-      "source_url": "https://huggingface.co/city96/stable-diffusion-3.5-large-gguf",
-      "diffusion": {
-        "url": "https://huggingface.co/city96/stable-diffusion-3.5-large-gguf/resolve/main/sd3.5_large-Q8_0.gguf",
-        "filename": "sd3.5_large-Q8_0.gguf",
-        "size_bytes": 8779212512
-      },
-      "shared": [],
-      "min_vram_mb": 12288,
-      "recommended_vram_mb": 16384
     },
     {
       "id": "qwen-image-q4ks",

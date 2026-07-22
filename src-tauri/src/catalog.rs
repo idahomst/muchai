@@ -394,8 +394,11 @@ mod tests {
         // Tier floor + ceiling present.
         assert!(entries.iter().any(|e| e.recommended_vram_mb <= 4096), "need an ultra-light entry");
         assert!(entries.iter().any(|e| e.recommended_vram_mb > 16000), "need a 24GB-tier entry");
-        // Every engine family represented.
-        for fam in ["sd15", "sdxl", "flux1", "flux2", "sd3", "qwen-image", "z-image"] {
+        // Every engine family represented. `sd3` is intentionally excluded: the
+        // only ungated SD3.5 GGUFs (city96 lineage) decode to a degenerate
+        // constant latent ("blue square") under the pinned engine, so we ship no
+        // SD3.5 catalog entry. The sd3 recipe stays for manual multi-file adds.
+        for fam in ["sd15", "sdxl", "flux1", "flux2", "qwen-image", "z-image"] {
             assert!(entries.iter().any(|e| e.family == fam), "family {fam} missing from catalog");
         }
     }
