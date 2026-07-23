@@ -168,11 +168,23 @@ pub fn delete_image(image_path: String) -> Result<(), String> {
     gallery::delete_to_trash(std::path::Path::new(&image_path))
 }
 
+/// Fixed path for the live-preview draft the engine overwrites during a run.
+/// In the OS temp dir (tmpfs on Linux) so the tiny, constantly-rewritten file
+/// is RAM-backed and cleared on reboot. Safe as a fixed (non-unique) path
+/// because generation is single-flight (one `child` slot in AppState).
+pub fn preview_path() -> PathBuf {
+    std::env::temp_dir().join("muchai-preview").join("preview.png")
+}
+
 #[tauri::command]
 pub fn cancel_generation(state: State<AppState>) {
     if let Some(mut child) = state.child.lock().unwrap().take() {
         let _ = child.kill();
     }
+    // Remove the live-preview draft immediately so a cancelled run leaves
+    // nothing behind. The run's own cleanup (in `generate`) also deletes it,
+    // but cancel may win the race. Best-effort.
+    let _ = std::fs::remove_file(preview_path());
 }
 
 #[tauri::command]
@@ -231,7 +243,20 @@ pub async fn generate(
         // One-time, payload-free signal; the note text lives in the frontend.
         let _ = app.emit("generation:low_vram_auto", ());
     }
-    let engine_opts = crate::command_builder::EngineOptions { low_vram, ..Default::default() };
+    // Live preview: when enabled, the engine writes a rough draft to a fixed
+    // file every 2 steps; the frontend reloads it on each progress tick.
+    let preview = if cfg.live_preview { Some(preview_path()) } else { None };
+    if let Some(p) = &preview {
+        if let Some(dir) = p.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        // Tell the frontend where the draft will appear (file arrives ~step 2).
+        let _ = app.emit("generation:preview", p.to_string_lossy().to_string());
+    }
+    let engine_opts = crate::command_builder::EngineOptions {
+        low_vram,
+        preview_path: preview.as_ref().map(|p| p.to_string_lossy().into_owned()),
+    };
 
     // Run the (blocking) engine on a worker thread so the async command yields.
     let result = tauri::async_runtime::spawn_blocking(move || {
@@ -241,6 +266,12 @@ pub async fn generate(
     })
     .await
     .map_err(|e| e.to_string())?;
+
+    // The engine has exited, so no more preview writes: remove the draft file
+    // regardless of outcome (success, error, or cancel). Best-effort.
+    if let Some(p) = &preview {
+        let _ = std::fs::remove_file(p);
+    }
 
     match result {
         Ok(seeds) => {
@@ -1005,5 +1036,12 @@ mod tests {
         let dev = recommended_for_family("flux1", "flux1-dev.safetensors").unwrap();
         assert_eq!(dev.steps, 20);
         assert!(recommended_for_family("custom", "whatever.safetensors").is_none());
+    }
+
+    #[test]
+    fn preview_path_is_under_temp_muchai_preview() {
+        let p = super::preview_path();
+        assert!(p.ends_with("muchai-preview/preview.png"), "got {p:?}");
+        assert!(p.starts_with(std::env::temp_dir()), "must live under the OS temp dir");
     }
 }

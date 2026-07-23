@@ -41,6 +41,14 @@ pub fn run() {
             // images load even when it's not the default location.
             let _ = app.asset_protocol_scope().allow_directory(&gallery_dir, true);
 
+            // Allow the live-preview directory so convertFileSrc can load the
+            // draft file the engine writes during generation.
+            let preview_file = commands::preview_path();
+            if let Some(dir) = preview_file.parent() {
+                let _ = std::fs::create_dir_all(dir);
+                let _ = app.asset_protocol_scope().allow_directory(dir, true);
+            }
+
             // Background system-stats loop: emit "system:stats" ~every second,
             // keyed to the device the user has selected for generation.
             let handle = app.handle().clone();
