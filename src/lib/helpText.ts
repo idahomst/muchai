@@ -6,7 +6,7 @@ export const HELP = {
   prompt:
     "Describe the image you want — subject, style, colors, mood. Be specific, e.g. 'a red fox in a snowy forest, watercolor'.",
   negativePrompt:
-    "Things you DON'T want in the image (e.g. 'blurry, text, extra fingers'). Optional — fine to leave empty.",
+    "Things you DON'T want in the image (e.g. 'blurry, text, extra fingers'). Optional. It only works on models that use guidance — Stable Diffusion (1.5 / XL) and Qwen-Image. The fast 'turbo' models (FLUX, Z-Image) ignore it, so you can leave it empty for those.",
   // SettingsPanel
   steps:
     "How many passes the AI makes to refine the image. More can add detail but takes longer. 20 is a good starting point.",
