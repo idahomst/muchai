@@ -10,6 +10,7 @@
   // Absolute path the engine writes the live draft to for the current run;
   // null when preview is off or no run is active. Set by the onPreview event.
   let previewPath: string | null = null;
+  let previewTick = 0;
 
   async function run() {
     const req = get(request);
@@ -18,6 +19,7 @@
     genStatus.set({ kind: "running", progress: null });
     lowVramAuto = false;
     previewPath = null;
+    previewTick = 0;
     livePreview.set(null);
     const vram = get(sysStats)?.gpu?.vram_total_mb ?? 0;
     const deviceVramMb = vram > 0 ? vram : null;
@@ -35,6 +37,7 @@
       // Drop the live draft on every outcome (success, error, cancel-as-empty)
       // so the final image / prior view shows and no stale frame lingers.
       previewPath = null;
+      previewTick = 0;
       livePreview.set(null);
     }
   }
@@ -63,7 +66,9 @@
       // Refresh the live draft on each step; ?t busts the webview image cache so
       // the same fixed file path reloads. Steps before the first write 404 →
       // ImagePreview's onerror keeps the prior view.
-      if (previewPath) livePreview.set(imageSrc(previewPath) + "?t=" + p.current_step);
+      // Monotonic per-run counter (NOT p.current_step, which restarts at 1 for
+      // each image in a batch and would collide on the fixed preview path).
+      if (previewPath) livePreview.set(imageSrc(previewPath) + "?t=" + (++previewTick));
     });
     const unNotice = onGenNotice(() => { lowVramAuto = true; });
     const unPreview = onPreview((path) => { previewPath = path; });
