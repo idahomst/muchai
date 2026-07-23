@@ -1,6 +1,7 @@
 <script lang="ts">
   import { sysStats } from "../stores";
   import { version } from "../../../package.json";
+  let { onAbout }: { onAbout: () => void } = $props();
   const gb = (v: number) => (v / 1024).toFixed(1);
 </script>
 
@@ -29,7 +30,7 @@
   {:else}
     <span class="stat">reading system…</span>
   {/if}
-  <span class="ver" title="App version">v{version}</span>
+  <button class="ver" title="About MuchAI" onclick={onAbout}>v{version}</button>
 </div>
 
 <style>
@@ -38,7 +39,9 @@
   .stat { display:inline-flex; gap:.4rem; align-items:baseline; }
   .k { opacity:.7; }
   /* Pushed to the far right of the bar; unobtrusive. */
-  .ver { margin-left:auto; opacity:.55; padding-left:1rem; }
+  .ver { margin-left:auto; opacity:.55; padding-left:1rem; font:inherit;
+    background:none; border:none; cursor:pointer; color:inherit; }
+  .ver:hover { opacity:.9; }
   /* Only the changing number gets a fixed-width, right-aligned box so the unit
      (% / GB) and everything after it never reflow when the digit count changes
      (e.g. 96%→100%, 9.8→10.1 GB). The unit stays glued to the number's right
