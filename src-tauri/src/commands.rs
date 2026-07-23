@@ -259,19 +259,21 @@ pub async fn generate(
     };
 
     // Run the (blocking) engine on a worker thread so the async command yields.
-    let result = tauri::async_runtime::spawn_blocking(move || {
+    let joined = tauri::async_runtime::spawn_blocking(move || {
         engine::run_generation(&binary, &req, &img, backend_owned.as_deref(), engine_opts, &slot, |p| {
             let _ = app2.emit("generation:progress", p);
         })
     })
-    .await
-    .map_err(|e| e.to_string())?;
+    .await;
 
     // The engine has exited, so no more preview writes: remove the draft file
-    // regardless of outcome (success, error, or cancel). Best-effort.
+    // regardless of outcome (success, error, cancel, or a worker-thread panic).
+    // Done before the `?` below so a JoinError can't leak the draft. Best-effort.
     if let Some(p) = &preview {
         let _ = std::fs::remove_file(p);
     }
+
+    let result = joined.map_err(|e| e.to_string())?;
 
     match result {
         Ok(seeds) => {
