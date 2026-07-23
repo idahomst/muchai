@@ -1,43 +1,59 @@
 :root {
-  /* Core surfaces / text / lines — dark defaults (current look). */
-  --bg: #1b1b1f;
-  --surface: #2a2a30;
-  --dialog-bg: #1e1e1e;
-  --text: #e8e8ea;
-  --text-muted: #9a9aa2;
-  --border: #333;
-  --border-subtle: rgba(255,255,255,.1);
-  --accent: #4f7cff;
-  --accent-bright: #6ea8fe;
-  --accent-tint: rgba(110,168,254,.12);
+  /* ---- Layered neutral surfaces (dark = default) ---- */
+  --bg: #0f1115;              /* deepest app background */
+  --surface: #16181d;         /* panels, right pane */
+  --dialog-bg: #16181d;       /* dialog body */
+  --card: #1c1f26;            /* model rows, inputs, elevated cards */
+  --card-hover: #22262f;      /* hover state for cards/rows */
+  /* ---- Text ---- */
+  --text: #e6e8ec;
+  --text-muted: #9ba1ad;      /* labels, secondary */
+  --text-faint: #6b7280;      /* hints, units, tertiary */
+  /* ---- Lines ---- */
+  --border: #262a33;          /* default hairline */
+  --border-strong: #333845;   /* hover/focus edge, dividers */
+  --border-subtle: rgba(255,255,255,.06);
+  /* ---- Accent (violet — primary action + selected state ONLY) ---- */
+  --accent: #7c5cff;
+  --accent-bright: #9179ff;
+  --accent-tint: rgba(124,92,255,.16);   /* legacy name; == accent-soft */
+  --accent-soft: rgba(124,92,255,.16);
   --on-accent: #fff;
-  /* Status. */
-  --danger: #ff6b6b;
-  --danger-soft: #ffb4b4;
+  /* ---- Status ---- */
+  --danger: #e5484d;
+  --danger-soft: #ff8f92;
   --danger-bg: rgba(180,40,40,.85);
-  --danger-tint: rgba(255,80,80,.15);
-  --warn: #ffd9a8;
-  --warn-tint: rgba(255,180,80,.15);
-  --success: #4caf83;
-  /* Overlays (sit on dark image pixels — unchanged in light). */
+  --danger-tint: rgba(229,72,77,.15);
+  --warn: #e0a83b;
+  --warn-tint: rgba(224,168,59,.15);
+  --success: #3fb950;
+  /* ---- Overlays (sit on dark image pixels — unchanged in light) ---- */
   --overlay: rgba(0,0,0,.6);
   --overlay-soft: rgba(0,0,0,.2);
-  --backdrop: rgba(0,0,0,.5);
+  --backdrop: rgba(0,0,0,.55);
+  /* ---- Shape scale (px — radii do not scale with root font size) ---- */
+  --radius: 10px;
+  --radius-sm: 7px;
   color-scheme: dark;
 }
 
 :root[data-theme="light"] {
-  /* Cool neutral gray. Only tokens that change are overridden. */
-  --bg: #f4f4f6;
+  /* Only tokens that differ from dark are overridden. */
+  --bg: #f5f6f8;
   --surface: #ffffff;
   --dialog-bg: #ffffff;
-  --text: #1d1d20;
-  --text-muted: #6b6b75;
-  --border: #dcdce3;
-  --border-subtle: rgba(0,0,0,.08);
-  --accent: #3a63d6;
-  --accent-bright: #2a4fb0;
-  --accent-tint: rgba(58,99,214,.10);
+  --card: #ffffff;
+  --card-hover: #f2f3f6;
+  --text: #1a1d21;
+  --text-muted: #5b6270;
+  --text-faint: #8a909b;
+  --border: #e1e4e9;
+  --border-strong: #d2d6dd;
+  --border-subtle: rgba(0,0,0,.06);
+  --accent: #6a45e0;            /* deeper violet for AA contrast on white */
+  --accent-bright: #5636c4;
+  --accent-tint: rgba(106,69,224,.12);
+  --accent-soft: rgba(106,69,224,.12);
   --danger: #c8362f;
   --danger-soft: #c8362f;
   --danger-bg: #c8362f;
