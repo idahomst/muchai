@@ -39,6 +39,12 @@ APPIMAGE_DIR="src-tauri/target/release/bundle/appimage"
 APPDIR="$APPIMAGE_DIR/muchai.AppDir"
 PLUGIN="$HOME/.cache/tauri/linuxdeploy-plugin-appimage.AppImage"
 
+# Derive the release version from the same source the Tauri bundler uses, so the
+# repacked AppImage keeps the exact name Tauri produced (never hardcode it —
+# a stale literal silently ships the wrong filename on every version bump).
+VERSION="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+APPIMAGE_NAME="muchai_${VERSION}_amd64.AppImage"
+
 echo ">> tauri build (appimage)…"
 npm run tauri build -- --bundles appimage
 
@@ -57,9 +63,9 @@ find "$APPDIR/usr/lib" \
 
 echo ">> repacking AppImage without host GPU libs…"
 ( cd "$APPIMAGE_DIR" \
-  && ARCH=x86_64 OUTPUT="muchai_0.1.0_amd64.AppImage" \
+  && ARCH=x86_64 OUTPUT="$APPIMAGE_NAME" \
      APPIMAGE_EXTRACT_AND_RUN=1 \
      "$PLUGIN" --appdir muchai.AppDir )
 
 echo ">> done:"
-ls -lh "$APPIMAGE_DIR"/muchai_0.1.0_amd64.AppImage
+ls -lh "$APPIMAGE_DIR/$APPIMAGE_NAME"

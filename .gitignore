@@ -1,6 +1,9 @@
 # Brainstorming scratch (visual companion mockups)
 .superpowers/
 
+# Internal design/plan docs (AI-workflow artifacts; kept locally, not published)
+docs/superpowers/
+
 # Rust / Tauri
 /target/
 src-tauri/target/
