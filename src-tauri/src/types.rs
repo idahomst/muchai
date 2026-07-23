@@ -295,6 +295,12 @@ pub struct DownloadProgress {
     pub file_name: Option<String>,
 }
 
+/// serde default for `AppConfig.live_preview`: ON. Pre-feature config files
+/// lack the key and must default to true (the feature is enabled by default).
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AppConfig {
     pub sd_binary_path: Option<String>, // None => use bundled sidecar
@@ -333,6 +339,11 @@ pub struct AppConfig {
     /// so models larger than VRAM can run (slower). Old configs default to false.
     #[serde(default)]
     pub low_vram: bool,
+    /// Show a rough live draft of the image as it generates (engine
+    /// `--preview proj`). Default ON; pre-feature configs lack the key and
+    /// default to true via `default_true`.
+    #[serde(default = "default_true")]
+    pub live_preview: bool,
     pub last_request: GenerationRequest,
 }
 
@@ -565,6 +576,32 @@ mod tests {
         let cfg: AppConfig = serde_json::from_str(json).unwrap();
         assert!(cfg.hf_token.is_none());
         assert!(cfg.civitai_token.is_none());
+    }
+
+    #[test]
+    fn app_config_live_preview_defaults_to_true_and_round_trips() {
+        // A config JSON written before this feature lacks the key: it must
+        // deserialize with live_preview = true (feature default ON).
+        let legacy = r#"{
+            "sd_binary_path": null,
+            "default_model_path": null,
+            "gallery_dir": "/g",
+            "last_request": {
+                "model": {"type": "single_file", "path": ""},
+                "prompt": "", "negative_prompt": "",
+                "steps": 20, "cfg_scale": 7.0, "sampler": "euler_a",
+                "width": 512, "height": 512, "seed": -1, "batch_count": 1
+            }
+        }"#;
+        let cfg: AppConfig = serde_json::from_str(legacy).unwrap();
+        assert!(cfg.live_preview, "missing key must default to true");
+
+        // And an explicit false survives a serialize/deserialize round-trip.
+        let mut off = cfg.clone();
+        off.live_preview = false;
+        let json = serde_json::to_string(&off).unwrap();
+        let back: AppConfig = serde_json::from_str(&json).unwrap();
+        assert!(!back.live_preview);
     }
 
     #[test]

@@ -30,6 +30,11 @@ export const imageSrc = (path: string) => convertFileSrc(path);
 export const onProgress = (cb: (p: ProgressUpdate) => void): Promise<UnlistenFn> =>
   listen<ProgressUpdate>("generation:progress", (e) => cb(e.payload));
 
+/** Fires once per run (only when live preview is enabled) with the absolute
+ *  path the engine will overwrite with the draft image. */
+export const onPreview = (cb: (path: string) => void): Promise<UnlistenFn> =>
+  listen<string>("generation:preview", (e) => cb(e.payload));
+
 /** Fires once per run when the backend auto-engaged Low-VRAM mode for it. */
 export const onGenNotice = (cb: () => void): Promise<UnlistenFn> =>
   listen("generation:low_vram_auto", () => cb());

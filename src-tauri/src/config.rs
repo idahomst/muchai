@@ -41,6 +41,7 @@ pub fn default_config() -> AppConfig {
         hf_token: None,
         civitai_token: None,
         low_vram: false,
+        live_preview: true,
         last_request: GenerationRequest::default(),
     }
 }

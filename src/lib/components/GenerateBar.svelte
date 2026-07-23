@@ -1,11 +1,16 @@
 <script lang="ts">
   import { get } from "svelte/store";
   import { onMount } from "svelte";
-  import { request, genStatus, history, currentImage, currentItem, settings, gpuDevices, sysStats } from "../stores";
-  import { generate, cancelGeneration, imageSrc, listHistory, onProgress, onGenNotice } from "../api";
+  import { request, genStatus, history, currentImage, currentItem, settings, gpuDevices, sysStats, livePreview } from "../stores";
+  import { generate, cancelGeneration, imageSrc, listHistory, onProgress, onGenNotice, onPreview } from "../api";
   import { modelIsSet } from "../types";
 
   let lowVramAuto = false;
+
+  // Absolute path the engine writes the live draft to for the current run;
+  // null when preview is off or no run is active. Set by the onPreview event.
+  let previewPath: string | null = null;
+  let previewTick = 0;
 
   async function run() {
     const req = get(request);
@@ -13,6 +18,9 @@
     if (!req.prompt.trim()) { genStatus.set({ kind: "error", message: "Enter a prompt." }); return; }
     genStatus.set({ kind: "running", progress: null });
     lowVramAuto = false;
+    previewPath = null;
+    previewTick = 0;
+    livePreview.set(null);
     const vram = get(sysStats)?.gpu?.vram_total_mb ?? 0;
     const deviceVramMb = vram > 0 ? vram : null;
     try {
@@ -25,6 +33,12 @@
       genStatus.set({ kind: "idle" });
     } catch (e) {
       genStatus.set({ kind: "error", message: String(e) });
+    } finally {
+      // Drop the live draft on every outcome (success, error, cancel-as-empty)
+      // so the final image / prior view shows and no stale frame lingers.
+      previewPath = null;
+      previewTick = 0;
+      livePreview.set(null);
     }
   }
   $: pct = $genStatus.kind === "running" && $genStatus.progress
@@ -47,9 +61,18 @@
   })();
 
   onMount(() => {
-    const un = onProgress((p) => genStatus.update((s) => s.kind === "running" ? { kind: "running", progress: p } : s));
+    const un = onProgress((p) => {
+      genStatus.update((s) => s.kind === "running" ? { kind: "running", progress: p } : s);
+      // Refresh the live draft on each step; ?t busts the webview image cache so
+      // the same fixed file path reloads. Steps before the first write 404 →
+      // ImagePreview's onerror keeps the prior view.
+      // Monotonic per-run counter (NOT p.current_step, which restarts at 1 for
+      // each image in a batch and would collide on the fixed preview path).
+      if (previewPath) livePreview.set(imageSrc(previewPath) + "?t=" + (++previewTick));
+    });
     const unNotice = onGenNotice(() => { lowVramAuto = true; });
-    return () => { un.then((f) => f()); unNotice.then((f) => f()); };
+    const unPreview = onPreview((path) => { previewPath = path; });
+    return () => { un.then((f) => f()); unNotice.then((f) => f()); unPreview.then((f) => f()); };
   });
 </script>
 

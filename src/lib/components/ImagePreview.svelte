@@ -1,7 +1,13 @@
 <script lang="ts">
   import { get } from "svelte/store";
-  import { currentImage, currentItem, history, request } from "../stores";
+  import { currentImage, currentItem, history, request, livePreview } from "../stores";
   import { deleteImage, listHistory, imageSrc } from "../api";
+
+  // The live draft (if any) wins over the settled image. When a draft 404s
+  // (engine hasn't written the first frame yet) we clear it so the fallback
+  // shows and never render a broken-image icon.
+  const shown = $derived($livePreview ?? $currentImage);
+  const isPreview = $derived($livePreview !== null);
 
   let confirming = $state(false);
   let busy = $state(false);
@@ -42,18 +48,23 @@
 </script>
 
 <div class="preview">
-  {#if $currentImage}
-    <img src={$currentImage} alt="generated result" />
-    <div class="actions">
-      {#if confirming}
-        <span class="ask">Move to trash?</span>
-        <button class="del" onclick={doDelete} disabled={busy}>Delete</button>
-        <button onclick={cancel} disabled={busy}>Cancel</button>
-      {:else}
-        <button class="del" onclick={() => (confirming = true)} disabled={!$currentItem}>Delete</button>
-      {/if}
-    </div>
-    {#if error}<span class="err">{error}</span>{/if}
+  {#if shown}
+    <img src={shown} alt={isPreview ? "generation preview" : "generated result"}
+      onerror={() => { if (isPreview) livePreview.set(null); }} />
+    {#if isPreview}
+      <span class="badge">Preview</span>
+    {:else}
+      <div class="actions">
+        {#if confirming}
+          <span class="ask">Move to trash?</span>
+          <button class="del" onclick={doDelete} disabled={busy}>Delete</button>
+          <button onclick={cancel} disabled={busy}>Cancel</button>
+        {:else}
+          <button class="del" onclick={() => (confirming = true)} disabled={!$currentItem}>Delete</button>
+        {/if}
+      </div>
+      {#if error}<span class="err">{error}</span>{/if}
+    {/if}
   {:else}
     <div class="empty">
       <p class="empty-title">Your image will appear here.</p>
@@ -71,6 +82,8 @@
   .actions button:disabled { opacity:.5; cursor:default; }
   .del { background:var(--danger-bg); color:var(--on-accent); border:none; border-radius:5px; }
   .ask { font-size:.75rem; background:var(--overlay); color:var(--on-accent); padding:.25rem .5rem; border-radius:5px; }
+  .badge { position:absolute; top:.5rem; right:.5rem; font-size:.7rem; letter-spacing:.03em;
+    background:var(--overlay); color:var(--on-accent); padding:.25rem .55rem; border-radius:5px; }
   .err { position:absolute; bottom:.5rem; left:.5rem; right:.5rem; color:var(--danger-soft); font-size:.75rem;
     background:var(--overlay); padding:.3rem .5rem; border-radius:5px; }
   .empty { opacity:.55; text-align:center; padding:1rem; }
