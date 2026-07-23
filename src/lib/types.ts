@@ -168,6 +168,10 @@ export interface AppConfig {
   // Low-VRAM offload mode (mirrors Rust AppConfig.low_vram, #[serde(default)] →
   // false for old configs). When on, generation pages weights from RAM.
   low_vram: boolean;
+  // Show a rough live draft as the image generates (mirrors Rust
+  // AppConfig.live_preview, #[serde(default = "default_true")] → true for old
+  // configs).
+  live_preview: boolean;
 }
 
 export const defaultRequest = (): GenerationRequest => ({

@@ -8,6 +8,10 @@ export const settings = writable<AppConfig | null>(null);
 export const history = writable<GalleryItem[]>([]);
 export const gpuDevices = writable<GpuDevice[]>([]);
 export const currentImage = writable<string | null>(null); // converted asset src
+// Live-preview frame during a run: a convertFileSrc()'d asset URL with a
+// cache-busting ?t=<step> query, or null when no run is showing a draft.
+// Takes visual precedence over currentImage while set (see ImagePreview).
+export const livePreview = writable<string | null>(null);
 export const currentItem = writable<GalleryItem | null>(null); // params behind the previewed image
 export const sysStats = writable<SystemStats | null>(null);
 
