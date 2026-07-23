@@ -1,8 +1,10 @@
 [package]
 name = "muchai"
 version = "1.0.0"
-description = "A Tauri App"
-authors = ["you"]
+description = "Local, offline text-to-image desktop app — make images from text right on your own machine."
+authors = ["Martin Stepanek <idaho@mst.cz>"]
+license = "MIT"
+repository = "https://github.com/idahomst/muchai"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
