@@ -226,10 +226,16 @@ pub fn recipes() -> Vec<ModelRecipe> {
             prediction: None,
             shared: vec![
                 SharedComponent {
+                    // GGUF-quantized Qwen2.5-VL text encoder. The Comfy-Org
+                    // fp8_scaled encoder (9.38GB on disk) expands to ~15.8GB in
+                    // RAM and OOMs the 12GB card; this Q4_K_S GGUF stays ~5.6GB.
+                    // leejet blesses QuantStack diffusion + a Qwen2.5-VL GGUF
+                    // encoder as the working pair — the Comfy-Org fp8 pairing
+                    // rendered a degenerate cyan latent on the pinned engine.
                     role: ComponentRole::Llm,
-                    url: "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
-                    size_bytes: 9_384_670_680,
-                    filename: "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+                    url: "https://huggingface.co/mradermacher/Qwen2.5-VL-7B-Instruct-GGUF/resolve/main/Qwen2.5-VL-7B-Instruct.Q4_K_S.gguf",
+                    size_bytes: 4_457_767_936,
+                    filename: "Qwen2.5-VL-7B-Instruct.Q4_K_S.gguf",
                 },
                 SharedComponent {
                     role: ComponentRole::Vae,
@@ -606,20 +612,21 @@ mod tests {
     }
 
     #[test]
-    fn qwen_image_pool_has_llm_and_vae_and_detects_underscored_llm() {
+    fn qwen_image_pool_has_llm_and_vae_and_detects_llm() {
         let r = recipe_for("qwen-image").unwrap();
         let llm = r.shared.iter().find(|s| s.role == ComponentRole::Llm).unwrap();
-        assert_eq!(llm.filename, "qwen_2.5_vl_7b_fp8_scaled.safetensors");
-        assert_eq!(llm.size_bytes, 9_384_670_680);
+        // GGUF encoder, not the Comfy-Org fp8_scaled (which OOMs the 12GB card).
+        assert_eq!(llm.filename, "Qwen2.5-VL-7B-Instruct.Q4_K_S.gguf");
+        assert_eq!(llm.size_bytes, 4_457_767_936);
         assert!(r.shared.iter().any(|s| s.role == ComponentRole::Vae));
         let files = vec![
-            "qwen-image-Q4_K_S.gguf".to_string(),
-            "qwen_2.5_vl_7b_fp8_scaled.safetensors".to_string(),
+            "Qwen_Image-Q3_K_S.gguf".to_string(),
+            "Qwen2.5-VL-7B-Instruct.Q4_K_S.gguf".to_string(),
             "qwen_image_vae.safetensors".to_string(),
         ];
         let d = detect(&r, &files);
-        assert_eq!(d.get(ComponentRole::Llm), Some("qwen_2.5_vl_7b_fp8_scaled.safetensors"));
-        assert_eq!(d.get(ComponentRole::Diffusion), Some("qwen-image-Q4_K_S.gguf"));
+        assert_eq!(d.get(ComponentRole::Llm), Some("Qwen2.5-VL-7B-Instruct.Q4_K_S.gguf"));
+        assert_eq!(d.get(ComponentRole::Diffusion), Some("Qwen_Image-Q3_K_S.gguf"));
     }
 
     #[test]
