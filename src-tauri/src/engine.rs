@@ -16,6 +16,10 @@ pub enum GenError {
     Spawn(String),
     #[error("engine exited with code {code:?}{}", if *.oom { " (out of memory)" } else { "" })]
     NonZero { code: Option<i32>, stderr_tail: String, oom: bool },
+    /// The run was killed by `cancel_generation` (user pressed Cancel). This is
+    /// not a failure — callers treat it as a clean no-op, not an error.
+    #[error("generation cancelled")]
+    Cancelled,
 }
 
 /// Slot holding the running child so a separate `cancel` call can kill it.
@@ -127,12 +131,9 @@ pub fn run_generation<F: FnMut(ProgressUpdate)>(
 
     // Take the child back and wait for the exit status.
     // Slot is empty only if a cancel (Task 11) already took and killed the child;
-    // that path owns wait()/reap, so we just report cancellation here.
-    let mut child = slot.lock().unwrap().take().ok_or(GenError::NonZero {
-        code: None,
-        stderr_tail: "generation was cancelled".into(),
-        oom: false,
-    })?;
+    // that path owns wait()/reap, so we just report cancellation here. Cancel is
+    // user-initiated, so it's a distinct outcome — not an engine failure.
+    let mut child = slot.lock().unwrap().take().ok_or(GenError::Cancelled)?;
     let status = child.wait().map_err(|e| GenError::Spawn(e.to_string()))?;
 
     if status.success() {

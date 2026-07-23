@@ -296,6 +296,10 @@ pub async fn generate(
             }
             Ok(items)
         }
+        // User pressed Cancel: not a failure. Return no images so the frontend
+        // drops back to idle (keeping the current preview) instead of showing a
+        // red error, ready for the next run.
+        Err(GenError::Cancelled) => Ok(Vec::new()),
         Err(GenError::NonZero { oom: true, .. }) => Err(
             "Out of GPU memory. Try a smaller width/height or batch count.".to_string(),
         ),
