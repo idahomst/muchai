@@ -17,10 +17,12 @@
   import ThemeToggle from "$lib/components/ThemeToggle.svelte";
   import WelcomeDialog from "$lib/components/WelcomeDialog.svelte";
   import PreferencesDialog from "$lib/components/PreferencesDialog.svelte";
+  import AboutDialog from "$lib/components/AboutDialog.svelte";
   import { applyTheme } from "$lib/theme";
 
   let showWelcome = $state(false);
   let showPrefs = $state(false);
+  let showAbout = $state(false);
   let showNew = $state(false);
   let editing = $state<LibraryEntry | null>(null);
   let vramTotalMb = $state<number | null>(null);
@@ -98,7 +100,7 @@
     <HistoryStrip />
   </section>
 </main>
-<ResourceMonitor />
+<ResourceMonitor onAbout={() => (showAbout = true)} />
 
 {#if showWelcome}
   <WelcomeDialog onclose={dismissWelcome} />
@@ -106,6 +108,10 @@
 
 {#if showPrefs}
   <PreferencesDialog onclose={() => (showPrefs = false)} />
+{/if}
+
+{#if showAbout}
+  <AboutDialog onclose={() => (showAbout = false)} />
 {/if}
 
 {#if showNew}
