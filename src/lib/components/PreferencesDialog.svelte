@@ -65,6 +65,24 @@
       }
     });
   }
+
+  // Optimistic save of the live-preview toggle, on the same serialized chain as
+  // low-VRAM / tokens so no save races or is dropped. Reverts on failure.
+  function saveLivePreview(value: boolean) {
+    saveChain = saveChain.then(async () => {
+      const cur = $settings;
+      if (!cur || cur.live_preview === value) return;
+      const next = { ...cur, live_preview: value };
+      settings.set(next);
+      error = null;
+      try {
+        await setSettings(next);
+      } catch (e) {
+        settings.set({ ...($settings ?? cur), live_preview: cur.live_preview });
+        error = String(e);
+      }
+    });
+  }
 </script>
 
 <div class="backdrop" onclick={(e) => { if (e.target === e.currentTarget) onclose(); }} role="presentation">
@@ -118,6 +136,14 @@
           disabled={!$settings}
           onchange={(e) => saveLowVram(e.currentTarget.checked)} />
         <span>Low-VRAM mode <em>(slower; fits bigger models)</em></span>
+      </label>
+      <label class="lowvram">
+        <input
+          type="checkbox"
+          checked={$settings?.live_preview ?? true}
+          disabled={!$settings}
+          onchange={(e) => saveLivePreview(e.currentTarget.checked)} />
+        <span>Live preview <em>(shows a rough draft as it generates so you can cancel early)</em></span>
       </label>
     </section>
 
