@@ -10,7 +10,13 @@
   // Absolute path the engine writes the live draft to for the current run;
   // null when preview is off or no run is active. Set by the onPreview event.
   let previewPath: string | null = null;
-  let previewTick = 0;
+  // Cache-buster for the fixed preview path's `?t=`. MUST be strictly
+  // increasing for the whole session (and unique across sessions) — the
+  // preview file path never changes, so any repeated `?t=` value serves a
+  // stale frame the webview cached on an earlier run. Seed from the clock so
+  // a persisted webview cache from a prior app launch can't collide either;
+  // never reset it per-run.
+  let previewTick = Date.now();
 
   async function run() {
     const req = get(request);
@@ -19,7 +25,6 @@
     genStatus.set({ kind: "running", progress: null });
     lowVramAuto = false;
     previewPath = null;
-    previewTick = 0;
     livePreview.set(null);
     const vram = get(sysStats)?.gpu?.vram_total_mb ?? 0;
     const deviceVramMb = vram > 0 ? vram : null;
@@ -36,8 +41,9 @@
     } finally {
       // Drop the live draft on every outcome (success, error, cancel-as-empty)
       // so the final image / prior view shows and no stale frame lingers.
+      // previewTick is deliberately NOT reset — it must keep increasing across
+      // runs or the next run's `?t=` values collide with this run's cache.
       previewPath = null;
-      previewTick = 0;
       livePreview.set(null);
     }
   }
@@ -66,8 +72,9 @@
       // Refresh the live draft on each step; ?t busts the webview image cache so
       // the same fixed file path reloads. Steps before the first write 404 →
       // ImagePreview's onerror keeps the prior view.
-      // Monotonic per-run counter (NOT p.current_step, which restarts at 1 for
-      // each image in a batch and would collide on the fixed preview path).
+      // Session-monotonic counter (NOT p.current_step, which restarts at 1 per
+      // batch image, and NOT reset per-run — either would repeat a `?t=` value
+      // on the fixed preview path and the webview would serve a stale frame).
       if (previewPath) livePreview.set(imageSrc(previewPath) + "?t=" + (++previewTick));
     });
     const unNotice = onGenNotice(() => { lowVramAuto = true; });
