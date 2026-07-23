@@ -231,7 +231,7 @@ pub async fn generate(
         // One-time, payload-free signal; the note text lives in the frontend.
         let _ = app.emit("generation:low_vram_auto", ());
     }
-    let engine_opts = crate::command_builder::EngineOptions { low_vram };
+    let engine_opts = crate::command_builder::EngineOptions { low_vram, ..Default::default() };
 
     // Run the (blocking) engine on a worker thread so the async command yields.
     let result = tauri::async_runtime::spawn_blocking(move || {

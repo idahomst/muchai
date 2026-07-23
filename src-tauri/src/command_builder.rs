@@ -3,9 +3,12 @@ use crate::types::{GenerationRequest, ModelRef};
 /// Engine knobs that aren't part of the generation request itself. A struct
 /// (not a bare bool) leaves room for the deferred expert controls (--max-vram,
 /// --stream-layers, per-component --backend) without another signature churn.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct EngineOptions {
     pub low_vram: bool,
+    /// When `Some(path)`, enable a live preview written to `path`
+    /// (`--preview proj --preview-interval 2`); `None` disables it.
+    pub preview_path: Option<String>,
 }
 
 /// Build the argument vector for stable-diffusion.cpp's CLI.
@@ -73,6 +76,16 @@ pub fn build_args(
         a.push("--offload-to-cpu".into());
         a.push("--vae-tiling".into());
         a.push("--diffusion-fa".into());
+    }
+    if let Some(p) = &opts.preview_path {
+        // Cheap linear latent→RGB projection written every 2 steps; the app
+        // watches the file to show a live draft so the user can cancel early.
+        a.push("--preview".into());
+        a.push("proj".into());
+        a.push("--preview-path".into());
+        a.push(p.clone());
+        a.push("--preview-interval".into());
+        a.push("2".into());
     }
     a.push("-v".into()); // verbose: ensures progress lines are emitted
     a
@@ -205,7 +218,7 @@ mod tests {
 
     #[test]
     fn low_vram_appends_offload_flags() {
-        let args = build_args(&sample(), "/out/x.png", None, EngineOptions { low_vram: true });
+        let args = build_args(&sample(), "/out/x.png", None, EngineOptions { low_vram: true, ..Default::default() });
         assert!(args.iter().any(|x| x == "--offload-to-cpu"));
         assert!(args.iter().any(|x| x == "--vae-tiling"));
         assert!(args.iter().any(|x| x == "--diffusion-fa"));
@@ -213,8 +226,25 @@ mod tests {
 
     #[test]
     fn low_vram_off_omits_offload_flags() {
-        let args = build_args(&sample(), "/out/x.png", None, EngineOptions { low_vram: false });
+        let args = build_args(&sample(), "/out/x.png", None, EngineOptions { low_vram: false, ..Default::default() });
         for flag in ["--offload-to-cpu", "--vae-tiling", "--diffusion-fa"] {
+            assert!(!args.iter().any(|x| x == flag), "{flag} must be absent");
+        }
+    }
+
+    #[test]
+    fn preview_flags_present_when_preview_path_some() {
+        let opts = EngineOptions { preview_path: Some("/tmp/p/preview.png".into()), ..Default::default() };
+        let args = build_args(&sample(), "/out/x.png", None, opts);
+        assert_eq!(val_after(&args, "--preview"), Some("proj"));
+        assert_eq!(val_after(&args, "--preview-path"), Some("/tmp/p/preview.png"));
+        assert_eq!(val_after(&args, "--preview-interval"), Some("2"));
+    }
+
+    #[test]
+    fn preview_flags_absent_when_preview_path_none() {
+        let args = build_args(&sample(), "/out/x.png", None, EngineOptions::default());
+        for flag in ["--preview", "--preview-path", "--preview-interval"] {
             assert!(!args.iter().any(|x| x == flag), "{flag} must be absent");
         }
     }
