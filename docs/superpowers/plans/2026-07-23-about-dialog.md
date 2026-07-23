@@ -400,13 +400,13 @@ computer.
 
 ### Download (recommended)
 
-Grab the latest `MuchAI-*.AppImage` from the
+Grab the latest `muchai_*_amd64.AppImage` from the
 [Releases](https://github.com/idahomst/muchai/releases) page, make it
 executable, and run it:
 
 ```bash
-chmod +x MuchAI-*.AppImage
-./MuchAI-*.AppImage
+chmod +x muchai_*_amd64.AppImage
+./muchai_*_amd64.AppImage
 ```
 
 ### Build from source
