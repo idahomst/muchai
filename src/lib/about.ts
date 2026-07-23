@@ -45,7 +45,7 @@ export const CREDITS: CreditSection[] = [
     heading: "Inspired by",
     items: [
       { label: "Draw Things", url: "https://drawthings.ai" },
-      { label: "Neural-Pixel" },
+      { label: "Neural-Pixel", url: "https://github.com/Luiz-Alcantara/Neural-Pixel" },
     ],
   },
   {

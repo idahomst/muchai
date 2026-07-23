@@ -1,12 +1,18 @@
 <script lang="ts">
   import { version } from "../../../package.json";
   import { APP_TAGLINE, CREDITS } from "../about";
-  import { openExternal } from "../api";
+  import { openExternal, engineVersion } from "../api";
 
   let { onclose }: { onclose: () => void } = $props();
   let closeBtn = $state<HTMLButtonElement>();
+  let engineCommit = $state<string | null>(null);
 
   $effect(() => { closeBtn?.focus(); });
+
+  // Best-effort engine-version probe; a failure just leaves the commit hidden.
+  $effect(() => {
+    engineVersion().then((v) => { engineCommit = v; }).catch(() => {});
+  });
 
   function onkeydown(e: KeyboardEvent) {
     if (e.key === "Escape") onclose();
@@ -38,6 +44,9 @@
                 <span class="name">{item.label}</span>
               {/if}
               {#if item.note}<span class="note"> — {item.note}</span>{/if}
+              {#if section.heading === "Image engine" && engineCommit}
+                <span class="commit" title="stable-diffusion.cpp build in use">(commit {engineCommit})</span>
+              {/if}
             </li>
           {/each}
         </ul>
@@ -69,6 +78,7 @@
   .link { font:inherit; padding:0; background:none; border:none; cursor:pointer;
     color:var(--accent-bright); text-decoration:underline; }
   .note { opacity:.75; }
+  .commit { opacity:.6; font-variant-numeric:tabular-nums; margin-left:.3rem; }
   .footer { margin:.4rem 0 0; font-size:.75rem; opacity:.6; }
   .row { display:flex; justify-content:flex-end; margin-top:.3rem; }
   .btn-primary { font:inherit; font-size:.85rem; padding:.4rem .9rem; cursor:pointer; }

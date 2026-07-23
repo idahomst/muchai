@@ -29,6 +29,7 @@ pub struct AppState {
     pub child: ChildSlot,
     pub download_cancel: Arc<AtomicBool>,
     pub gpu_devices: Arc<Mutex<Option<Vec<GpuDevice>>>>,
+    pub engine_version: Arc<Mutex<Option<Option<String>>>>,
 }
 
 fn now_unix() -> u64 {
@@ -116,6 +117,20 @@ pub fn list_gpu_devices(app: AppHandle, state: State<AppState>) -> Vec<GpuDevice
     };
     *state.gpu_devices.lock().unwrap() = Some(devices.clone());
     devices
+}
+
+#[tauri::command]
+pub fn engine_version(app: AppHandle, state: State<AppState>) -> Option<String> {
+    if let Some(cached) = state.engine_version.lock().unwrap().as_ref() {
+        return cached.clone();
+    }
+    let cfg = state.config.lock().unwrap().clone();
+    let version = match resolve_binary(&app, &cfg) {
+        Some(bin) => crate::devices::engine_version(&bin),
+        None => None,
+    };
+    *state.engine_version.lock().unwrap() = Some(version.clone());
+    version
 }
 
 /// Merge an incoming settings payload with the current backend state, keeping the

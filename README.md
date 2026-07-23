@@ -7,7 +7,7 @@ MuchAI is a local, offline text-to-image desktop app. It wraps
 simple GUI: pick a model, type a prompt, press Generate. Nothing leaves your
 computer.
 
-<!-- screenshot: docs/screenshot.png -->
+![MuchAI main window](docs/screenshots/main-dark.png)
 
 ## Features
 
@@ -20,6 +20,13 @@ computer.
   fallback.
 - **Live resource monitor** — GPU / VRAM / CPU / RAM usage while you work.
 - **Dark and light themes.**
+
+## Screenshots
+
+| | |
+|---|---|
+| ![Main window, light theme](docs/screenshots/main-light.png)<br>Main window (light theme) | ![Add a model](docs/screenshots/add-model.png)<br>Add a model from the curated catalog or a URL |
+| ![Edit a model](docs/screenshots/edit-model.png)<br>Edit a model's components and defaults | ![Preferences](docs/screenshots/preferences.png)<br>Preferences |
 
 ## Requirements
 
@@ -68,7 +75,8 @@ models; respecting each model's license is your responsibility.
   [Vite](https://vite.dev), and [Rust](https://www.rust-lang.org).
 - **Models:** thanks to [Hugging Face](https://huggingface.co) and its community
   for the open models MuchAI can download and run.
-- **Inspired by:** [Draw Things](https://drawthings.ai) and Neural-Pixel.
+- **Inspired by:** [Draw Things](https://drawthings.ai) and
+  [Neural-Pixel](https://github.com/Luiz-Alcantara/Neural-Pixel).
 - **Developed by:** Claude Opus (Anthropic) — designed & built with Claude, for
   Martin Stepanek.
 

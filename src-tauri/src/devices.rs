@@ -46,6 +46,16 @@ pub fn parse_vulkan_devices(stderr: &str) -> Vec<GpuDevice> {
     out
 }
 
+/// Parse the engine's `--version` banner (`stable-diffusion.cpp version <v>,
+/// commit <hash>`) into the commit hash. Returns the first `commit <hex>` token
+/// found; `None` if the banner is absent or malformed. Pure so it is testable.
+pub fn parse_engine_version(output: &str) -> Option<String> {
+    let idx = output.find("commit ")?;
+    let after = &output[idx + "commit ".len()..];
+    let hash: String = after.chars().take_while(|c| c.is_ascii_alphanumeric()).collect();
+    (!hash.is_empty()).then_some(hash)
+}
+
 /// One-time probe: run `sd-cli` with a nonexistent model so it initializes the
 /// Vulkan backend (printing the device list to stderr) then errors out fast.
 /// Never panics; returns an empty vec on any failure or timeout.
@@ -89,6 +99,35 @@ pub fn enumerate(binary: &Path) -> Vec<GpuDevice> {
     let mut devices = parse_vulkan_devices(&captured);
     devices.push(cpu_device());
     devices
+}
+
+/// One-time probe: run `sd-cli --version` and parse the commit hash from its
+/// stdout banner. The engine exits 0 immediately, but we still bound the wait
+/// (mirrors `enumerate`) so a wedged binary can never hang the UI. Never panics;
+/// returns `None` on any failure, timeout, or unparseable output.
+pub fn engine_version(binary: &Path) -> Option<String> {
+    if !binary.exists() {
+        return None;
+    }
+    let mut child = Command::new(binary)
+        .arg("--version")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+
+    let mut stdout = child.stdout.take()?;
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut buf = String::new();
+        let _ = stdout.read_to_string(&mut buf);
+        let _ = tx.send(buf);
+    });
+
+    let captured = rx.recv_timeout(Duration::from_secs(10)).unwrap_or_default();
+    let _ = child.kill();
+    let _ = child.wait();
+    parse_engine_version(&captured)
 }
 
 /// Strip the trailing " (<driver>)" group. Device names may themselves contain
@@ -303,5 +342,24 @@ ggml_vulkan: 1 = NVIDIA GeForce RTX 3060 (NVIDIA) | uma: 0 | fp16: 1 | bf16: 0 |
         // Stale selection + no real GPU → CPU fallback.
         let devs_cpu_only = vec![cpu_device()];
         assert_eq!(resolve_backend(stale, &devs_cpu_only), Some("cpu".to_string()));
+    }
+
+    #[test]
+    fn parses_commit_from_version_banner() {
+        // The pinned engine prints this exact banner to stdout on `--version`.
+        let out = "stable-diffusion.cpp version unknown, commit b290693\n";
+        assert_eq!(parse_engine_version(out), Some("b290693".to_string()));
+    }
+
+    #[test]
+    fn parses_commit_ignoring_surrounding_lines() {
+        let out = "some preamble\nstable-diffusion.cpp version 1.2, commit deadbeef1\nmore\n";
+        assert_eq!(parse_engine_version(out), Some("deadbeef1".to_string()));
+    }
+
+    #[test]
+    fn engine_version_parse_none_when_absent() {
+        assert_eq!(parse_engine_version(""), None);
+        assert_eq!(parse_engine_version("no version banner here\n"), None);
     }
 }
