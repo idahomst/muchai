@@ -35,6 +35,7 @@ pub fn run() {
             child: Arc::new(Mutex::new(None)),
             download_cancel: Arc::new(AtomicBool::new(false)),
             gpu_devices: Arc::new(Mutex::new(None)),
+            engine_version: Arc::new(Mutex::new(None)),
         })
         .setup(move |app| {
             // Allow the configured gallery dir for the asset protocol so saved
@@ -95,6 +96,7 @@ pub fn run() {
             commands::cancel_download,
             commands::pick_folder,
             commands::list_gpu_devices,
+            commands::engine_version,
             commands::delete_image,
             commands::list_recipes,
             commands::detect_folder,
