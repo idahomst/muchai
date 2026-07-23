@@ -5,6 +5,8 @@ import type { AppConfig, GalleryItem, GenerationRequest, ProgressUpdate, SystemS
 export const getSettings = () => invoke<AppConfig>("get_settings");
 /** Enumerate Vulkan devices the engine can target (cached server-side). */
 export const listGpuDevices = () => invoke<GpuDevice[]>("list_gpu_devices");
+/** The bundled engine's commit hash (e.g. "b290693"), or null if unknown. Cached server-side. */
+export const engineVersion = () => invoke<string | null>("engine_version");
 export const setSettings = (config: AppConfig) => invoke<void>("set_settings", { config });
 export const listHistory = () => invoke<GalleryItem[]>("list_history");
 /** Returns one item per produced image (batch_count may yield several).
