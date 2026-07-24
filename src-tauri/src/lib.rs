@@ -92,6 +92,7 @@ pub fn run() {
             commands::open_path,
             commands::open_url,
             commands::list_library,
+            commands::rate_library,
             commands::delete_model,
             commands::cancel_download,
             commands::pick_folder,

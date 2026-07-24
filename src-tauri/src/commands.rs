@@ -2,7 +2,7 @@ use crate::engine::{self, ChildSlot, GenError};
 use crate::types::{AppConfig, DownloadProgress, GalleryItem, GenerationRequest, GpuDevice};
 use crate::recipes::{self, ComponentRole};
 use crate::types::ModelRef;
-use crate::{catalog, config, downloader, gallery, hf, library, manifest, models, types};
+use crate::{catalog, config, downloader, fit, gallery, hf, library, manifest, models, types};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -86,6 +86,33 @@ pub fn catalog_entries(
     ram_total_mb: Option<u64>,
 ) -> Vec<catalog::RatedCatalogEntry> {
     catalog::rated_catalog_entries(load_bundled_catalog(&app), vram_total_mb, ram_total_mb)
+}
+
+/// One installed model's VRAM-fit rating for the selector popover. Estimate is
+/// `None` when component files are missing (broken entry).
+#[derive(serde::Serialize)]
+pub struct LibraryFit {
+    pub id: String,
+    pub estimate_mb: Option<u64>,
+    pub verdict: fit::FitVerdict,
+}
+
+/// Rate every installed library model against the detected VRAM budget. Thin
+/// glue over `models::sum_file_sizes` + `fit::estimate_and_verdict`.
+#[tauri::command]
+pub fn rate_library(state: State<AppState>, vram_total_mb: Option<u64>) -> Vec<LibraryFit> {
+    let models_dir = {
+        let cfg = state.config.lock().unwrap();
+        PathBuf::from(&cfg.models_dir)
+    };
+    library::scan_library(&models_dir)
+        .into_iter()
+        .map(|e| {
+            let bytes = models::sum_file_sizes(&e.model.component_paths());
+            let (estimate_mb, verdict) = fit::estimate_and_verdict(bytes, vram_total_mb);
+            LibraryFit { id: e.id, estimate_mb, verdict }
+        })
+        .collect()
 }
 
 /// Resolve the engine binary: explicit config override, else the bundled engine.

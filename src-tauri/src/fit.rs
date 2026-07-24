@@ -43,6 +43,19 @@ pub fn fit_verdict(file_size_bytes: Option<u64>, vram_total_mb: Option<u64>) -> 
     }
 }
 
+/// Convenience for the library rating command: the displayed estimate (MB) and
+/// the fit verdict for one model, from its summed component bytes. `None` bytes
+/// → `(None, Unknown)`.
+pub fn estimate_and_verdict(
+    file_size_bytes: Option<u64>,
+    vram_total_mb: Option<u64>,
+) -> (Option<u64>, FitVerdict) {
+    (
+        file_size_bytes.map(estimate_vram_mb),
+        fit_verdict(file_size_bytes, vram_total_mb),
+    )
+}
+
 /// Decide whether to run the engine in Low-VRAM offload mode for one generation.
 /// Returns `(low_vram_enabled, auto_engaged)`. `auto_engaged` is true only when
 /// the fit estimate turned it on (so the caller can surface a one-time notice);
@@ -128,6 +141,18 @@ mod tests {
     fn verdict_unknown_when_vram_or_size_missing() {
         assert_eq!(fit_verdict(Some(1000 * MB), None), FitVerdict::Unknown);
         assert_eq!(fit_verdict(None, Some(8192)), FitVerdict::Unknown);
+    }
+
+    #[test]
+    fn estimate_and_verdict_pairs_estimate_with_verdict() {
+        let (est, verdict) = estimate_and_verdict(Some(1000 * MB), Some(4096));
+        assert_eq!(est, Some(estimate_vram_mb(1000 * MB)));
+        assert_eq!(verdict, FitVerdict::Fits);
+    }
+
+    #[test]
+    fn estimate_and_verdict_unknown_when_size_missing() {
+        assert_eq!(estimate_and_verdict(None, Some(8192)), (None, FitVerdict::Unknown));
     }
 
     #[test]
