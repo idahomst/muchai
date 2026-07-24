@@ -132,8 +132,13 @@
   .progress { flex:1; height:12px; background:var(--border-subtle); border-radius:6px; overflow:hidden; }
   .fill { height:100%; background:var(--accent); transition:width .15s linear; }
   .step { font-size:.72rem; opacity:.75; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  /* Engine errors can be many lines long. Cap the banner and let it scroll
+     internally so it never grows the sticky footer enough to shove Generate
+     up over the prompt/settings. overflow-wrap stops long tokens (paths,
+     tensor names) forcing horizontal overflow. */
   .error { margin-top:.5rem; padding:.5rem; border-radius:6px; background:var(--danger-tint);
-    color:var(--danger-soft); font-size:.8rem; white-space:pre-wrap; }
+    color:var(--danger-soft); font-size:.8rem; white-space:pre-wrap; overflow-wrap:anywhere;
+    max-height:7.5rem; overflow-y:auto; scrollbar-width:thin; scrollbar-color:var(--danger) transparent; }
   .cpu-note { margin-top:.5rem; padding:.4rem .5rem; border-radius:6px; background:var(--warn-tint);
     color:var(--warn); font-size:.75rem; }
 </style>

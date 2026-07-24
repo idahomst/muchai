@@ -123,12 +123,17 @@
 
   /* Quiet floating toolbar, top-right. Ghost by default; trash reddens on hover. */
   .toolbar { position:absolute; top:14px; right:14px; display:flex; gap:6px; align-items:center; }
+  /* The pill floats over arbitrary image pixels, so it can't lean on theme
+     surface/text tokens — it uses a fixed dark scrim + light glyph + blur so
+     it stays legible over both bright and dark images, in either theme. */
   .tool { min-width:32px; height:32px; padding:0 .5rem; border-radius:8px; display:grid; place-items:center;
-    cursor:pointer; font:inherit; font-size:13px; color:var(--text-muted);
-    background:var(--overlay-soft); border:1px solid var(--border-subtle); }
-  .tool:hover:not(:disabled) { background:var(--overlay); color:var(--text); }
+    cursor:pointer; font:inherit; font-size:13px; color:rgba(255,255,255,.9);
+    background:rgba(0,0,0,.55); border:1px solid rgba(255,255,255,.18);
+    backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
+    box-shadow:0 2px 8px rgba(0,0,0,.35); }
+  .tool:hover:not(:disabled) { background:rgba(0,0,0,.78); color:#fff; border-color:rgba(255,255,255,.32); }
   .tool:disabled { opacity:.5; cursor:default; }
-  .tool.danger:hover:not(:disabled) { color:var(--danger); border-color:var(--danger); }
+  .tool.danger:hover:not(:disabled) { color:var(--danger-soft); border-color:var(--danger); }
 
   .ask { font-size:.75rem; background:var(--overlay); color:var(--on-accent);
     padding:.3rem .55rem; border-radius:8px; }

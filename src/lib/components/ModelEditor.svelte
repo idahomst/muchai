@@ -189,12 +189,15 @@
     padding: 8px 0; border-bottom: 1px solid var(--border); }
   .comp:last-of-type { border-bottom: none; }
   .ck { font-size: 12.5px; color: var(--text-muted); font-weight: 550; }
-  .cpath { font-size: 12px; color: var(--text); font-family: var(--mono);
+  .cpath { min-width: 0; font-size: 12px; color: var(--text); font-family: var(--mono);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
   .cpath.none { color: var(--text-muted); font-family: inherit; font-style: italic; direction: ltr; }
   .rm { width: 26px; height: 26px; border-radius: 6px; display: grid; place-items: center;
     color: var(--text-muted); background: transparent; border: none; cursor: pointer; font-size: 13px; }
   button.rm:hover:not(:disabled) { background: var(--card-hover); color: var(--danger); }
+  /* Introduces the optional recommended-settings section — needs breathing
+     room from the Prediction select directly above (which is .dlg-field.last). */
+  .check { margin-top: 20px; }
   .rec-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; margin-top: 14px; }
   .rec-grid .wide { grid-column: 1 / -1; }
   .warn { font-size: 12px; color: var(--warn); }

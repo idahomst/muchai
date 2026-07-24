@@ -152,7 +152,7 @@ button:hover { border-color: var(--border-strong); }
 .section-hdr { font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; font-weight: 600;
   color: var(--text-muted); margin: 22px 0 12px; }
 .dlg-field { margin-bottom: 14px; }
-.dlg-input, .dlg-select { width: 100%; background: var(--card); border: 1px solid var(--border);
+.dlg-input, .dlg-select { box-sizing: border-box; width: 100%; background: var(--card); border: 1px solid var(--border);
   border-radius: var(--radius-sm); color: var(--text); font: inherit; font-size: 13px; padding: 9px 11px; }
 .dlg-input:focus, .dlg-select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 
