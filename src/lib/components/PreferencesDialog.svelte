@@ -85,100 +85,97 @@
   }
 </script>
 
-<div class="backdrop" onclick={(e) => { if (e.target === e.currentTarget) onclose(); }} role="presentation">
-  <div class="dialog" role="dialog" aria-modal="true" aria-label="Preferences">
-    <h2>Preferences</h2>
+<div class="modal-backdrop" onclick={(e) => { if (e.target === e.currentTarget) onclose(); }} role="presentation">
+  <div class="modal" role="dialog" aria-modal="true" aria-label="Preferences">
+    <div class="modal-head">
+      <span class="modal-title">Preferences</span>
+      <button class="modal-x" onclick={onclose} aria-label="Close">✕</button>
+    </div>
 
-    <section class="grp">
-      <div class="grp-hdr">Secrets</div>
+    <div class="modal-body">
+      <p class="section-hdr first">Secrets</p>
       <p class="tip">Tip: a <strong>read-only</strong> token is all MuchAI needs — create your tokens with read permissions only.</p>
 
-      <label class="fld"><span>HuggingFace token</span>
-        <div class="tok">
-          <input class="in" type={showHf ? "text" : "password"} value={hf}
+      <div class="dlg-field">
+        <p class="microlabel">HuggingFace token</p>
+        <div class="tokenfield">
+          <input class="dlg-input mono" type={showHf ? "text" : "password"} value={hf}
             oninput={(e) => (hf = e.currentTarget.value)}
             onchange={() => saveToken("hf_token", hf)}
             disabled={!$settings}
             placeholder="hf_…" autocomplete="off" spellcheck="false" />
-          <button class="reveal" type="button" onclick={() => (showHf = !showHf)}>{showHf ? "hide" : "show"}</button>
+          <button class="btn btn-ghost btn-sm" type="button" onclick={() => (showHf = !showHf)}>{showHf ? "Hide" : "Show"}</button>
         </div>
-        <span class="hint">For gated / large models. Create at huggingface.co/settings/tokens</span>
-      </label>
+        <p class="hint">For gated / large models · huggingface.co/settings/tokens</p>
+      </div>
 
-      <label class="fld"><span>Civitai token</span>
-        <div class="tok">
-          <input class="in" type={showCivitai ? "text" : "password"} value={civitai}
+      <div class="dlg-field last">
+        <p class="microlabel">Civitai token</p>
+        <div class="tokenfield">
+          <input class="dlg-input mono" type={showCivitai ? "text" : "password"} value={civitai}
             oninput={(e) => (civitai = e.currentTarget.value)}
             onchange={() => saveToken("civitai_token", civitai)}
             disabled={!$settings}
             placeholder="not set" autocomplete="off" spellcheck="false" />
-          <button class="reveal" type="button" onclick={() => (showCivitai = !showCivitai)}>{showCivitai ? "hide" : "show"}</button>
+          <button class="btn btn-ghost btn-sm" type="button" onclick={() => (showCivitai = !showCivitai)}>{showCivitai ? "Hide" : "Show"}</button>
         </div>
-        <span class="hint">Used for Civitai downloads. Create at civitai.com/user/account (API Keys)</span>
-      </label>
+        <p class="hint">Used for Civitai downloads · civitai.com/user/account (API Keys)</p>
+      </div>
 
       {#if error}<p class="err">{error}</p>{/if}
-    </section>
 
-    <section class="grp">
-      <div class="grp-hdr">Folders</div>
+      <p class="section-hdr">Folders</p>
       <ModelFolders />
       <GalleryLocation />
-    </section>
 
-    <section class="grp">
-      <div class="grp-hdr">Hardware</div>
+      <p class="section-hdr">Hardware</p>
       <DevicePicker />
-      <label class="lowvram">
-        <input
-          type="checkbox"
+      <label class="check">
+        <input type="checkbox"
           checked={$settings?.low_vram ?? false}
           disabled={!$settings}
           onchange={(e) => saveLowVram(e.currentTarget.checked)} />
-        <span>Low-VRAM mode <em>(slower; fits bigger models)</em></span>
+        <span class="check-box"></span>
+        <span>Low-VRAM mode <em>— slower; fits bigger models</em></span>
       </label>
-      <label class="lowvram">
-        <input
-          type="checkbox"
+      <label class="check">
+        <input type="checkbox"
           checked={$settings?.live_preview ?? true}
           disabled={!$settings}
           onchange={(e) => saveLivePreview(e.currentTarget.checked)} />
-        <span>Live preview <em>(shows a rough draft as it generates so you can cancel early)</em></span>
+        <span class="check-box"></span>
+        <span>Live preview <em>— rough draft while generating, cancel early</em></span>
       </label>
-    </section>
 
-    <section class="grp">
-      <div class="grp-hdr">Appearance</div>
-      <div class="appearance"><span class="lbl">Theme</span><ThemeToggle labeled /></div>
-    </section>
+      <p class="section-hdr">Appearance</p>
+      <div class="prefrow theme-row">
+        <span class="pk">Theme</span>
+        <span class="pv"><ThemeToggle segmented /></span>
+      </div>
+    </div>
 
-    <div class="row">
-      <button class="btn-primary" onclick={onclose}>Done</button>
+    <div class="modal-foot">
+      <button class="btn btn-primary spacer" onclick={onclose}>Done</button>
     </div>
   </div>
 </div>
 
 <style>
-  .backdrop { position:fixed; inset:0; background:var(--backdrop); display:flex;
-    align-items:center; justify-content:center; z-index:50; }
-  .dialog { background:var(--dialog-bg); border:1px solid var(--border); border-radius:10px;
-    padding:1.2rem; width:min(520px, 94vw); max-height:90vh; overflow-y:auto;
-    display:flex; flex-direction:column; gap:.8rem; }
-  h2 { margin:0; font-size:1.05rem; }
-  .grp { display:flex; flex-direction:column; gap:.4rem; }
-  .grp-hdr { font-size:.7rem; text-transform:uppercase; letter-spacing:.05em; opacity:.6; }
-  .tip { font-size:.72rem; opacity:.8; margin:0; }
-  .fld { display:flex; flex-direction:column; gap:.2rem; font-size:.75rem; }
-  .tok { display:flex; gap:.4rem; }
-  .in { flex:1; font:inherit; padding:.35rem; box-sizing:border-box; }
-  .reveal { font:inherit; font-size:.72rem; padding:.2rem .5rem; cursor:pointer; }
-  .hint { font-size:.68rem; opacity:.6; }
-  .appearance { display:flex; align-items:center; gap:.5rem; font-size:.75rem;
-    border-top:1px solid var(--border); padding:.45rem .2rem 0; }
-  .appearance .lbl { opacity:.6; }
-  .lowvram { display:flex; align-items:center; gap:.4rem; font-size:.75rem; padding:.35rem .2rem 0; }
-  .lowvram em { opacity:.6; font-style:italic; }
-  .err { font-size:.72rem; color:var(--danger); margin:0; }
-  .row { display:flex; justify-content:flex-end; margin-top:.3rem; }
-  button.btn-primary { font:inherit; font-size:.8rem; padding:.4rem .8rem; cursor:pointer; }
+  .section-hdr.first { margin-top: 8px; }
+  .dlg-field.last { margin-bottom: 0; }
+  .tip { font-size:12.5px; color:var(--text-muted); background:var(--card);
+    border:1px solid var(--border); border-radius:var(--radius-sm);
+    padding:9px 12px; margin:0 0 14px; }
+  .tip strong { color:var(--text); font-weight:600; }
+  .tokenfield { display:flex; gap:8px; }
+  .tokenfield .dlg-input { flex:1; }
+  .dlg-input.mono { font-family:var(--mono); font-size:12px; }
+  .hint { font-size:11.5px; color:var(--text-muted); margin:5px 0 0; }
+  .check { margin-top:14px; }
+  .check em { color:var(--text-muted); font-style:normal; }
+  .prefrow { display:flex; align-items:center; gap:12px; padding:10px 0; }
+  .prefrow.theme-row { padding-top:0; }
+  .prefrow .pk { font-size:13px; color:var(--text-muted); min-width:120px; }
+  .prefrow .pv { flex:1; min-width:0; }
+  .err { font-size:12px; color:var(--danger); margin:8px 0 0; }
 </style>
