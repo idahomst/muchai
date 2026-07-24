@@ -9,6 +9,18 @@ computer.
 
 ![MuchAI main window](docs/screenshots/main-dark.png)
 
+## Motivation
+My goal was to bring an application to Linux that was just as “simple” as 
+[DrawThings](https://drawthings.ai) for macOS and Windows.
+
+During development, it became clear that relying solely on models from 
+HuggingFace or Civitai wouldn’t be so easy, and that it places greater 
+demands on users in terms of their knowledge of the models. However, a model 
+catalog could be helpful to get started.
+
+Support for LoRA and ControlNet is planned ;)
+
+
 ## Features
 
 - **Text-to-image generation**, fully local and offline.
