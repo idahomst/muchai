@@ -1,6 +1,6 @@
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { AppConfig, GalleryItem, GenerationRequest, ProgressUpdate, SystemStats, DownloadProgress, GpuDevice, RecipeInfo, GenDefaults, LibraryEntry, RatedCatalogEntry, ManifestFlags, ModelComponents } from "./types";
+import type { AppConfig, GalleryItem, GenerationRequest, ProgressUpdate, SystemStats, DownloadProgress, GpuDevice, RecipeInfo, GenDefaults, LibraryEntry, RatedCatalogEntry, ManifestFlags, ModelComponents, LibraryFit } from "./types";
 
 export const getSettings = () => invoke<AppConfig>("get_settings");
 /** Enumerate Vulkan devices the engine can target (cached server-side). */
@@ -54,6 +54,9 @@ export const onDownloadProgress = (cb: (p: DownloadProgress) => void): Promise<U
 export const listRecipes = () => invoke<RecipeInfo[]>("list_recipes");
 
 export const listLibrary = () => invoke<LibraryEntry[]>("list_library");
+
+export const rateLibrary = (vramTotalMb: number | null) =>
+  invoke<LibraryFit[]>("rate_library", { vramTotalMb });
 
 export const catalogEntries = (vramTotalMb: number | null, ramTotalMb: number | null) =>
   invoke<RatedCatalogEntry[]>("catalog_entries", { vramTotalMb, ramTotalMb });

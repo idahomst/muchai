@@ -212,6 +212,10 @@ export type RatingBasis = "vram" | "ram" | "none";
 // (src-tauri/src/fit.rs).
 export type FitVerdict = "fits" | "tight" | "wont_fit" | "unknown";
 
+/** Per-installed-model VRAM fit, from the `rate_library` command. Mirrors Rust
+ *  `commands::LibraryFit`. `estimate_mb` is null for broken entries. */
+export type LibraryFit = { id: string; estimate_mb: number | null; verdict: FitVerdict };
+
 // Mirrors Rust `hf::RatedHfVariant`. One selectable diffusion variant + fit.
 export interface RatedHfVariant {
   label: string;

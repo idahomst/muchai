@@ -25,6 +25,17 @@ export function familyBadge(entry: LibraryEntry): string {
   return entry.family;
 }
 
+/** Quantization token parsed from the diffusion filename, verbatim case, or ""
+ *  when none is present.
+ *  "flux-2-klein-9b-Q4_0.gguf" → "Q4_0"; "model-fp16.safetensors" → "fp16";
+ *  "sdxl-base-1.0.safetensors" → "". */
+export function quantBadge(entry: LibraryEntry): string {
+  const path = entry.model.type === "single_file" ? entry.model.path : entry.model.diffusion_model;
+  const name = (path.split(/[/\\]/).pop() ?? "");
+  const m = name.match(/(Q\d+(?:_[0-9A-Z]+)*|fp16|fp8|bf16|f16)/i);
+  return m ? m[1] : "";
+}
+
 /** True when two model refs point at the same diffusion weights. Used to match
  *  the persisted `request.model` to a library entry so the sidebar highlights
  *  the actually-active model on startup. */
