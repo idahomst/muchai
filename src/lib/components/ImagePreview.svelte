@@ -115,7 +115,12 @@
      intentionally; the image floats on it with a soft shadow + hairline. */
   /* No overflow:hidden — the background checker already clips to the rounded
      corners, and clipping would crop the image's soft drop shadow. */
-  .preview { flex:1; display:flex; align-items:center; justify-content:center; position:relative;
+  /* min-height:0 is load-bearing: without it the flex item's default
+     min-height:auto refuses to shrink below the image's intrinsic (width-driven)
+     height, so a wide window makes the image push Parameters + gallery off-screen.
+     With it, the flex algorithm caps .preview's height and the image's
+     max-height:100% resolves against that bound instead of driving it. */
+  .preview { flex:1; min-height:0; display:flex; align-items:center; justify-content:center; position:relative;
     padding:24px; border-radius:8px;
     background:repeating-conic-gradient(var(--matte-2) 0% 25%, var(--matte) 0% 50%);
     background-size:22px 22px; }
