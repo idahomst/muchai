@@ -105,7 +105,7 @@
   <div class="label">Model</div>
 
   <button class="selector" class:open onclick={toggle} aria-haspopup="listbox" aria-expanded={open}>
-    <span class="diamond">◆</span>
+    <span class="diamond" aria-hidden="true">◆</span>
     {#if selected}
       <span class="sel-name">{selected.broken ? "⚠ " : ""}{selected.name}</span>
       {#if quantBadge(selected)}<span class="chip">{quantBadge(selected)}</span>{/if}
@@ -113,17 +113,17 @@
     {:else}
       <span class="sel-name placeholder">No model selected</span>
     {/if}
-    <span class="caret">⌄</span>
+    <span class="caret" aria-hidden="true">⌄</span>
   </button>
 
   {#if open}
-    <div class="popover" role="listbox">
+    <div class="popover">
       <div class="search">
-        <span class="mag">⌕</span>
-        <input class="filter" placeholder="Filter models…" bind:value={filter} />
+        <span class="mag" aria-hidden="true">⌕</span>
+        <input class="filter" aria-label="Filter models" placeholder="Filter models…" bind:value={filter} />
       </div>
 
-      <div class="list">
+      <div class="list" role="listbox">
         {#if filtered.length === 0}
           <p class="empty">{entries.length === 0 ? "No models yet — add one below." : "No matches."}</p>
         {:else}
