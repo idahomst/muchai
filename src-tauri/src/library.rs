@@ -60,6 +60,14 @@ pub fn entry_from_manifest(model_dir: &Path, m: &ModelManifest) -> LibraryEntry 
     }
 }
 
+/// Resolve one library entry by its manifest `id`, re-reading from disk. This is
+/// the single-source-of-truth lookup: `generate` calls it so an edited or stale
+/// `model.json` is always re-read at the moment of use. `None` when no manifest
+/// in `models_dir` has that id (deleted/renamed).
+pub fn resolve_by_id(models_dir: &Path, id: &str) -> Option<LibraryEntry> {
+    scan_library(models_dir).into_iter().find(|e| e.id == id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -144,6 +152,27 @@ mod tests {
         let lib = scan_library(&root);
         assert_eq!(lib.len(), 1);
         assert_eq!(lib[0].id, "real");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn resolve_by_id_finds_the_matching_entry() {
+        let root = std::env::temp_dir().join(format!("muchai-resolve-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        write_manifest(&root, "wanted", "w.safetensors", true);
+        write_manifest(&root, "other", "o.safetensors", true);
+        let entry = resolve_by_id(&root, "wanted");
+        assert!(entry.is_some());
+        assert_eq!(entry.unwrap().id, "wanted");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn resolve_by_id_returns_none_for_unknown_id() {
+        let root = std::env::temp_dir().join(format!("muchai-resolve2-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        write_manifest(&root, "present", "p.safetensors", true);
+        assert!(resolve_by_id(&root, "absent").is_none());
         let _ = std::fs::remove_dir_all(&root);
     }
 }
