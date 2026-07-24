@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { settings, request, history, sysStats, gpuDevices, refreshLibrary, downloadProgress, downloadBusy, downloadError } from "$lib/stores";
+  import { get } from "svelte/store";
+  import { settings, request, history, sysStats, gpuDevices, refreshLibrary, downloadProgress, downloadBusy, downloadError, library, selectedModelId, modelNotice } from "$lib/stores";
   import { getSettings, setSettings, listHistory, onSystemStats, listGpuDevices, onDownloadProgress } from "$lib/api";
   import ModelSelector from "$lib/components/ModelSelector.svelte";
   import NewModelDialog from "$lib/components/NewModelDialog.svelte";
@@ -63,6 +64,22 @@
       request.set({ ...cfg.last_request, model });
       history.set(await listHistory());
       await refreshLibrary();
+      // Single source of truth: if the persisted request names a managed model,
+      // adopt it from the just-scanned library (re-reading model.json). If it's
+      // gone (deleted/renamed), clear the selection and tell the user. Ad-hoc
+      // requests (model_id null — includes pre-feature configs) are left as-is.
+      const savedId = cfg.last_request.model_id ?? null;
+      if (savedId) {
+        const entry = get(library).find((e) => e.id === savedId) ?? null;
+        if (entry) {
+          selectedModelId.set(savedId);
+          request.update((r) => ({ ...r, model: entry.model, model_id: savedId }));
+        } else {
+          selectedModelId.set(null);
+          request.update((r) => ({ ...r, model: { type: "single_file", path: "" }, model_id: null }));
+          modelNotice.set("Your last model is no longer in your library. Pick a model to continue.");
+        }
+      }
       gpuDevices.set(await listGpuDevices());
     })();
     const un = onSystemStats((s) => sysStats.set(s));
@@ -90,6 +107,12 @@
         onEdit={(e) => (editing = e)}
         onDelete={(e) => (editing = e)}
       />
+      {#if $modelNotice}
+        <div class="model-notice" role="status">
+          <span>{$modelNotice}</span>
+          <button class="notice-x" aria-label="Dismiss" onclick={() => modelNotice.set(null)}>✕</button>
+        </div>
+      {/if}
     </div>
 
     <div class="panel-body">
@@ -154,6 +177,14 @@
   .iconbtn:hover { background:var(--card-hover); color:var(--text); }
 
   .panel-selector { flex:0 0 auto; padding:12px 16px; border-bottom:1px solid var(--border); }
+  .model-notice { display:flex; align-items:flex-start; gap:8px; margin-top:10px;
+    padding:8px 10px; border-radius:var(--radius-sm); font-size:12px; line-height:1.4;
+    background:var(--warn-tint); color:var(--warn); }
+  .model-notice span { flex:1; }
+  .notice-x { flex:0 0 auto; width:18px; height:18px; display:grid; place-items:center;
+    border:none; background:transparent; color:var(--text-muted); cursor:pointer;
+    font-size:11px; border-radius:4px; }
+  .notice-x:hover { background:var(--card-hover); color:var(--text); }
 
   .panel-body { flex:1 1 auto; min-height:0; overflow-y:auto; padding:16px;
     display:flex; flex-direction:column;
