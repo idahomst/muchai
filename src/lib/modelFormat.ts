@@ -1,4 +1,4 @@
-import type { LibraryEntry, Suitability, RatingBasis, ModelRef, CatalogEntry } from "./types";
+import type { LibraryEntry, Suitability, RatingBasis, CatalogEntry } from "./types";
 
 /** Bytes → compact decimal size, e.g. 6_780_000_000 → "6.8 GB". Model/catalog
  *  sizes are decimal (matching HuggingFace), so divide by 1000, not 1024. */
@@ -34,16 +34,6 @@ export function quantBadge(entry: LibraryEntry): string {
   const name = (path.split(/[/\\]/).pop() ?? "");
   const m = name.match(/(Q\d+(?:_[0-9A-Z]+)*|fp16|fp8|bf16|f16)/i);
   return m ? m[1] : "";
-}
-
-/** True when two model refs point at the same diffusion weights. Used to match
- *  the persisted `request.model` to a library entry so the sidebar highlights
- *  the actually-active model on startup. */
-export function sameModel(a: ModelRef, b: ModelRef): boolean {
-  if (a.type !== b.type) return false;
-  if (a.type === "single_file" && b.type === "single_file") return a.path === b.path;
-  if (a.type === "multi_file" && b.type === "multi_file") return a.diffusion_model === b.diffusion_model;
-  return false;
 }
 
 /** Fit badge text + tone for a catalog row. When `basis` is "ram" (no GPU found)

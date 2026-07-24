@@ -1,9 +1,8 @@
 <script lang="ts">
-  import { untrack } from "svelte";
-  import { library, request, selectedModelId, sysStats } from "../stores";
+  import { library, request, selectedModelId, modelNotice, sysStats } from "../stores";
   import { rateLibrary } from "../api";
-  import { familyBadge, quantBadge, sameModel } from "../modelFormat";
-  import type { LibraryEntry, ModelRef, LibraryFit } from "../types";
+  import { familyBadge, quantBadge } from "../modelFormat";
+  import type { LibraryEntry, LibraryFit } from "../types";
 
   let { onNew, onEdit, onDelete }:
     { onNew: () => void; onEdit: (entry: LibraryEntry) => void; onDelete: (entry: LibraryEntry) => void } = $props();
@@ -14,9 +13,6 @@
   let selId = $state<string | null>(null);
   selectedModelId.subscribe((v) => (selId = v));
 
-  let reqModel = $state<ModelRef | null>(null);
-  request.subscribe((r) => (reqModel = r.model));
-
   let vramTotalMb = $state<number | null>(null);
   sysStats.subscribe((s) => (vramTotalMb = s?.gpu?.vram_total_mb ?? null));
 
@@ -24,23 +20,6 @@
   let filter = $state("");
   let fits = $state<Record<string, LibraryFit>>({});
   let rootEl: HTMLDivElement;
-
-  // Keep the highlight synced to the active model (ported verbatim from
-  // ModelLibrary): opening a history/preview image swaps request.model without
-  // touching selectedModelId, so actively move the highlight; else keep valid.
-  let lastReqModel: ModelRef | null = null;
-  $effect(() => {
-    if (!entries.length) return;
-    const changed = !lastReqModel || (reqModel != null && !sameModel(lastReqModel, reqModel));
-    if (changed && reqModel) {
-      lastReqModel = reqModel;
-      const match = entries.find((e) => sameModel(e.model, reqModel!));
-      if (match) { selectedModelId.set(match.id); return; }
-    }
-    if (!untrack(() => entries.some((e) => e.id === selId))) {
-      selectedModelId.set(entries[0].id);
-    }
-  });
 
   const selected = $derived(entries.find((e) => e.id === selId) ?? null);
   const filtered = $derived(
@@ -83,7 +62,8 @@
 
   function select(entry: LibraryEntry) {
     selectedModelId.set(entry.id);
-    if (!entry.broken) request.update((r) => ({ ...r, model: entry.model }));
+    modelNotice.set(null);
+    if (!entry.broken) request.update((r) => ({ ...r, model: entry.model, model_id: entry.id }));
     close();
   }
 

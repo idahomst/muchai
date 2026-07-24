@@ -20,6 +20,10 @@ export const library = writable<LibraryEntry[]>([]);
 /** Id of the currently-selected library entry (drives recommended-settings). */
 export const selectedModelId = writable<string | null>(null);
 
+/** Transient banner text shown when the persisted model can't be resolved
+ *  (e.g. it was deleted since last launch). Cleared on dismiss or on select. */
+export const modelNotice = writable<string | null>(null);
+
 /** Reload the model library from disk. Call after any add/edit/delete. */
 export async function refreshLibrary(): Promise<void> {
   library.set(await listLibrary());
