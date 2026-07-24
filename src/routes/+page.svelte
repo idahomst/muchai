@@ -75,23 +75,33 @@
 
 <main class="app">
   <aside class="controls">
-    <header class="brandbar">
-      <h1 class="brand">MuchAI</h1>
+    <header class="panel-head">
+      <h1 class="brand">Much<span class="ai">AI</span></h1>
       <div class="hdr-actions">
-        <button class="help-btn" aria-label="Help" title="Help" onclick={() => (showWelcome = true)}>?</button>
-        <button class="help-btn" aria-label="Preferences" title="Preferences" onclick={() => (showPrefs = true)}>⚙</button>
+        <button class="iconbtn" aria-label="Help" title="Help" onclick={() => (showWelcome = true)}>?</button>
+        <button class="iconbtn" aria-label="Preferences" title="Preferences" onclick={() => (showPrefs = true)}>⚙</button>
         <ThemeToggle />
       </div>
     </header>
-    <ModelSelector
-      onNew={() => (showNew = true)}
-      onEdit={(e) => (editing = e)}
-      onDelete={(e) => (editing = e)}
-    />
-    <PromptPanel />
-    <SettingsPanel />
-    <div class="spacer"></div>
-    <GenerateBar />
+
+    <div class="panel-selector">
+      <ModelSelector
+        onNew={() => (showNew = true)}
+        onEdit={(e) => (editing = e)}
+        onDelete={(e) => (editing = e)}
+      />
+    </div>
+
+    <div class="panel-body">
+      <PromptPanel />
+      <div class="divider"></div>
+      <p class="section">Parameters</p>
+      <SettingsPanel />
+    </div>
+
+    <div class="panel-foot">
+      <GenerateBar />
+    </div>
   </aside>
 
   <section class="stage">
@@ -130,16 +140,30 @@
 
 <style>
   .app { display:flex; height:calc(100vh - 34px); }
-  .controls { flex:0 0 340px; display:flex; flex-direction:column; gap:.8rem;
-    padding:1rem; border-right:1px solid var(--border); overflow:hidden auto; }
-  .brandbar { display:flex; align-items:center; justify-content:space-between; margin:0 0 .5rem; }
-  .brand { margin:0; font-size:1.2rem; }
-  .hdr-actions { display:flex; align-items:center; gap:.4rem; }
-  .help-btn { font:inherit; font-size:.85rem; line-height:1; width:1.5rem; height:1.5rem;
-    display:flex; align-items:center; justify-content:center; cursor:pointer;
-    border:1px solid var(--border); border-radius:50%;
-    background:var(--surface); color:var(--text); }
-  .help-btn:hover { color:var(--accent-bright); border-color:var(--accent-bright); }
-  .spacer { flex:1; }
+  .controls { flex:0 0 340px; display:flex; flex-direction:column;
+    border-right:1px solid var(--border); overflow:hidden; }
+
+  .panel-head { flex:0 0 auto; display:flex; align-items:center; gap:8px;
+    padding:14px 16px; border-bottom:1px solid var(--border); }
+  .brand { margin:0; font-size:16px; font-weight:650; letter-spacing:-.01em; }
+  .brand .ai { color:var(--accent); }
+  .hdr-actions { margin-left:auto; display:flex; align-items:center; gap:6px; }
+  .iconbtn { width:30px; height:30px; border-radius:8px; display:grid; place-items:center;
+    color:var(--text-muted); cursor:pointer; font:inherit; font-size:14px;
+    background:transparent; border:1px solid transparent; }
+  .iconbtn:hover { background:var(--card-hover); color:var(--text); }
+
+  .panel-selector { flex:0 0 auto; padding:12px 16px; border-bottom:1px solid var(--border); }
+
+  .panel-body { flex:1 1 auto; min-height:0; overflow-y:auto; padding:16px;
+    display:flex; flex-direction:column;
+    scrollbar-width:thin; scrollbar-color:var(--border-strong) transparent; }
+  .divider { height:1px; background:var(--border); margin:20px -16px; }
+  .section { font-size:10.5px; letter-spacing:.05em; text-transform:uppercase;
+    font-weight:600; color:var(--text-muted); margin:0 0 12px; }
+
+  .panel-foot { flex:0 0 auto; padding:12px 16px; border-top:1px solid var(--border);
+    background:var(--surface); }
+
   .stage { flex:1; display:flex; flex-direction:column; padding:1rem; gap:.6rem; min-width:0; }
 </style>
