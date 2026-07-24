@@ -114,7 +114,7 @@
       <div class="comp">
         <span class="ck">Diffusion</span>
         <span class="cpath" class:none={!slots.diffusion_model} title={slots.diffusion_model}>
-          {slots.diffusion_model ? "‏" + slots.diffusion_model : "Not set"}</span>
+          {slots.diffusion_model ? "‎" + slots.diffusion_model : "Not set"}</span>
         <button class="btn btn-ghost btn-sm" disabled={busy} onclick={() => pick("diffusion_model")}>Change…</button>
         <span class="rm" aria-hidden="true"></span>
       </div>
@@ -122,7 +122,7 @@
         <div class="comp">
           <span class="ck">{role.label}</span>
           <span class="cpath" class:none={!slots[role.key]} title={slots[role.key]}>
-            {slots[role.key] ? "‏" + slots[role.key] : "Not set"}</span>
+            {slots[role.key] ? "‎" + slots[role.key] : "Not set"}</span>
           <button class="btn btn-ghost btn-sm" disabled={busy} onclick={() => pick(role.key)}>Change…</button>
           {#if slots[role.key]}
             <button class="rm" disabled={busy} onclick={() => (slots[role.key] = "")}

@@ -90,10 +90,10 @@
     </div>
 
     <div class="modal-body">
-      <div class="seg" role="tablist" aria-label="Model source">
-        <button class="seg-item" class:on={tab === "catalog"} role="tab" aria-selected={tab === "catalog"} onclick={() => (tab = "catalog")}>Catalog</button>
-        <button class="seg-item" class:on={tab === "url"} role="tab" aria-selected={tab === "url"} onclick={() => (tab = "url")}>URL</button>
-        <button class="seg-item" class:on={tab === "local"} role="tab" aria-selected={tab === "local"} onclick={() => (tab = "local")}>Local file</button>
+      <div class="seg" role="group" aria-label="Model source">
+        <button class="seg-item" class:on={tab === "catalog"} aria-pressed={tab === "catalog"} onclick={() => (tab = "catalog")}>Catalog</button>
+        <button class="seg-item" class:on={tab === "url"} aria-pressed={tab === "url"} onclick={() => (tab = "url")}>URL</button>
+        <button class="seg-item" class:on={tab === "local"} aria-pressed={tab === "local"} onclick={() => (tab = "local")}>Local file</button>
       </div>
 
       {#if catalogError}<p class="err">{catalogError}</p>{/if}
