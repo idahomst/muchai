@@ -175,6 +175,14 @@ pub struct GenerationRequest {
     /// this key and deserialize as PNG.
     #[serde(default)]
     pub output_format: OutputFormat,
+    /// Id of the managed library model this request targets, when it came from
+    /// the model selector. `Some(id)` → the backend re-resolves component paths
+    /// from `model.json` at generate time (single source of truth); the `model`
+    /// field is then only a display/fallback snapshot. `None` → ad-hoc model
+    /// (manual single-file pick or a replayed history item); `model` is literal.
+    /// `#[serde(default)]` so pre-feature configs/sidecars load as `None`.
+    #[serde(default)]
+    pub model_id: Option<String>,
 }
 
 impl Default for GenerationRequest {
@@ -191,6 +199,7 @@ impl Default for GenerationRequest {
             seed: -1,
             batch_count: 1,
             output_format: OutputFormat::default(),
+            model_id: None,
         }
     }
 }
@@ -439,6 +448,28 @@ mod tests {
         let json = r#"{"model":{"type":"single_file","path":""},"prompt":"","negative_prompt":"","steps":20,"cfg_scale":7.0,"sampler":"euler_a","width":512,"height":512,"seed":-1,"batch_count":1}"#;
         let req: GenerationRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.output_format, OutputFormat::Png);
+    }
+
+    #[test]
+    fn generation_request_without_model_id_deserializes_to_none() {
+        // Old configs / gallery sidecars written before this feature have no
+        // `model_id` key; they must load as an ad-hoc request (model_id None).
+        let json = r#"{
+            "model": {"type":"single_file","path":"/m/x.safetensors"},
+            "prompt":"","negative_prompt":"","steps":20,"cfg_scale":7.0,
+            "sampler":"euler_a","width":512,"height":512,"seed":-1,"batch_count":1
+        }"#;
+        let req: GenerationRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.model_id, None);
+    }
+
+    #[test]
+    fn generation_request_model_id_round_trips() {
+        let mut req = GenerationRequest::default();
+        req.model_id = Some("flux2-klein-9b-q4".into());
+        let json = serde_json::to_string(&req).unwrap();
+        let back: GenerationRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.model_id.as_deref(), Some("flux2-klein-9b-q4"));
     }
 
     #[test]
