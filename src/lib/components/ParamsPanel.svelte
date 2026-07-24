@@ -37,27 +37,25 @@
             aria-expanded={expanded}
             title={expanded ? "Collapse parameters" : "Expand parameters"}>
       <span class="chev">{expanded ? "▾" : "▸"}</span>
-      <span class="title">Parameters</span>
-      {#if !expanded}
+      <span class="ttl">Parameters</span>
+      {#if expanded}
+        <span class="src">from this image</span>
+      {:else}
         <span class="summary">Seed {r.seed} · {r.steps} steps · CFG {r.cfg_scale} · {r.width}×{r.height}</span>
       {/if}
     </button>
     {#if expanded}
       <div class="grid">
-        <span class="k">Model</span><span class="v" title={modelLabel(r.model)}>{modelLabel(r.model)}</span>
-        <span class="k">Seed</span><span class="v">{r.seed}</span>
-        <span class="k">Steps</span><span class="v">{r.steps}</span>
-        <span class="k">CFG</span><span class="v">{r.cfg_scale}</span>
-        <span class="k">Sampler</span><span class="v">{samplerLabel(r.sampler)}</span>
-        <span class="k">Size</span><span class="v">{r.width}×{r.height}</span>
-        <span class="k">Format</span><span class="v">{r.output_format.toUpperCase()}</span>
-      </div>
-      <div class="prompts">
-        <div class="pl">Prompt</div>
-        <div class="pt">{r.prompt}</div>
+        <div class="kv"><span class="k">Model</span><span class="v mono" title={modelLabel(r.model)}>{modelLabel(r.model)}</span></div>
+        <div class="kv"><span class="k">Seed</span><span class="v mono">{r.seed}</span></div>
+        <div class="kv"><span class="k">Steps</span><span class="v">{r.steps}</span></div>
+        <div class="kv"><span class="k">CFG</span><span class="v">{r.cfg_scale}</span></div>
+        <div class="kv"><span class="k">Sampler</span><span class="v">{samplerLabel(r.sampler)}</span></div>
+        <div class="kv"><span class="k">Size</span><span class="v">{r.width}×{r.height}</span></div>
+        <div class="kv"><span class="k">Format</span><span class="v">{r.output_format.toUpperCase()}</span></div>
+        <div class="kv wide"><span class="k">Prompt</span><span class="v">{r.prompt}</span></div>
         {#if r.negative_prompt}
-          <div class="pl">Negative</div>
-          <div class="pt neg">{r.negative_prompt}</div>
+          <div class="kv wide"><span class="k">Negative</span><span class="v">{r.negative_prompt}</span></div>
         {/if}
       </div>
     {/if}
@@ -66,23 +64,26 @@
 {/if}
 
 <style>
-  .params { font-size:.78rem; border:1px solid var(--border); border-radius:8px;
-    padding:.5rem .7rem; display:flex; flex-direction:column; gap:.5rem; flex:0 0 auto; }
+  .params { border:1px solid var(--border); border-radius:8px;
+    padding:.55rem .7rem; display:flex; flex-direction:column; gap:.55rem; flex:0 0 auto; }
   .hdr { display:flex; align-items:center; gap:.45rem; width:100%; padding:0;
-    background:none; border:none; color:inherit; font:inherit; font-size:.78rem;
+    background:none; border:none; color:var(--text-muted); font:inherit;
     text-align:left; cursor:pointer; }
+  .hdr:hover:not(:disabled) { color:var(--text); }
   .hdr:disabled { cursor:default; }
-  .chev { opacity:.6; width:.8rem; flex:0 0 auto; }
-  .title { opacity:.7; font-weight:600; flex:0 0 auto; }
-  .summary { opacity:.55; font-variant-numeric:tabular-nums; overflow:hidden;
+  .chev { font-size:.7rem; color:var(--text-faint); width:.8rem; flex:0 0 auto; }
+  .ttl { font-size:11px; letter-spacing:.03em; text-transform:uppercase; font-weight:600; flex:0 0 auto; }
+  .src { margin-left:auto; font-size:11px; color:var(--text-faint); }
+  .summary { margin-left:auto; font-size:.75rem; color:var(--text-faint);
+    font-variant-numeric:tabular-nums; overflow:hidden;
     text-overflow:ellipsis; white-space:nowrap; min-width:0; }
-  .grid { display:grid; grid-template-columns:auto 1fr auto 1fr auto 1fr; gap:.2rem .5rem;
-    align-items:baseline; }
-  .k { opacity:.55; }
-  .v { font-variant-numeric:tabular-nums; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .prompts { display:flex; flex-direction:column; gap:.15rem; }
-  .pl { opacity:.55; }
-  .pt { white-space:pre-wrap; word-break:break-word; }
-  .pt.neg { opacity:.8; }
-  .err { color:var(--danger); }
+  .grid { display:grid; grid-template-columns:repeat(3,1fr); gap:4px 24px; }
+  .kv { display:flex; gap:10px; font-size:12.5px; padding:2px 0; min-width:0; }
+  .kv .k { color:var(--text-faint); min-width:54px; flex:0 0 auto; }
+  .kv .v { color:var(--text-muted); font-variant-numeric:tabular-nums;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+  .kv .v.mono { font-family:var(--mono); font-size:11.5px; }
+  .kv.wide { grid-column:1 / -1; }
+  .kv.wide .v { color:var(--text); white-space:normal; word-break:break-word; }
+  .err { color:var(--danger); font-size:.78rem; }
 </style>

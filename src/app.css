@@ -37,6 +37,8 @@
   /* ---- Shape scale (px — radii do not scale with root font size) ---- */
   --radius: 10px;
   --radius-sm: 7px;
+  /* ---- Monospace stack (paths, seeds, version) ---- */
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   color-scheme: dark;
 }
 
