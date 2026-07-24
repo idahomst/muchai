@@ -1,7 +1,7 @@
 <script lang="ts">
   import { get } from "svelte/store";
   import { currentImage, currentItem, history, request, livePreview } from "../stores";
-  import { deleteImage, listHistory, imageSrc } from "../api";
+  import { deleteImage, listHistory, imageSrc, openFolder } from "../api";
 
   // The live draft (if any) wins over the settled image. When a draft 404s
   // (engine hasn't written the first frame yet) we clear it so the fallback
@@ -12,6 +12,22 @@
   let confirming = $state(false);
   let busy = $state(false);
   let error = $state<string | null>(null);
+
+  // Strip the trailing path segment to get the containing directory. Open-folder
+  // opens that dir in the OS file manager (open_path on the file itself would
+  // launch an image viewer instead).
+  const parentDir = (p: string) => p.replace(/[/\\][^/\\]*$/, "");
+
+  async function openContainingFolder() {
+    const item = get(currentItem);
+    if (!item) return;
+    error = null;
+    try {
+      await openFolder(parentDir(item.image_path));
+    } catch (e) {
+      error = String(e);
+    }
+  }
 
   async function doDelete() {
     const item = get(currentItem);
@@ -49,18 +65,27 @@
 
 <div class="preview">
   {#if shown}
-    <img src={shown} alt={isPreview ? "generation preview" : "generated result"}
+    <img class="photo" src={shown} alt={isPreview ? "generation preview" : "generated result"}
       onerror={() => { if (isPreview) livePreview.set(null); }} />
     {#if isPreview}
       <span class="badge">Preview</span>
     {:else}
-      <div class="actions">
+      <div class="toolbar">
         {#if confirming}
           <span class="ask">Move to trash?</span>
-          <button class="del" onclick={doDelete} disabled={busy}>Delete</button>
-          <button onclick={cancel} disabled={busy}>Cancel</button>
+          <button class="tool danger" onclick={doDelete} disabled={busy}
+            aria-label="Confirm delete" title="Confirm delete">Delete</button>
+          <button class="tool" onclick={cancel} disabled={busy}
+            aria-label="Cancel" title="Cancel">Cancel</button>
         {:else}
-          <button class="del" onclick={() => (confirming = true)} disabled={!$currentItem}>Delete</button>
+          <button class="tool" onclick={openContainingFolder} disabled={!$currentItem}
+            aria-label="Open containing folder" title="Open folder">
+            <span aria-hidden="true">🗀</span>
+          </button>
+          <button class="tool danger" onclick={() => (confirming = true)} disabled={!$currentItem}
+            aria-label="Delete image" title="Delete">
+            <span aria-hidden="true">🗑</span>
+          </button>
         {/if}
       </div>
       {#if error}<span class="err">{error}</span>{/if}
@@ -74,15 +99,30 @@
 </div>
 
 <style>
+  /* Matte: a subtle two-tone checker so any output aspect ratio reads
+     intentionally; the image floats on it with a soft shadow + hairline. */
   .preview { flex:1; display:flex; align-items:center; justify-content:center; position:relative;
-    background:var(--overlay-soft); border-radius:8px; overflow:hidden; }
-  img { max-width:100%; max-height:100%; object-fit:contain; }
-  .actions { position:absolute; top:.5rem; right:.5rem; display:flex; gap:.4rem; align-items:center; }
-  .actions button { font:inherit; font-size:.75rem; padding:.25rem .6rem; cursor:pointer; }
-  .actions button:disabled { opacity:.5; cursor:default; }
-  .del { background:var(--danger-bg); color:var(--on-accent); border:none; border-radius:5px; }
-  .ask { font-size:.75rem; background:var(--overlay); color:var(--on-accent); padding:.25rem .5rem; border-radius:5px; }
-  .badge { position:absolute; top:.5rem; right:.5rem; font-size:.7rem; letter-spacing:.03em;
+    padding:24px; border-radius:8px; overflow:hidden;
+    background:
+      linear-gradient(var(--matte), var(--matte)),
+      repeating-conic-gradient(var(--matte-2) 0% 25%, var(--matte) 0% 50%);
+    background-size:auto, 22px 22px; }
+  .photo { max-width:100%; max-height:100%; object-fit:contain; border-radius:8px;
+    /* Black shadow sits on image pixels — theme-independent, like the mockup. */
+    box-shadow:0 10px 30px rgba(0,0,0,.45), 0 0 0 1px var(--border-subtle); }
+
+  /* Quiet floating toolbar, top-right. Ghost by default; trash reddens on hover. */
+  .toolbar { position:absolute; top:14px; right:14px; display:flex; gap:6px; align-items:center; }
+  .tool { min-width:32px; height:32px; padding:0 .5rem; border-radius:8px; display:grid; place-items:center;
+    cursor:pointer; font:inherit; font-size:13px; color:var(--text-muted);
+    background:var(--overlay-soft); border:1px solid var(--border-subtle); }
+  .tool:hover:not(:disabled) { background:var(--overlay); color:var(--text); }
+  .tool:disabled { opacity:.5; cursor:default; }
+  .tool.danger:hover:not(:disabled) { color:var(--danger); border-color:var(--danger); }
+
+  .ask { font-size:.75rem; background:var(--overlay); color:var(--on-accent);
+    padding:.3rem .55rem; border-radius:8px; }
+  .badge { position:absolute; top:14px; right:14px; font-size:.7rem; letter-spacing:.03em;
     background:var(--overlay); color:var(--on-accent); padding:.25rem .55rem; border-radius:5px; }
   .err { position:absolute; bottom:.5rem; left:.5rem; right:.5rem; color:var(--danger-soft); font-size:.75rem;
     background:var(--overlay); padding:.3rem .5rem; border-radius:5px; }
