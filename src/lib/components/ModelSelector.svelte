@@ -87,6 +87,42 @@
     close();
   }
 
+  let filterEl: HTMLInputElement | undefined = $state();
+  let highlight = $state(0);
+
+  // Keep the highlight index in range as filtering shrinks the list.
+  $effect(() => { if (highlight > filtered.length - 1) highlight = Math.max(0, filtered.length - 1); });
+
+  // On open: focus the filter and start the highlight on the selected row.
+  $effect(() => {
+    if (!open) return;
+    const i = filtered.findIndex((e) => e.id === selId);
+    highlight = i >= 0 ? i : 0;
+    queueMicrotask(() => filterEl?.focus());
+  });
+
+  // Scroll the keyboard-highlighted row into view.
+  $effect(() => {
+    if (!open) return;
+    void highlight;
+    (rootEl?.querySelector(".row.active") as HTMLElement | null)?.scrollIntoView({ block: "nearest" });
+  });
+
+  function onFilterKey(e: KeyboardEvent) {
+    if (e.key === "ArrowDown") { e.preventDefault(); highlight = Math.min(highlight + 1, filtered.length - 1); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); highlight = Math.max(highlight - 1, 0); }
+    else if (e.key === "Enter") { e.preventDefault(); const en = filtered[highlight]; if (en) select(en); }
+  }
+
+  // Global Ctrl/Cmd+M toggles the selector.
+  $effect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === "m" || e.key === "M")) { e.preventDefault(); toggle(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
   // Non-modal popover: close on outside pointerdown / Escape while open.
   $effect(() => {
     if (!open) return;
@@ -120,21 +156,24 @@
     <div class="popover">
       <div class="search">
         <span class="mag" aria-hidden="true">⌕</span>
-        <input class="filter" aria-label="Filter models" placeholder="Filter models…" bind:value={filter} />
+        <input class="filter" aria-label="Filter models" placeholder="Filter models…" bind:value={filter} bind:this={filterEl} onkeydown={onFilterKey} />
       </div>
 
-      <div class="list" role="listbox">
+      <div class="list" role="listbox" tabindex="-1" aria-activedescendant={filtered[highlight] ? "ms-" + filtered[highlight].id : undefined}>
         {#if filtered.length === 0}
           <p class="empty">{entries.length === 0 ? "No models yet — add one below." : "No matches."}</p>
         {:else}
-          {#each filtered as entry (entry.id)}
+          {#each filtered as entry, idx (entry.id)}
             <button
               class="row"
               class:selected={entry.id === selId}
               class:bad-row={fitClass(entry.id) === "bad" || entry.broken}
+              class:active={idx === highlight}
+              id={"ms-" + entry.id}
               role="option"
               aria-selected={entry.id === selId}
               onclick={() => select(entry)}
+              onmouseenter={() => (highlight = idx)}
             >
               <span class="rname">{entry.broken ? "⚠ " : ""}{entry.name}</span>
               <span class="rmeta">
@@ -188,6 +227,7 @@
     background: transparent; border: none; color: var(--text); text-align: left; }
   .row + .row { margin-top: 2px; }
   .row:hover { background: var(--card-hover); }
+  .row.active { background: var(--card-hover); box-shadow: inset 0 0 0 1px var(--border-strong); }
   .row.selected { background: var(--accent-soft); }
   .row.selected::before { content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px;
     border-radius: 0 3px 3px 0; background: var(--accent); }
