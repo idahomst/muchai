@@ -4,6 +4,9 @@
 # Internal design/plan docs (AI-workflow artifacts; kept locally, not published)
 docs/superpowers/
 
+# Local design mockups (dev-only, not published)
+mockups/
+
 # Rust / Tauri
 /target/
 src-tauri/target/
