@@ -55,14 +55,21 @@
 </div>
 
 <style>
-  .strip { display:flex; gap:.4rem; overflow-x:auto; padding:.4rem; min-height:64px; align-items:center; }
-  .batch { display:flex; gap:.4rem; position:relative; padding-bottom:5px; }
+  /* Thin auto-hide scrollbar so the strip stays quiet until hovered. */
+  .strip { display:flex; gap:8px; overflow-x:auto; padding:6px 2px 8px; min-height:66px; align-items:center;
+    scrollbar-width:thin; scrollbar-color:var(--border-strong) transparent; }
+  .strip::-webkit-scrollbar { height:6px; }
+  .strip::-webkit-scrollbar-thumb { background:var(--border-strong); border-radius:6px; }
+  .strip::-webkit-scrollbar-thumb:hover { background:var(--text-faint); }
+  .batch { display:flex; gap:8px; position:relative; padding-bottom:6px; }
   .batch::after { content:''; position:absolute; left:0; right:0; bottom:0; height:3px;
     background:var(--accent); border-radius:2px; }
-  .thumb { padding:0; border:1px solid var(--border); border-radius:6px; overflow:hidden;
-    width:56px; height:56px; flex:0 0 auto; cursor:pointer; background:none; position:relative; }
+  .thumb { padding:0; border:1px solid var(--border); border-radius:8px; overflow:hidden;
+    width:58px; height:58px; flex:0 0 auto; cursor:pointer; background:none; position:relative; }
   .thumb img { width:100%; height:100%; object-fit:cover; display:block; }
-  .thumb.selected { outline:2px solid var(--accent); outline-offset:1px; border-color:var(--accent); }
+  .thumb:hover { border-color:var(--border-strong); }
+  /* Violet ring on the active thumb (matches focus rings elsewhere). */
+  .thumb.selected { border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
   .idx { position:absolute; bottom:1px; left:1px; background:var(--overlay); color:var(--on-accent);
     font-size:.55rem; line-height:1.3; border-radius:3px; padding:0 .25rem; }
   .empty { opacity:.5; font-size:.8rem; }
