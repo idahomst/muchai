@@ -60,7 +60,7 @@
   --danger-tint: rgba(200,54,47,.10);
   --warn: #9a5b00;
   --warn-tint: rgba(154,91,0,.10);
-  --success: #2e8b5f;
+  --success: #297a51;         /* AA on white for small .fit.good label (5.25:1) */
   --backdrop: rgba(0,0,0,.4);
   color-scheme: light;
 }
