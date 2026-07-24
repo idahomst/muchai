@@ -3,29 +3,40 @@
   import { version } from "../../../package.json";
   let { onAbout }: { onAbout: () => void } = $props();
   const gb = (v: number) => (v / 1024).toFixed(1);
+  const frac = (used: number, total: number) => (total > 0 ? used / total : 0);
+  // Meter fill hue: green while there's headroom, amber as it fills, red when
+  // nearly full. Thresholds match the "green→amber" intent of the mockup.
+  const meterClass = (f: number) => (f < 0.7 ? "lo" : f < 0.9 ? "mid" : "hi");
 </script>
 
 <div class="monitor">
   {#if $sysStats}
     {#if $sysStats.gpu}
       <span class="stat" title="GPU">
-        <span class="k">{$sysStats.gpu.name}</span>
-        <span class="v"><span class="num pct">{$sysStats.gpu.utilization_pct}</span>%</span>
+        <span class="glyph" aria-hidden="true">🖥</span>{$sysStats.gpu.name}
       </span>
-      <span class="stat" title="VRAM">
-        <span class="k">VRAM</span>
+      <span class="stat" title="VRAM used">
+        <span class="lbl">VRAM</span>
+        <span class="meter"><i class={meterClass(frac($sysStats.gpu.vram_used_mb, $sysStats.gpu.vram_total_mb))}
+          style="width:{frac($sysStats.gpu.vram_used_mb, $sysStats.gpu.vram_total_mb) * 100}%"></i></span>
         <span class="v"><span class="num mem">{gb($sysStats.gpu.vram_used_mb)}</span> / {gb($sysStats.gpu.vram_total_mb)} GB</span>
+      </span>
+      <span class="stat" title="GPU utilization">
+        <span class="lbl">GPU</span>
+        <span class="v"><span class="num pct">{$sysStats.gpu.utilization_pct}</span>%</span>
       </span>
     {:else}
       <span class="stat">No GPU stats</span>
     {/if}
-    <span class="stat" title="CPU">
-      <span class="k">CPU</span>
-      <span class="v"><span class="num pct">{$sysStats.cpu_pct.toFixed(0)}</span>%</span>
-    </span>
-    <span class="stat" title="RAM">
-      <span class="k">RAM</span>
+    <span class="stat" title="RAM used">
+      <span class="lbl">RAM</span>
+      <span class="meter"><i class={meterClass(frac($sysStats.ram_used_mb, $sysStats.ram_total_mb))}
+        style="width:{frac($sysStats.ram_used_mb, $sysStats.ram_total_mb) * 100}%"></i></span>
       <span class="v"><span class="num mem">{gb($sysStats.ram_used_mb)}</span> / {gb($sysStats.ram_total_mb)} GB</span>
+    </span>
+    <span class="stat" title="CPU utilization">
+      <span class="lbl">CPU</span>
+      <span class="v"><span class="num pct">{$sysStats.cpu_pct.toFixed(0)}</span>%</span>
     </span>
   {:else}
     <span class="stat">reading system…</span>
@@ -34,20 +45,25 @@
 </div>
 
 <style>
-  .monitor { display:flex; gap:1rem; font-size:.75rem; opacity:.8; padding:.4rem .6rem;
-    border-top:1px solid var(--border); white-space:nowrap; overflow-x:auto; }
-  .stat { display:inline-flex; gap:.4rem; align-items:baseline; }
-  .k { opacity:.7; }
-  /* Pushed to the far right of the bar; unobtrusive. */
-  .ver { margin-left:auto; opacity:.7; padding-left:1rem; font:inherit;
-    background:none; border:none; cursor:pointer; color:inherit;
-    text-decoration:underline; text-underline-offset:2px; }
-  .ver:hover { opacity:1; color:var(--accent-bright); }
+  .monitor { display:flex; align-items:center; gap:16px; font-size:11.5px; color:var(--text-muted);
+    padding:.4rem .8rem; border-top:1px solid var(--border); background:var(--bg);
+    white-space:nowrap; overflow-x:auto; }
+  .stat { display:inline-flex; gap:7px; align-items:center; }
+  .glyph { color:var(--text-faint); }
+  .lbl { color:var(--text-faint); font-weight:600; letter-spacing:.02em; }
+  /* Inline usage meter: fills green→amber→red as the resource fills. */
+  .meter { width:52px; height:5px; border-radius:3px; background:var(--card); overflow:hidden; }
+  .meter i { display:block; height:100%; border-radius:3px; }
+  .meter i.lo { background:var(--success); }
+  .meter i.mid { background:var(--warn); }
+  .meter i.hi { background:var(--danger); }
   /* Only the changing number gets a fixed-width, right-aligned box so the unit
      (% / GB) and everything after it never reflow when the digit count changes
-     (e.g. 96%→100%, 9.8→10.1 GB). The unit stays glued to the number's right
-     edge — no inter-element gap — because it lives in the same .v span. */
+     (e.g. 96%→100%, 9.8→10.1 GB). */
   .num { display:inline-block; text-align:right; font-variant-numeric:tabular-nums; }
   .num.pct { min-width:3ch; }  /* fits "100" */
-  .num.mem { min-width:5ch; }  /* fits "999.9" */
+  .num.mem { min-width:4ch; }  /* fits "99.9" */
+  .ver { margin-left:auto; padding-left:1rem; color:var(--text-faint);
+    font-family:var(--mono); font-size:11px; background:none; border:none; cursor:pointer; }
+  .ver:hover { color:var(--accent-bright); }
 </style>
