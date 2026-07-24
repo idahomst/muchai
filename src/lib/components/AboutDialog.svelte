@@ -27,59 +27,57 @@
 
 <svelte:window {onkeydown} />
 
-<div class="backdrop" onclick={(e) => { if (e.target === e.currentTarget) onclose(); }} role="presentation">
-  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="about-title">
-    <h2 id="about-title">About MuchAI <span class="ver">v{version}</span></h2>
-    <p class="tagline">{APP_TAGLINE}</p>
+<div class="modal-backdrop" onclick={(e) => { if (e.target === e.currentTarget) onclose(); }} role="presentation">
+  <div class="modal about" role="dialog" aria-modal="true" aria-labelledby="about-title">
+    <div class="modal-head">
+      <span class="modal-title" id="about-title">About MuchAI <span class="ver">v{version}</span></span>
+      <button class="modal-x" onclick={onclose} aria-label="Close">✕</button>
+    </div>
 
-    {#each CREDITS as section}
-      <div class="section">
-        <h3>{section.heading}</h3>
-        <ul>
-          {#each section.items as item}
-            <li>
-              {#if item.url}
-                <button class="link" onclick={() => open(item.url)}>{item.label}</button>
-              {:else}
-                <span class="name">{item.label}</span>
-              {/if}
-              {#if item.note}<span class="note"> — {item.note}</span>{/if}
-              {#if section.heading === "Image engine" && engineCommit}
-                <span class="commit" title="stable-diffusion.cpp build in use">(commit {engineCommit})</span>
-              {/if}
-            </li>
-          {/each}
-        </ul>
-      </div>
-    {/each}
+    <div class="modal-body">
+      <p class="tagline">{APP_TAGLINE}</p>
 
-    <p class="footer">© 2026 Martin Stepanek · MIT License</p>
+      {#each CREDITS as section}
+        <div class="section">
+          <p class="section-hdr">{section.heading}</p>
+          <ul>
+            {#each section.items as item}
+              <li>
+                {#if item.url}
+                  <button class="link" onclick={() => open(item.url)}>{item.label}</button>
+                {:else}
+                  <span class="name">{item.label}</span>
+                {/if}
+                {#if item.note}<span class="note"> — {item.note}</span>{/if}
+                {#if section.heading === "Image engine" && engineCommit}
+                  <span class="commit" title="stable-diffusion.cpp build in use">(commit {engineCommit})</span>
+                {/if}
+              </li>
+            {/each}
+          </ul>
+        </div>
+      {/each}
 
-    <div class="row">
-      <button class="btn-primary" bind:this={closeBtn} onclick={onclose}>Close</button>
+      <p class="copyright">© 2026 Martin Stepanek · MIT License</p>
+    </div>
+
+    <div class="modal-foot">
+      <button class="btn btn-primary spacer" bind:this={closeBtn} onclick={onclose}>Close</button>
     </div>
   </div>
 </div>
 
 <style>
-  .backdrop { position:fixed; inset:0; background:var(--backdrop); display:flex;
-    align-items:center; justify-content:center; z-index:50; }
-  .dialog { background:var(--dialog-bg); border:1px solid var(--border); border-radius:10px;
-    padding:1.2rem; width:min(460px, 92vw); max-height:88vh; overflow-y:auto;
-    display:flex; flex-direction:column; gap:.6rem; }
-  h2 { margin:0; font-size:1.1rem; display:flex; align-items:baseline; gap:.5rem; }
-  .ver { font-size:.8rem; opacity:.55; font-weight:normal; }
-  .tagline { margin:0; font-size:.85rem; opacity:.85; }
-  .section { display:flex; flex-direction:column; gap:.2rem; }
-  .section h3 { margin:.3rem 0 0; font-size:.72rem; text-transform:uppercase;
-    letter-spacing:.04em; opacity:.6; }
+  .modal.about { width: min(460px, 92vw); }
+  .ver { font-size:.8rem; color:var(--text-muted); font-weight:normal; }
+  .tagline { margin:0 0 6px; font-size:13px; color:var(--text-muted); }
+  .section { display:flex; flex-direction:column; }
+  .section .section-hdr { margin:16px 0 6px; }
   ul { margin:0; padding-left:1.1rem; display:flex; flex-direction:column; gap:.15rem;
-    font-size:.82rem; line-height:1.4; }
+    font-size:13px; line-height:1.4; }
   .link { font:inherit; padding:0; background:none; border:none; cursor:pointer;
     color:var(--accent-bright); text-decoration:underline; }
-  .note { opacity:.75; }
-  .commit { opacity:.6; font-variant-numeric:tabular-nums; margin-left:.3rem; }
-  .footer { margin:.4rem 0 0; font-size:.75rem; opacity:.6; }
-  .row { display:flex; justify-content:flex-end; margin-top:.3rem; }
-  .btn-primary { font:inherit; font-size:.85rem; padding:.4rem .9rem; cursor:pointer; }
+  .note { color:var(--text-muted); }
+  .commit { color:var(--text-faint); font-variant-numeric:tabular-nums; margin-left:.3rem; }
+  .copyright { margin:16px 0 0; font-size:12px; color:var(--text-faint); }
 </style>
