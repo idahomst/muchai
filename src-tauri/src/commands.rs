@@ -488,7 +488,7 @@ fn token_for_url(url: &str, hf_token: &str, civitai_token: &str) -> String {
     let u = url.to_lowercase();
     if u.contains("huggingface.co") || u.contains("hf.co") {
         hf_token.to_string()
-    } else if u.contains("civitai.com") {
+    } else if u.contains("civitai.com") || u.contains("civitai.red") {
         civitai_token.to_string()
     } else {
         String::new()
@@ -1005,6 +1005,7 @@ mod tests {
     fn token_for_url_selects_by_host() {
         assert_eq!(token_for_url("https://huggingface.co/x/y.gguf", "HF", "CV"), "HF");
         assert_eq!(token_for_url("https://civitai.com/api/download/1", "HF", "CV"), "CV");
+        assert_eq!(token_for_url("https://civitai.red/api/download/1", "HF", "CV"), "CV");
         assert_eq!(token_for_url("https://example.com/a.safetensors", "HF", "CV"), "");
     }
 
