@@ -66,6 +66,14 @@
     return !devices.some((d) => d.kind !== "cpu");
   })();
 
+  // Ctrl/Cmd+Enter triggers Generate from anywhere (ignored mid-run).
+  function onKey(e: KeyboardEvent) {
+    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+      e.preventDefault();
+      if (get(genStatus).kind !== "running") run();
+    }
+  }
+
   onMount(() => {
     const un = onProgress((p) => {
       genStatus.update((s) => s.kind === "running" ? { kind: "running", progress: p } : s);
@@ -79,7 +87,8 @@
     });
     const unNotice = onGenNotice(() => { lowVramAuto = true; });
     const unPreview = onPreview((path) => { previewPath = path; });
-    return () => { un.then((f) => f()); unNotice.then((f) => f()); unPreview.then((f) => f()); };
+    window.addEventListener("keydown", onKey);
+    return () => { un.then((f) => f()); unNotice.then((f) => f()); unPreview.then((f) => f()); window.removeEventListener("keydown", onKey); };
   });
 </script>
 
@@ -87,9 +96,13 @@
   {#if $genStatus.kind === "running"}
     <div class="progress"><div class="fill" style="width:{pct}%"></div></div>
     <span class="step" aria-live="polite">{stepLabel}</span>
-    <button class="btn-secondary" on:click={cancelGeneration}>Cancel</button>
+    <button class="cancel" on:click={cancelGeneration}>Cancel</button>
   {:else}
-    <button class="btn-primary" on:click={run}>Generate</button>
+    <button class="generate" on:click={run}>
+      <span class="bolt" aria-hidden="true">⚡</span>
+      Generate
+      <span class="kbd">Ctrl ↵</span>
+    </button>
   {/if}
 </div>
 
@@ -107,7 +120,15 @@
 
 <style>
   .bar { display:flex; gap:.5rem; align-items:center; }
-  .btn-primary { flex:1; padding:.6rem; font-weight:600; }
+  .generate { flex:1; height:44px; border:none; border-radius:var(--radius); cursor:pointer;
+    background:var(--accent); color:var(--on-accent); font:inherit; font-size:14px; font-weight:600;
+    display:flex; align-items:center; justify-content:center; gap:9px; }
+  .generate:hover { background:var(--accent-bright); }
+  .bolt { font-size:14px; }
+  /* Translucent white pill on the violet button — theme-independent overlay. */
+  .kbd { font-size:11px; font-weight:600; opacity:.75; background:rgba(255,255,255,.16);
+    border-radius:5px; padding:2px 6px; }
+  .cancel { height:40px; padding:0 .9rem; font:inherit; }
   .progress { flex:1; height:12px; background:var(--border-subtle); border-radius:6px; overflow:hidden; }
   .fill { height:100%; background:var(--accent); transition:width .15s linear; }
   .step { font-size:.72rem; opacity:.75; font-variant-numeric:tabular-nums; white-space:nowrap; }
