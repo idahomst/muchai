@@ -8,16 +8,16 @@
   /* ---- Text ---- */
   --text: #e6e8ec;
   --text-muted: #9ba1ad;      /* labels, secondary */
-  --text-faint: #6b7280;      /* hints, units, tertiary */
+  --text-faint: #868b96;      /* hints, units, tertiary (AA on --bg) */
   /* ---- Lines ---- */
   --border: #262a33;          /* default hairline */
   --border-strong: #333845;   /* hover/focus edge, dividers */
   --border-subtle: rgba(255,255,255,.06);
   /* ---- Accent (violet — primary action + selected state ONLY) ---- */
-  --accent: #7c5cff;
+  --accent: #6e4bf0;                     /* deepened from #7c5cff for AA (white-on-accent 4.5:1+) */
   --accent-bright: #9179ff;
-  --accent-tint: rgba(124,92,255,.16);   /* legacy name; == accent-soft */
-  --accent-soft: rgba(124,92,255,.16);
+  --accent-tint: rgba(110,75,240,.16);   /* legacy name; == accent-soft */
+  --accent-soft: rgba(110,75,240,.16);
   --on-accent: #fff;
   /* ---- Status ---- */
   --danger: #e5484d;
@@ -46,7 +46,7 @@
   --card-hover: #f2f3f6;
   --text: #1a1d21;
   --text-muted: #5b6270;
-  --text-faint: #8a909b;
+  --text-faint: #6b717d;      /* AA on light --bg */
   --border: #e1e4e9;
   --border-strong: #d2d6dd;
   --border-subtle: rgba(0,0,0,.06);
