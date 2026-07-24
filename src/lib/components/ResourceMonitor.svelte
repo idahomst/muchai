@@ -7,6 +7,9 @@
   // Meter fill hue: green while there's headroom, amber as it fills, red when
   // nearly full. Thresholds match the "green→amber" intent of the mockup.
   const meterClass = (f: number) => (f < 0.7 ? "lo" : f < 0.9 ? "mid" : "hi");
+  // Computed once each so the meter's class and width stay provably in sync.
+  const vramFrac = $derived($sysStats?.gpu ? frac($sysStats.gpu.vram_used_mb, $sysStats.gpu.vram_total_mb) : 0);
+  const ramFrac = $derived($sysStats ? frac($sysStats.ram_used_mb, $sysStats.ram_total_mb) : 0);
 </script>
 
 <div class="monitor">
@@ -17,8 +20,7 @@
       </span>
       <span class="stat" title="VRAM used">
         <span class="lbl">VRAM</span>
-        <span class="meter"><i class={meterClass(frac($sysStats.gpu.vram_used_mb, $sysStats.gpu.vram_total_mb))}
-          style="width:{frac($sysStats.gpu.vram_used_mb, $sysStats.gpu.vram_total_mb) * 100}%"></i></span>
+        <span class="meter"><i class={meterClass(vramFrac)} style="width:{vramFrac * 100}%"></i></span>
         <span class="v"><span class="num mem">{gb($sysStats.gpu.vram_used_mb)}</span> / {gb($sysStats.gpu.vram_total_mb)} GB</span>
       </span>
       <span class="stat" title="GPU utilization">
@@ -30,8 +32,7 @@
     {/if}
     <span class="stat" title="RAM used">
       <span class="lbl">RAM</span>
-      <span class="meter"><i class={meterClass(frac($sysStats.ram_used_mb, $sysStats.ram_total_mb))}
-        style="width:{frac($sysStats.ram_used_mb, $sysStats.ram_total_mb) * 100}%"></i></span>
+      <span class="meter"><i class={meterClass(ramFrac)} style="width:{ramFrac * 100}%"></i></span>
       <span class="v"><span class="num mem">{gb($sysStats.ram_used_mb)}</span> / {gb($sysStats.ram_total_mb)} GB</span>
     </span>
     <span class="stat" title="CPU utilization">
@@ -62,7 +63,7 @@
      (e.g. 96%→100%, 9.8→10.1 GB). */
   .num { display:inline-block; text-align:right; font-variant-numeric:tabular-nums; }
   .num.pct { min-width:3ch; }  /* fits "100" */
-  .num.mem { min-width:4ch; }  /* fits "99.9" */
+  .num.mem { min-width:5ch; }  /* fits "100.0" */
   .ver { margin-left:auto; padding-left:1rem; color:var(--text-faint);
     font-family:var(--mono); font-size:11px; background:none; border:none; cursor:pointer; }
   .ver:hover { color:var(--accent-bright); }

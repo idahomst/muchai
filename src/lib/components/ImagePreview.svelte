@@ -13,6 +13,16 @@
   let busy = $state(false);
   let error = $state<string | null>(null);
 
+  // Reset the transient confirm/error whenever the selected image changes
+  // (e.g. picking another filmstrip thumb) — otherwise an open "Move to trash?"
+  // prompt would silently retarget the newly-selected image. Reading the id
+  // registers it as the effect's dependency.
+  $effect(() => {
+    void $currentItem?.id;
+    confirming = false;
+    error = null;
+  });
+
   // Strip the trailing path segment to get the containing directory. Open-folder
   // opens that dir in the OS file manager (open_path on the file itself would
   // launch an image viewer instead).
@@ -101,12 +111,12 @@
 <style>
   /* Matte: a subtle two-tone checker so any output aspect ratio reads
      intentionally; the image floats on it with a soft shadow + hairline. */
+  /* No overflow:hidden — the background checker already clips to the rounded
+     corners, and clipping would crop the image's soft drop shadow. */
   .preview { flex:1; display:flex; align-items:center; justify-content:center; position:relative;
-    padding:24px; border-radius:8px; overflow:hidden;
-    background:
-      linear-gradient(var(--matte), var(--matte)),
-      repeating-conic-gradient(var(--matte-2) 0% 25%, var(--matte) 0% 50%);
-    background-size:auto, 22px 22px; }
+    padding:24px; border-radius:8px;
+    background:repeating-conic-gradient(var(--matte-2) 0% 25%, var(--matte) 0% 50%);
+    background-size:22px 22px; }
   .photo { max-width:100%; max-height:100%; object-fit:contain; border-radius:8px;
     /* Black shadow sits on image pixels — theme-independent, like the mockup. */
     box-shadow:0 10px 30px rgba(0,0,0,.45), 0 0 0 1px var(--border-subtle); }

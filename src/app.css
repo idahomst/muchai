@@ -32,8 +32,8 @@
   --overlay-soft: rgba(0,0,0,.2);
   --backdrop: rgba(0,0,0,.55);
   /* ---- Image matte (framing area behind a result; subtle checker) ---- */
-  --matte: #101216;           /* darker base square */
-  --matte-2: #14161b;         /* lighter alternating square */
+  --matte: #0f1116;           /* darker square */
+  --matte-2: #191c23;         /* lighter alternating square */
   /* ---- Shape scale (px — radii do not scale with root font size) ---- */
   --radius: 10px;
   --radius-sm: 7px;
@@ -67,8 +67,8 @@
   --warn-tint: rgba(154,91,0,.10);
   --success: #297a51;         /* AA on white for small .fit.good label (5.25:1) */
   --backdrop: rgba(0,0,0,.4);
-  --matte: #e8eaef;           /* subtle light-neutral checker */
-  --matte-2: #f1f2f6;
+  --matte: #e4e7ee;           /* subtle light-neutral checker */
+  --matte-2: #f2f3f7;
   color-scheme: light;
 }
 
