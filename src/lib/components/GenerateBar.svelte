@@ -101,7 +101,7 @@
     <button class="generate" on:click={run}>
       <span class="bolt" aria-hidden="true">⚡</span>
       Generate
-      <span class="kbd">Ctrl ↵</span>
+      <span class="kbd" aria-hidden="true">Ctrl ↵</span>
     </button>
   {/if}
 </div>

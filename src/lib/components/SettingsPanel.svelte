@@ -42,6 +42,14 @@
   // ⟳ pins a fresh concrete seed (so the result is reproducible), unlike the
   // -1 "random each run" sentinel.
   function randomizeSeed() { $request.seed = Math.floor(Math.random() * 1_000_000_000); }
+  // Clearing the field would leave the store non-numeric; commit empty → -1
+  // (the "random each run" sentinel), which is the sensible blank state here.
+  function onSeedCommit(e: Event) {
+    const raw = (e.currentTarget as HTMLInputElement).value;
+    if (raw === "") { $request.seed = -1; return; }
+    const n = Number(raw);
+    if (!Number.isNaN(n)) $request.seed = Math.trunc(n);
+  }
 </script>
 
 <div class="rowpair">
@@ -86,7 +94,7 @@
   <div class="field">
     <label class="flabel" for="seed" title={HELP.seed}>Seed (-1 = random)</label>
     <div class="num">
-      <input class="val" id="seed" type="number" aria-label="Seed" bind:value={$request.seed} />
+      <input class="val" id="seed" type="number" aria-label="Seed" bind:value={$request.seed} on:change={onSeedCommit} />
       <button type="button" class="stp" title="Randomize seed" aria-label="Randomize seed" on:click={randomizeSeed}>⟳</button>
     </div>
   </div>
@@ -116,7 +124,7 @@
   .stp { width:30px; align-self:stretch; display:grid; place-items:center; color:var(--text-muted);
     cursor:pointer; font-size:14px; background:transparent; border:none;
     border-left:1px solid var(--border); }
-  .stp:hover { background:var(--card-hover); color:var(--text); }
+  .stp:hover { background:var(--card-hover); color:var(--text); border-color:var(--border); }
   .ghostbtn { width:100%; margin-top:4px; background:var(--card); border:1px solid var(--border);
     color:var(--text-muted); border-radius:var(--radius-sm); font:inherit; font-size:12.5px;
     font-weight:550; padding:9px; cursor:pointer; }

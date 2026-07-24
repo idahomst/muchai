@@ -24,10 +24,15 @@
 
   function bump(dir: 1 | -1) { value = clamp(snap((value ?? 0) + dir * step)); }
 
-  function onInput(e: Event) {
+  // Normalize on commit (change/blur), NOT on every keystroke: clamping mid-type
+  // would snap a half-typed value up to `min` (e.g. typing "5" toward 512 in a
+  // min=64 field jumps to 64 and eats the caret). `bind:value` keeps the store
+  // live while typing; this just tidies the final value. Empty → min.
+  function onCommit(e: Event) {
     const raw = (e.currentTarget as HTMLInputElement).value;
+    if (raw === "") { value = clamp(min === -Infinity ? 0 : min); return; }
     const n = Number(raw);
-    if (raw !== "" && !Number.isNaN(n)) value = clamp(n);
+    if (!Number.isNaN(n)) value = clamp(snap(n));
   }
 </script>
 
@@ -41,7 +46,7 @@
     {step}
     aria-label={ariaLabel}
     bind:value
-    oninput={onInput}
+    onchange={onCommit}
   />
   <button type="button" class="stp" tabindex="-1" aria-label="Decrease" onclick={() => bump(-1)}>−</button>
   <button type="button" class="stp" tabindex="-1" aria-label="Increase" onclick={() => bump(1)}>+</button>
@@ -60,5 +65,5 @@
   .stp { width: 30px; align-self: stretch; display: grid; place-items: center;
     color: var(--text-muted); cursor: pointer; font-size: 14px; background: transparent;
     border: none; border-left: 1px solid var(--border); border-radius: 0; }
-  .stp:hover { background: var(--card-hover); color: var(--text); }
+  .stp:hover { background: var(--card-hover); color: var(--text); border-color: var(--border); }
 </style>
