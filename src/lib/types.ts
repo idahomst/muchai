@@ -101,6 +101,11 @@ export interface GenerationRequest {
   seed: number;       // -1 = random
   batch_count: number;
   output_format: OutputFormat;
+  // Id of the managed library model this request targets (mirrors Rust
+  // GenerationRequest.model_id, #[serde(default)] → null for old configs).
+  // Set → backend re-resolves components from model.json (single source of
+  // truth); null → ad-hoc model, `model` used literally.
+  model_id: string | null;
 }
 
 // Mirrors Rust `GenDefaults` (src-tauri/src/types.rs). Recommended per-family
@@ -178,7 +183,7 @@ export const defaultRequest = (): GenerationRequest => ({
   model: { type: "single_file", path: "" }, prompt: "", negative_prompt: "",
   steps: 20, cfg_scale: 7.0, sampler: "euler_a",
   width: 512, height: 512, seed: -1, batch_count: 1,
-  output_format: "png",
+  output_format: "png", model_id: null,
 });
 
 export const SAMPLERS: { value: Sampler; label: string }[] = [
