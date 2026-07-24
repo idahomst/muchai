@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { settings, request, history, sysStats, gpuDevices, refreshLibrary, downloadProgress, downloadBusy, downloadError } from "$lib/stores";
   import { getSettings, setSettings, listHistory, onSystemStats, listGpuDevices, onDownloadProgress } from "$lib/api";
-  import ModelLibrary from "$lib/components/ModelLibrary.svelte";
+  import ModelSelector from "$lib/components/ModelSelector.svelte";
   import NewModelDialog from "$lib/components/NewModelDialog.svelte";
   import ModelEditor from "$lib/components/ModelEditor.svelte";
   import DownloadStatus from "$lib/components/DownloadStatus.svelte";
@@ -83,7 +83,7 @@
         <ThemeToggle />
       </div>
     </header>
-    <ModelLibrary
+    <ModelSelector
       onNew={() => (showNew = true)}
       onEdit={(e) => (editing = e)}
       onDelete={(e) => (editing = e)}
