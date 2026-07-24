@@ -88,96 +88,115 @@
   }
 </script>
 
-<div class="backdrop" onclick={(e) => { if (e.target === e.currentTarget) onClose(); }} role="presentation">
-  <div class="dialog" role="dialog" aria-modal="true">
-    <header><b>Edit model</b><button class="x" onclick={onClose} aria-label="Close">✕</button></header>
-    {#if entry.broken}<p class="warn">⚠ Some component files are missing. Re-pick them below, then Save.</p>{/if}
-    {#if error}<p class="error">{error}</p>{/if}
-
-    <label>Name<input bind:value={name} /></label>
-    <label>Family
-      <select bind:value={family}>
-        {#each FAMILIES as f}<option value={f}>{f}</option>{/each}
-      </select>
-    </label>
-
-    <div class="section">Components</div>
-    <div class="slot">
-      <span class="slot-label">Diffusion model</span>
-      <span class="path" title={slots.diffusion_model}>{slots.diffusion_model || "(none)"}</span>
-      <button disabled={busy} onclick={() => pick("diffusion_model")}>Change…</button>
+<div class="modal-backdrop" onclick={(e) => { if (e.target === e.currentTarget) onClose(); }} role="presentation">
+  <div class="modal" role="dialog" aria-modal="true">
+    <div class="modal-head">
+      <span class="modal-title">Edit model</span>
+      <button class="modal-x" onclick={onClose} aria-label="Close">✕</button>
     </div>
-    {#each OPTIONAL_ROLES as role}
-      <div class="slot">
-        <span class="slot-label">{role.label}</span>
-        <span class="path" title={slots[role.key]}>{slots[role.key] || "(none)"}</span>
-        <button disabled={busy} onclick={() => pick(role.key)}>Change…</button>
-        <button disabled={busy || !slots[role.key]} onclick={() => (slots[role.key] = "")} aria-label="Clear">×</button>
+
+    <div class="modal-body">
+      {#if entry.broken}<p class="warn">⚠ Some component files are missing. Re-pick them below, then Save.</p>{/if}
+      {#if error}<p class="err">{error}</p>{/if}
+
+      <div class="dlg-field">
+        <p class="microlabel">Name</p>
+        <input class="dlg-input" bind:value={name} />
       </div>
-    {/each}
+      <div class="dlg-field">
+        <p class="microlabel">Family</p>
+        <select class="dlg-select" bind:value={family}>
+          {#each FAMILIES as f}<option value={f}>{f}</option>{/each}
+        </select>
+      </div>
 
-    <div class="section">Engine flags</div>
-    <label>VAE format
-      <select bind:value={vaeFormat}>
-        <option value="">Default</option>
-        {#each VAE_FORMATS.filter((v) => v) as v}<option value={v}>{v}</option>{/each}
-      </select>
-    </label>
-    <label>Prediction
-      <select bind:value={prediction}>
-        <option value="">Default</option>
-        {#each PREDICTIONS.filter((p) => p) as p}<option value={p}>{p}</option>{/each}
-      </select>
-    </label>
+      <p class="section-hdr">Components</p>
+      <div class="comp">
+        <span class="ck">Diffusion</span>
+        <span class="cpath" class:none={!slots.diffusion_model} title={slots.diffusion_model}>
+          {slots.diffusion_model ? "‏" + slots.diffusion_model : "Not set"}</span>
+        <button class="btn btn-ghost btn-sm" disabled={busy} onclick={() => pick("diffusion_model")}>Change…</button>
+        <span class="rm" aria-hidden="true"></span>
+      </div>
+      {#each OPTIONAL_ROLES as role}
+        <div class="comp">
+          <span class="ck">{role.label}</span>
+          <span class="cpath" class:none={!slots[role.key]} title={slots[role.key]}>
+            {slots[role.key] ? "‏" + slots[role.key] : "Not set"}</span>
+          <button class="btn btn-ghost btn-sm" disabled={busy} onclick={() => pick(role.key)}>Change…</button>
+          {#if slots[role.key]}
+            <button class="rm" disabled={busy} onclick={() => (slots[role.key] = "")}
+              aria-label="Remove {role.label}" title="Remove">✕</button>
+          {:else}
+            <span class="rm" aria-hidden="true"></span>
+          {/if}
+        </div>
+      {/each}
 
-    <div class="section">
-      <label class="inline"><input type="checkbox" bind:checked={overrideOn} /> Custom recommended settings</label>
+      <p class="section-hdr">Engine flags</p>
+      <div class="dlg-field">
+        <p class="microlabel">VAE format</p>
+        <select class="dlg-select" bind:value={vaeFormat}>
+          <option value="">Default</option>
+          {#each VAE_FORMATS.filter((v) => v) as v}<option value={v}>{v}</option>{/each}
+        </select>
+      </div>
+      <div class="dlg-field last">
+        <p class="microlabel">Prediction</p>
+        <select class="dlg-select" bind:value={prediction}>
+          <option value="">Default</option>
+          {#each PREDICTIONS.filter((p) => p) as p}<option value={p}>{p}</option>{/each}
+        </select>
+      </div>
+
+      <label class="check">
+        <input type="checkbox" bind:checked={overrideOn} />
+        <span class="check-box"></span>
+        <span>Custom recommended settings</span>
+      </label>
+      {#if overrideOn}
+        <div class="rec-grid">
+          <div class="dlg-field"><p class="microlabel">Steps</p><input class="dlg-input" type="number" min="1" max="150" bind:value={rec.steps} /></div>
+          <div class="dlg-field"><p class="microlabel">CFG</p><input class="dlg-input" type="number" min="1" max="30" step="0.5" bind:value={rec.cfg_scale} /></div>
+          <div class="dlg-field"><p class="microlabel">Width</p><input class="dlg-input" type="number" min="64" max="2048" step="64" bind:value={rec.width} /></div>
+          <div class="dlg-field"><p class="microlabel">Height</p><input class="dlg-input" type="number" min="64" max="2048" step="64" bind:value={rec.height} /></div>
+          <div class="dlg-field wide last"><p class="microlabel">Sampler</p>
+            <select class="dlg-select" bind:value={rec.sampler}>
+              {#each SAMPLERS as s}<option value={s.value}>{s.label}</option>{/each}
+            </select>
+          </div>
+        </div>
+      {/if}
     </div>
-    {#if overrideOn}
-      <div class="rec-grid">
-        <label>Steps<input type="number" min="1" max="150" bind:value={rec.steps} /></label>
-        <label>CFG<input type="number" min="1" max="30" step="0.5" bind:value={rec.cfg_scale} /></label>
-        <label>Width<input type="number" min="64" max="2048" step="64" bind:value={rec.width} /></label>
-        <label>Height<input type="number" min="64" max="2048" step="64" bind:value={rec.height} /></label>
-        <label class="wide">Sampler
-          <select bind:value={rec.sampler}>
-            {#each SAMPLERS as s}<option value={s.value}>{s.label}</option>{/each}
-          </select>
-        </label>
-      </div>
-    {/if}
 
-    <div class="footer">
+    <div class="modal-foot">
       {#if confirmingDelete}
-        <span class="warn">Delete "{entry.name}"? Files go to trash.</span>
-        <button class="danger" disabled={busy} onclick={doDelete}>Confirm delete</button>
-        <button disabled={busy} onclick={() => (confirmingDelete = false)}>Cancel</button>
+        <span class="warn">Delete “{entry.name}”? Files go to trash.</span>
+        <button class="btn btn-danger spacer" disabled={busy} onclick={doDelete}>Confirm delete</button>
+        <button class="btn btn-ghost" disabled={busy} onclick={() => (confirmingDelete = false)}>Cancel</button>
       {:else}
-        <button class="danger" onclick={() => (confirmingDelete = true)}>Delete…</button>
-        <span class="spacer"></span>
-        <button disabled={busy} onclick={save}>Save</button>
+        <button class="btn btn-danger" onclick={() => (confirmingDelete = true)}>Delete…</button>
+        <button class="btn btn-ghost spacer" disabled={busy} onclick={onClose}>Cancel</button>
+        <button class="btn btn-primary" disabled={busy} onclick={save}>Save</button>
       {/if}
     </div>
   </div>
 </div>
 
 <style>
-  .backdrop { position: fixed; inset: 0; background: var(--backdrop); display: flex; align-items: center; justify-content: center; z-index: 50; }
-  .dialog { background: var(--dialog-bg); border: 1px solid var(--border); border-radius: 10px; width: min(520px, 94vw); max-height: 90vh; overflow: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; color: var(--text); }
-  header { display: flex; justify-content: space-between; align-items: center; }
-  .x { background: none; border: none; cursor: pointer; color: inherit; }
-  label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
-  label.inline { flex-direction: row; align-items: center; gap: 6px; }
-  .section { font-size: 12px; font-weight: 600; opacity: 0.75; border-top: 1px solid var(--border); padding-top: 8px; }
-  .slot { display: flex; align-items: center; gap: 8px; font-size: 12px; }
-  .slot-label { flex: 0 0 96px; }
-  .path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.85; font-family: monospace; }
-  .rec-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .dlg-field.last { margin-bottom: 0; }
+  .comp { display: grid; grid-template-columns: 96px 1fr auto auto; align-items: center; gap: 12px;
+    padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .comp:last-of-type { border-bottom: none; }
+  .ck { font-size: 12.5px; color: var(--text-muted); font-weight: 550; }
+  .cpath { font-size: 12px; color: var(--text); font-family: var(--mono);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
+  .cpath.none { color: var(--text-muted); font-family: inherit; font-style: italic; direction: ltr; }
+  .rm { width: 26px; height: 26px; border-radius: 6px; display: grid; place-items: center;
+    color: var(--text-muted); background: transparent; border: none; cursor: pointer; font-size: 13px; }
+  button.rm:hover:not(:disabled) { background: var(--card-hover); color: var(--danger); }
+  .rec-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; margin-top: 14px; }
   .rec-grid .wide { grid-column: 1 / -1; }
-  .footer { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
-  .spacer { flex: 1; }
-  .danger { color: var(--danger); }
   .warn { font-size: 12px; color: var(--warn); }
-  .error { color: var(--danger); font-size: 12px; }
-  input, select { font: inherit; padding: 4px; }
+  .err { color: var(--danger); font-size: 12px; margin: 0 0 10px; }
 </style>
