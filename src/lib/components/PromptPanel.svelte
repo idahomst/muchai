@@ -1,12 +1,11 @@
 <script lang="ts">
   import { request } from "../stores";
-  import InfoHint from "./InfoHint.svelte";
   import { HELP } from "../helpText";
 </script>
 
 <div class="field">
-  <div class="row">
-    <span class="lbl-wrap"><label class="label" for="prompt">Prompt</label><InfoHint text={HELP.prompt} label="About the prompt" /></span>
+  <div class="flabel">
+    <label for="prompt" title={HELP.prompt}>Prompt</label>
     <button type="button" class="clear" title="Clear prompt"
       disabled={!$request.prompt}
       on:click={() => ($request.prompt = "")}>Clear</button>
@@ -14,8 +13,8 @@
   <textarea id="prompt" rows="3" bind:value={$request.prompt} placeholder="a lovely cat, oil painting"></textarea>
 </div>
 <div class="field">
-  <div class="row">
-    <span class="lbl-wrap"><label class="label" for="neg">Negative prompt</label><InfoHint text={HELP.negativePrompt} label="About the negative prompt" /></span>
+  <div class="flabel">
+    <label for="neg" title={HELP.negativePrompt}>Negative prompt</label>
     <button type="button" class="clear" title="Clear negative prompt"
       disabled={!$request.negative_prompt}
       on:click={() => ($request.negative_prompt = "")}>Clear</button>
@@ -24,11 +23,21 @@
 </div>
 
 <style>
+  .field { margin-bottom:16px; }
+  .field:last-child { margin-bottom:0; }
+  .flabel { display:flex; align-items:center; margin-bottom:6px; }
+  .flabel label { font-size:11px; letter-spacing:.03em; text-transform:uppercase;
+    font-weight:600; color:var(--text-muted); cursor:default; }
+  .clear { margin-left:auto; font:inherit; font-size:10.5px; font-weight:550;
+    color:var(--text-muted); cursor:pointer; padding:2px 6px; border-radius:5px;
+    background:transparent; border:none; }
+  .clear:hover:not(:disabled) { background:var(--card-hover); color:var(--text); }
+  .clear:disabled { opacity:.35; cursor:default; }
   /* Pinned to 16px on purpose: this size reads well and should not scale
      with the app-wide root font bump (see html font-size in app.css). */
-  textarea { width:100%; resize:vertical; font:inherit; font-size:16px; padding:.4rem; box-sizing:border-box; }
-  .row { display:flex; align-items:center; justify-content:space-between; margin-bottom:.2rem; }
-  .clear { font:inherit; font-size:.7rem; padding:.1rem .45rem; cursor:pointer; opacity:.8; }
-  .clear:disabled { opacity:.35; cursor:default; }
-  .lbl-wrap { display:inline-flex; align-items:center; gap:.2rem; }
+  textarea { width:100%; resize:vertical; box-sizing:border-box;
+    background:var(--card); border:1px solid var(--border); border-radius:var(--radius-sm);
+    color:var(--text); font:inherit; font-size:16px; line-height:1.45; padding:9px 11px; }
+  textarea:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
+  textarea::placeholder { color:var(--text-muted); }
 </style>
