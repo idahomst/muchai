@@ -237,6 +237,15 @@ pub async fn generate(
     device_vram_mb: Option<u64>,
 ) -> Result<Vec<GalleryItem>, String> {
     let cfg = state.config.lock().unwrap().clone();
+    // Single source of truth: for a managed model, re-read its components from
+    // model.json here — the last stop before the engine — so a stale snapshot
+    // (frontend store, persisted last_request, or a hand-edited manifest) can
+    // never send wrong component paths. Ad-hoc models keep their literal ref.
+    let request = {
+        let mut r = request;
+        r.model = library::resolve_request_model(std::path::Path::new(&cfg.models_dir), &r)?;
+        r
+    };
     if let ModelRef::MultiFile(c) = &request.model {
         let missing = crate::types::missing_components(c);
         if !missing.is_empty() {
@@ -351,6 +360,11 @@ pub async fn generate(
                 let mut req_i = request.clone();
                 req_i.seed = seed;
                 req_i.batch_count = 1; // each item is one concrete image
+                // Gallery items are frozen historical snapshots: their `model`
+                // is the fully-resolved ref that actually generated the image.
+                // Clear `model_id` so replaying one never re-resolves against a
+                // since-changed (or deleted) manifest.
+                req_i.model_id = None;
                 let item = GalleryItem {
                     id: if multi { format!("{id}_{i}") } else { id.clone() },
                     image_path: path.to_string_lossy().into_owned(),

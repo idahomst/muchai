@@ -1,5 +1,5 @@
 use crate::manifest::{self, ModelManifest};
-use crate::types::{missing_components, ModelRef};
+use crate::types::{missing_components, GenerationRequest, ModelRef};
 use serde::Serialize;
 use std::path::Path;
 
@@ -57,6 +57,27 @@ pub fn entry_from_manifest(model_dir: &Path, m: &ModelManifest) -> LibraryEntry 
         flags: m.flags.clone(),
         recommended_settings: m.recommended_settings,
         broken,
+    }
+}
+
+/// Resolve one library entry by its manifest `id`, re-reading from disk. This is
+/// the single-source-of-truth lookup: `generate` calls it so an edited or stale
+/// `model.json` is always re-read at the moment of use. `None` when no manifest
+/// in `models_dir` has that id (deleted/renamed).
+pub fn resolve_by_id(models_dir: &Path, id: &str) -> Option<LibraryEntry> {
+    scan_library(models_dir).into_iter().find(|e| e.id == id)
+}
+
+/// The `ModelRef` to hand the engine for a request. Managed model (`model_id`
+/// Some) → re-resolve components from `model.json` (single source of truth),
+/// ignoring the possibly-stale `request.model` snapshot. Ad-hoc (`model_id`
+/// None) → the literal `request.model`. Err when a named id no longer resolves.
+pub fn resolve_request_model(models_dir: &Path, request: &GenerationRequest) -> Result<ModelRef, String> {
+    match &request.model_id {
+        Some(id) => resolve_by_id(models_dir, id)
+            .map(|e| e.model)
+            .ok_or_else(|| "Selected model is no longer in your library. Re-select a model.".to_string()),
+        None => Ok(request.model.clone()),
     }
 }
 
@@ -145,5 +166,100 @@ mod tests {
         assert_eq!(lib.len(), 1);
         assert_eq!(lib[0].id, "real");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn resolve_by_id_finds_the_matching_entry() {
+        let root = std::env::temp_dir().join(format!("muchai-resolve-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        write_manifest(&root, "wanted", "w.safetensors", true);
+        write_manifest(&root, "other", "o.safetensors", true);
+        let entry = resolve_by_id(&root, "wanted");
+        assert!(entry.is_some());
+        assert_eq!(entry.unwrap().id, "wanted");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn resolve_by_id_returns_none_for_unknown_id() {
+        let root = std::env::temp_dir().join(format!("muchai-resolve2-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        write_manifest(&root, "present", "p.safetensors", true);
+        assert!(resolve_by_id(&root, "absent").is_none());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn resolve_request_model_overrides_a_stale_snapshot_with_the_manifest() {
+        // THE ORIGINAL BUG: the client sends a stale `model` snapshot whose `llm`
+        // points at the WRONG text-encoder, but `model_id` names a managed model.
+        // resolve_request_model must return the manifest's components (correct
+        // encoder), never the stale snapshot.
+        use crate::manifest::{ManifestComponents, ManifestFlags, ManifestSource};
+        use crate::types::{GenerationRequest, ModelComponents};
+
+        let root = std::env::temp_dir().join(format!("muchai-req-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let dir = root.join("qwen-image");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("diff.gguf"), b"x").unwrap();
+        let m = ModelManifest {
+            schema_version: 1,
+            id: "qwen-image".into(),
+            name: "Qwen-Image".into(),
+            family: "qwen-image".into(),
+            source: ManifestSource::Url { url: "https://e/x.gguf".into() },
+            components: ManifestComponents {
+                diffusion_model: "diff.gguf".into(),
+                // The CORRECT encoder (absolute so it round-trips verbatim).
+                llm: Some("/correct/Qwen2.5-VL-7B.gguf".into()),
+                ..Default::default()
+            },
+            flags: ManifestFlags::default(),
+            recommended_settings: None,
+        };
+        manifest::save_to(&dir, &m).unwrap();
+
+        let mut req = GenerationRequest::default();
+        req.model_id = Some("qwen-image".into());
+        // Stale snapshot with the WRONG encoder — must be ignored.
+        req.model = ModelRef::MultiFile(ModelComponents {
+            diffusion_model: "/stale/diff.gguf".into(),
+            llm: Some("/wrong/Qwen3-8B.gguf".into()),
+            ..Default::default()
+        });
+
+        let resolved = resolve_request_model(&root, &req).unwrap();
+        match resolved {
+            ModelRef::MultiFile(c) => {
+                assert_eq!(c.llm.as_deref(), Some("/correct/Qwen2.5-VL-7B.gguf"));
+            }
+            other => panic!("expected MultiFile, got {other:?}"),
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn resolve_request_model_uses_literal_ref_when_no_model_id() {
+        // Ad-hoc model (model_id None): the literal `model` is used even though
+        // `models_dir` contains no such manifest.
+        use crate::types::GenerationRequest;
+        let root = std::env::temp_dir().join(format!("muchai-req2-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let mut req = GenerationRequest::default();
+        req.model = ModelRef::SingleFile { path: "/adhoc/model.safetensors".into() };
+        req.model_id = None;
+        let resolved = resolve_request_model(&root, &req).unwrap();
+        assert_eq!(resolved, ModelRef::SingleFile { path: "/adhoc/model.safetensors".into() });
+    }
+
+    #[test]
+    fn resolve_request_model_errors_when_id_is_gone() {
+        use crate::types::GenerationRequest;
+        let root = std::env::temp_dir().join(format!("muchai-req3-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let mut req = GenerationRequest::default();
+        req.model_id = Some("deleted".into());
+        assert!(resolve_request_model(&root, &req).is_err());
     }
 }

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { get } from "svelte/store";
-  import { currentImage, currentItem, history, request, livePreview } from "../stores";
+  import { currentImage, currentItem, history, request, livePreview, selectedModelId } from "../stores";
   import { deleteImage, listHistory, imageSrc, openFolder } from "../api";
 
   // The live draft (if any) wins over the settled image. When a draft 404s
@@ -54,7 +54,9 @@
       if (pick) {
         currentImage.set(imageSrc(pick.image_path));
         currentItem.set(pick);
-        request.set({ ...pick.request });
+        // Re-selecting after delete is a replay too: stay ad-hoc, drop any library highlight.
+        request.set({ ...pick.request, model_id: null });
+        selectedModelId.set(null);
       } else {
         currentImage.set(null);
         currentItem.set(null);
