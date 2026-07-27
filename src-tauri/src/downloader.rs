@@ -3,6 +3,11 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
+/// Shared with `INSUFFICIENT_SPACE_PREFIX` in `src/lib/types.ts`. Tauri commands
+/// return `Result<_, String>`, so the frontend recognises this failure by prefix
+/// in order to open the reclaim panel. Keep the two in sync.
+pub const INSUFFICIENT_SPACE_PREFIX: &str = "Not enough disk space";
+
 #[derive(Debug)]
 pub enum DownloadError {
     Unauthorized,
@@ -10,6 +15,7 @@ pub enum DownloadError {
     Network(String),
     Io(String),
     Cancelled,
+    InsufficientSpace { needed: u64, free: u64 },
 }
 
 impl DownloadError {
@@ -23,6 +29,11 @@ impl DownloadError {
             DownloadError::Network(e) => format!("Download failed: {e}"),
             DownloadError::Io(e) => format!("Could not save the file: {e}"),
             DownloadError::Cancelled => "Download cancelled.".into(),
+            DownloadError::InsufficientSpace { needed, free } => format!(
+                "{INSUFFICIENT_SPACE_PREFIX}: needs {}, only {} free.",
+                crate::diskspace::fmt_bytes(*needed),
+                crate::diskspace::fmt_bytes(*free)
+            ),
         }
     }
 }
@@ -75,6 +86,19 @@ pub fn download_to<F: FnMut(u64, Option<u64>)>(
     };
 
     let total: Option<u64> = resp.header("Content-Length").and_then(|s| s.parse::<u64>().ok());
+
+    // Refuse before creating the .part file: a 12 GB download that fills the
+    // disk at 90% wastes twenty minutes and leaves the user at zero free space.
+    // No Content-Length means the size is unknowable here, so we proceed.
+    if let Some(total) = total {
+        let dir = dest_path.parent().unwrap_or_else(|| Path::new("."));
+        if let Some(free) = crate::diskspace::available_bytes(dir) {
+            if !crate::diskspace::fits(free, total) {
+                return Err(DownloadError::InsufficientSpace { needed: total, free });
+            }
+        }
+    }
+
     let part_path = dest_path.with_extension(format!(
         "{}part",
         dest_path
@@ -214,6 +238,18 @@ mod tests {
         assert_eq!(sanitize_filename("../../etc/passwd"), "passwd");
         assert_eq!(sanitize_filename(""), "model.safetensors");
         assert_eq!(sanitize_filename("a/b\\c.safetensors"), "c.safetensors");
+    }
+
+    #[test]
+    fn insufficient_space_message_carries_the_shared_prefix() {
+        let err = DownloadError::InsufficientSpace { needed: 12_400_000_000, free: 3_100_000_000 };
+        let msg = err.message();
+        assert!(
+            msg.starts_with(INSUFFICIENT_SPACE_PREFIX),
+            "frontend matches on this prefix, got: {msg}"
+        );
+        assert!(msg.contains("12 GB"), "should name the requirement, got: {msg}");
+        assert!(msg.contains("3.1 GB"), "should name the free space, got: {msg}");
     }
 
     #[test]
