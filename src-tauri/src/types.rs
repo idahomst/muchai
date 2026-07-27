@@ -169,6 +169,18 @@ pub fn missing_components(c: &ModelComponents) -> Vec<(ComponentRole, String)> {
     out
 }
 
+/// One LoRA applied to a generation.
+///
+/// `name` is the pool filename stem, which is literally the `NAME` in the
+/// engine's `<lora:NAME:WEIGHT>` prompt tag — not a display label and not an
+/// id, because the engine resolves LoRAs by filename and nothing else.
+/// `PartialEq` (not `Eq`) because `weight` is `f32`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LoraSelection {
+    pub name: String,
+    pub weight: f32,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GenerationRequest {
     pub model: ModelRef,
@@ -193,6 +205,11 @@ pub struct GenerationRequest {
     /// `#[serde(default)]` so pre-feature configs/sidecars load as `None`.
     #[serde(default)]
     pub model_id: Option<String>,
+    /// LoRAs to apply to this run, in order. `#[serde(default)]` so every
+    /// pre-feature config and gallery sidecar still loads. Empty means the
+    /// engine command line is byte-identical to a pre-LoRA run.
+    #[serde(default)]
+    pub loras: Vec<LoraSelection>,
 }
 
 impl Default for GenerationRequest {
@@ -210,6 +227,7 @@ impl Default for GenerationRequest {
             batch_count: 1,
             output_format: OutputFormat::default(),
             model_id: None,
+            loras: Vec::new(),
         }
     }
 }
@@ -688,5 +706,31 @@ mod tests {
                 "/m/t5xxl.safetensors".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn request_without_a_loras_key_deserializes_to_an_empty_selection() {
+        // Every config.json and gallery sidecar written before LoRA support
+        // lacks this key. Losing them to a parse error is not acceptable.
+        let json = r#"{
+            "model":{"type":"single_file","path":"/m/x.safetensors"},
+            "prompt":"a cat","negative_prompt":"","steps":20,"cfg_scale":7.0,
+            "sampler":"euler_a","width":512,"height":512,"seed":-1,"batch_count":1
+        }"#;
+        let req: GenerationRequest = serde_json::from_str(json).unwrap();
+        assert!(req.loras.is_empty());
+    }
+
+    #[test]
+    fn lora_selection_round_trips() {
+        let req = GenerationRequest {
+            loras: vec![
+                LoraSelection { name: "film-grain".into(), weight: 0.8 },
+                LoraSelection { name: "detail-tweaker".into(), weight: 1.0 },
+            ],
+            ..Default::default()
+        };
+        let back: GenerationRequest = serde_json::from_str(&serde_json::to_string(&req).unwrap()).unwrap();
+        assert_eq!(back.loras, req.loras);
     }
 }

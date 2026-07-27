@@ -91,6 +91,14 @@ export function modelLabel(m: ModelRef): string {
   return path.split(/[\\/]/).pop() || path || "model";
 }
 
+/** Mirrors Rust `LoraSelection` (src-tauri/src/types.rs). `name` is the pool
+ *  filename stem the engine's `<lora:NAME:WEIGHT>` tag resolves — never the
+ *  display label. */
+export interface LoraSelection {
+  name: string;
+  weight: number;
+}
+
 export interface GenerationRequest {
   model: ModelRef;
   prompt: string;
@@ -108,6 +116,9 @@ export interface GenerationRequest {
   // Set → backend re-resolves components from model.json (single source of
   // truth); null → ad-hoc model, `model` used literally.
   model_id: string | null;
+  // LoRAs applied to this run (mirrors Rust GenerationRequest.loras,
+  // #[serde(default)] → [] for old configs and gallery sidecars).
+  loras: LoraSelection[];
 }
 
 // Mirrors Rust `GenDefaults` (src-tauri/src/types.rs). Recommended per-family
@@ -203,7 +214,7 @@ export const defaultRequest = (): GenerationRequest => ({
   model: { type: "single_file", path: "" }, prompt: "", negative_prompt: "",
   steps: 20, cfg_scale: 7.0, sampler: "euler_a",
   width: 512, height: 512, seed: -1, batch_count: 1,
-  output_format: "png", model_id: null,
+  output_format: "png", model_id: null, loras: [],
 });
 
 export const SAMPLERS: { value: Sampler; label: string }[] = [
