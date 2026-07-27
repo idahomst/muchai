@@ -1170,7 +1170,11 @@ pub fn add_local_lora(
     std::fs::create_dir_all(&pool).map_err(|e| e.to_string())?;
 
     let filename = basename(&path);
-    let label = if name.trim().is_empty() { filename.clone() } else { name.trim().to_string() };
+    let label = if name.trim().is_empty() {
+        loras::strip_weight_ext(&filename).to_string()
+    } else {
+        name.trim().to_string()
+    };
     let index = loras::load_index(&models_dir);
     let pool_name = loras::unique_name(&models_dir, &index, &loras::sanitize_name(&label));
     let dest = loras::weight_path(&models_dir, &pool_name);
@@ -1243,7 +1247,7 @@ pub async fn add_url_lora(
     } else if let Some(m) = &meta {
         m.display_name.clone()
     } else {
-        downloader::derive_filename(None, &download_url)
+        loras::strip_weight_ext(&downloader::derive_filename(None, &download_url)).to_string()
     };
 
     let pool = loras::pool_dir(&models_dir);
@@ -1292,6 +1296,15 @@ pub async fn add_url_lora(
 
     if let Err(e) = dl {
         // Only the one file — the pool is shared, so never remove the directory.
+        let _ = std::fs::remove_file(&dest);
+        return Err(e);
+    }
+
+    // A Civitai link that needs a token answers HTTP 200 with a web page, so
+    // the download "succeeds" and an HTML file lands as <name>.safetensors.
+    // Nothing downstream would notice — the entry looks healthy and pre-flight
+    // passes — until the engine fails to load it mid-run.
+    if let Err(e) = loras::verify_weights_file(&dest) {
         let _ = std::fs::remove_file(&dest);
         return Err(e);
     }
@@ -1356,6 +1369,41 @@ mod tests {
     #[test]
     fn new_model_id_is_unique() {
         assert_ne!(new_model_id(), new_model_id());
+    }
+
+    #[test]
+    fn only_an_unambiguous_detection_settles_the_family() {
+        let c = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(settled_family(&c(&["sdxl"])), "sdxl");
+        // Torn or silent both mean "ask the user", not "guess the first one".
+        assert_eq!(settled_family(&c(&["sdxl", "sd15"])), "");
+        assert_eq!(settled_family(&c(&[])), "");
+    }
+
+    /// `npm run check` can't see across the Rust↔TS boundary, so the field
+    /// names the frontend reads are pinned here. Renaming one without updating
+    /// `src/lib/types.ts` would otherwise surface as `undefined` at runtime.
+    #[test]
+    fn lora_payloads_keep_the_field_names_the_frontend_reads() {
+        let added = AddedLora {
+            lora: loras::LoraInfo {
+                id: "lora-1".into(),
+                name: "film-grain".into(),
+                display_name: "Film Grain".into(),
+                family: "sdxl".into(),
+                trigger_words: vec!["film grain".into()],
+                size_bytes: 42,
+                broken: false,
+            },
+            candidates: vec!["sdxl".into()],
+        };
+        let v: serde_json::Value = serde_json::to_value(&added).unwrap();
+        assert!(v.get("candidates").is_some());
+        let l = v.get("lora").expect("lora");
+        for key in ["id", "name", "display_name", "family", "trigger_words", "size_bytes", "broken"]
+        {
+            assert!(l.get(key).is_some(), "LoraInfo lost the `{key}` field");
+        }
     }
 
     #[test]

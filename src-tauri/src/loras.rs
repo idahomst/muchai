@@ -96,17 +96,25 @@ pub fn save_index(models_dir: &Path, index: &LoraIndex) -> std::io::Result<()> {
     std::fs::write(index_path(models_dir), s)
 }
 
+/// Drop a weights extension if there is one.
+///
+/// Used for the pool stem and, separately, for the display label a filename
+/// falls back to — a row reading "detail-tweaker.safetensors" directly above
+/// "Stored as detail-tweaker.safetensors" tells the user nothing.
+pub fn strip_weight_ext(raw: &str) -> &str {
+    raw.strip_suffix(".safetensors")
+        .or_else(|| raw.strip_suffix(".ckpt"))
+        .or_else(|| raw.strip_suffix(".pt"))
+        .unwrap_or(raw)
+}
+
 /// Reduce arbitrary text to a pool stem.
 ///
 /// Only `[A-Za-z0-9_-]` survives; every other run of characters — including
 /// `.`, which the engine would read as a file extension — collapses to a single
 /// `-`. Leading/trailing `-` are trimmed and an empty result becomes `lora`.
 pub fn sanitize_name(raw: &str) -> String {
-    let stem = raw
-        .strip_suffix(".safetensors")
-        .or_else(|| raw.strip_suffix(".ckpt"))
-        .or_else(|| raw.strip_suffix(".pt"))
-        .unwrap_or(raw);
+    let stem = strip_weight_ext(raw);
     let mut out = String::with_capacity(stem.len());
     let mut pending_sep = false;
     for c in stem.chars() {
@@ -288,6 +296,49 @@ pub fn resolve_selection(
         }
     }
     Ok(Some(pool_dir(models_dir).to_string_lossy().into_owned()))
+}
+
+/// True when `bytes` open like a weights container rather than a web page.
+///
+/// Pure so it can be tested without a download. Only the first few bytes are
+/// needed: GGUF announces itself with a magic number, and safetensors starts
+/// with a little-endian u64 header length — which, for any real file, lands in
+/// a narrow plausible band. HTML, JSON errors and plain text all put ASCII
+/// there, producing a wildly out-of-range length.
+pub fn looks_like_weights(bytes: &[u8]) -> bool {
+    if bytes.len() < 8 {
+        return false;
+    }
+    if &bytes[0..4] == b"GGUF" {
+        return true;
+    }
+    let header_len = u64::from_le_bytes(bytes[0..8].try_into().unwrap_or([0; 8]));
+    // Same 64 MiB ceiling `weights::read_header` enforces; a zero-length header
+    // is never valid either.
+    header_len > 0 && header_len <= 64 * 1024 * 1024
+}
+
+/// Reject a download that isn't weights at all.
+///
+/// A Civitai link that needs auth answers HTTP 200 with an HTML interstitial,
+/// so the bytes land happily as `<name>.safetensors`. Left alone the entry
+/// looks healthy — `is_broken` is false, pre-flight passes — and the failure
+/// only appears when the engine tries to load it. Catching it here means the
+/// user is told at the moment they can still do something about it.
+pub fn verify_weights_file(path: &Path) -> Result<(), String> {
+    use std::io::Read;
+    let mut prefix = [0u8; 8];
+    let ok = std::fs::File::open(path)
+        .and_then(|mut f| f.read_exact(&mut prefix))
+        .is_ok()
+        && looks_like_weights(&prefix);
+    if ok {
+        return Ok(());
+    }
+    Err("That link didn't return a weights file. Civitai downloads that need a \
+         token answer with a web page instead — add a Civitai token in \
+         Preferences (⚙), or use the direct download link."
+        .to_string())
 }
 
 /// Put a user's existing file into the pool under `dest`.
@@ -558,6 +609,55 @@ mod tests {
         let err = resolve_selection(&dir, &[sel("film-grain")]).unwrap_err();
         assert!(err.contains("Film Grain v2"), "message must name the LoRA, got: {err}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_unlisted_name_is_rejected_even_when_the_file_is_there() {
+        // The index — not the directory listing — decides what is selectable.
+        // This is what stops a hand-edited config.json from smuggling a tag
+        // into the prompt, and what stops `../` from escaping the pool.
+        let dir = tmp("resolve-unlisted");
+        pool_with(&dir, &["film-grain"]);
+        std::fs::write(weight_path(&dir, "smuggled"), b"weights").unwrap();
+        assert!(resolve_selection(&dir, &[sel("smuggled")]).is_err());
+        assert!(resolve_selection(&dir, &[sel("../secret")]).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn html_and_short_files_are_not_mistaken_for_weights() {
+        // A Civitai link that needs a token answers 200 with a web page.
+        assert!(!looks_like_weights(b"<!DOCTYPE html><html>"));
+        assert!(!looks_like_weights(b"{\"error\":\"unauthorized\"}"));
+        assert!(!looks_like_weights(b"short"));
+        assert!(!looks_like_weights(&[0u8; 8]));
+        // GGUF magic, and a plausible safetensors header length.
+        assert!(looks_like_weights(b"GGUF\x03\x00\x00\x00"));
+        assert!(looks_like_weights(&200u64.to_le_bytes()));
+        // Beyond the 64 MiB header ceiling.
+        assert!(!looks_like_weights(&(1u64 << 40).to_le_bytes()));
+    }
+
+    #[test]
+    fn verifying_a_downloaded_web_page_fails_with_a_token_hint() {
+        let dir = tmp("verify");
+        let page = dir.join("film-grain.safetensors");
+        std::fs::write(&page, b"<!DOCTYPE html><html><body>Sign in</body></html>").unwrap();
+        let err = verify_weights_file(&page).unwrap_err();
+        assert!(err.contains("token"), "message must point at the fix, got: {err}");
+        assert!(verify_weights_file(&dir.join("nope.safetensors")).is_err());
+
+        let real = dir.join("real.safetensors");
+        std::fs::write(&real, [&64u64.to_le_bytes()[..], &[0u8; 64]].concat()).unwrap();
+        assert!(verify_weights_file(&real).is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_weights_extension_is_dropped_from_a_fallback_label() {
+        assert_eq!(strip_weight_ext("detail-tweaker.safetensors"), "detail-tweaker");
+        assert_eq!(strip_weight_ext("old.ckpt"), "old");
+        assert_eq!(strip_weight_ext("Film Grain v2"), "Film Grain v2");
     }
 
     #[test]

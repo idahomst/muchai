@@ -187,7 +187,11 @@
             <p class="microlabel">Name (optional)</p>
             <input class="dlg-input" bind:value={localName} placeholder="Leave blank to use the filename" />
           </div>
-          <button class="btn btn-primary" disabled={busy || localPath === ""} onclick={runLocal}>Add</button>
+          <!-- Gated on $downloadBusy too: a URL add reserves its pool name only
+               when the download finishes (it streams to a sibling .part file),
+               so a local add started mid-download could be handed the same
+               stem and the two would collide on one file. -->
+          <button class="btn btn-primary" disabled={busy || $downloadBusy || localPath === ""} onclick={runLocal}>Add</button>
         {/if}
       {/if}
     </div>

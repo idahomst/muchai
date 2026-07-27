@@ -1,7 +1,7 @@
 <script lang="ts">
   import { get } from "svelte/store";
   import { onMount } from "svelte";
-  import { request, genStatus, history, currentImage, currentItem, settings, gpuDevices, sysStats, livePreview } from "../stores";
+  import { request, genStatus, history, currentImage, currentItem, settings, gpuDevices, sysStats, livePreview, loras } from "../stores";
   import { generate, cancelGeneration, imageSrc, listHistory, onProgress, onGenNotice, onPreview, onLoraMissing } from "../api";
   import { modelIsSet } from "../types";
 
@@ -94,7 +94,10 @@
     const unNotice = onGenNotice(() => { lowVramAuto = true; });
     const unPreview = onPreview((path) => { previewPath = path; });
     const unLora = onLoraMissing((name) => {
-      if (!missingLoras.includes(name)) missingLoras = [...missingLoras, name];
+      // The engine only knows the pool filename; show the label the user gave
+      // it. Falls back to the stem if the row has since been removed.
+      const label = get(loras).find((l) => l.name === name)?.display_name ?? name;
+      if (!missingLoras.includes(label)) missingLoras = [...missingLoras, label];
     });
     window.addEventListener("keydown", onKey);
     return () => { un.then((f) => f()); unNotice.then((f) => f()); unPreview.then((f) => f()); unLora.then((f) => f()); window.removeEventListener("keydown", onKey); };

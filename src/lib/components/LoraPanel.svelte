@@ -60,21 +60,68 @@
     }));
   }
 
+  // Whole-word test, not `includes`: a plain substring check would treat the
+  // trigger "grain" as already present in "grainy texture" and the chip would
+  // silently do nothing. Trigger words routinely contain spaces and regex
+  // metacharacters ("35mm photo", "a photo of (x)"), so the needle is escaped.
+  function promptHas(prompt: string, word: string): boolean {
+    const esc = word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(^|[^\\w-])${esc}($|[^\\w-])`, "i").test(prompt);
+  }
+
   // Appending, not inserting at the cursor — see the deviation note in the plan.
   function insertTrigger(word: string) {
     request.update((r) => {
-      if (r.prompt.includes(word)) return r;
+      if (promptHas(r.prompt, word)) return r;
       const p = r.prompt.trimEnd().replace(/,$/, "");
       return { ...r, prompt: p === "" ? word : `${p}, ${word}` };
     });
   }
+
+  let prompt = $state("");
+  request.subscribe((r) => (prompt = r.prompt));
+
+  let notice = $state<string | null>(null);
+
+  /** Drop `names` from the run and say so. Returns true if anything changed. */
+  function dropSelections(names: Set<string>, all: LoraInfo[], why: string): boolean {
+    const dropped = get(request).loras.filter((s) => names.has(s.name));
+    if (dropped.length === 0) return false;
+    request.update((r) => ({ ...r, loras: r.loras.filter((s) => !names.has(s.name)) }));
+    const labels = dropped.map((s) => all.find((l) => l.name === s.name)?.display_name ?? s.name);
+    notice = `Turned off ${labels.join(", ")} — ${why}`;
+    return true;
+  }
+
+  // Prune selections naming a LoRA that isn't in the pool at all. Without this
+  // the run is blocked forever: `resolve_selection` rejects the unknown name
+  // pre-flight, but the panel only renders rows for LoRAs that exist, so there
+  // is no checkbox to clear. Reachable by changing models_dir, by an index.json
+  // that recovered to empty, or by reusing a gallery item's settings after the
+  // LoRA was deleted. Guarded on a non-empty pool so a selection restored at
+  // startup isn't pruned against a list that hasn't loaded yet.
+  $effect(() => {
+    const all = entries;
+    if (all.length === 0) return;
+    untrack(() => {
+      const known = new Set(all.map((l) => l.name));
+      const gone = new Set(
+        get(request).loras.map((s) => s.name).filter((n) => !known.has(n)),
+      );
+      if (gone.size === 0) return;
+      dropSelections(
+        gone,
+        all,
+        `${gone.size === 1 ? "it is" : "they are"} no longer in your library.`,
+      );
+    });
+  });
 
   // Auto-disable on model switch. A mismatched LoRA is never a hard error, but
   // it must not stay silently selected either — the user is told what was
   // turned off. `lastFamily` starts null and is only adopted once the pool has
   // loaded, so the restored selection isn't pruned against an empty list at
   // startup.
-  let notice = $state<string | null>(null);
   let lastFamily: string | null = null;
   $effect(() => {
     const fam = modelFamily;
@@ -88,13 +135,14 @@
       const allowed = new Set(
         all.filter((l) => l.family === "" || l.family === fam).map((l) => l.name),
       );
-      const dropped = get(request).loras.filter((s) => !allowed.has(s.name));
-      if (dropped.length === 0) return;
-      request.update((r) => ({ ...r, loras: r.loras.filter((s) => allowed.has(s.name)) }));
-      const labels = dropped.map(
-        (s) => all.find((l) => l.name === s.name)?.display_name ?? s.name,
+      const mismatched = new Set(
+        get(request).loras.map((s) => s.name).filter((n) => !allowed.has(n)),
       );
-      notice = `Turned off ${labels.join(", ")} — ${labels.length === 1 ? "it doesn't" : "they don't"} match this model.`;
+      dropSelections(
+        mismatched,
+        all,
+        `${mismatched.size === 1 ? "it doesn't" : "they don't"} match this model.`,
+      );
     });
   });
 
@@ -170,7 +218,7 @@
             <input
               type="checkbox"
               checked={isOn(l.name)}
-              disabled={l.broken}
+              disabled={l.broken && !isOn(l.name)}
               onchange={() => toggle(l)}
             />
             <span class="label" title={l.display_name}>{l.display_name}</span>
@@ -196,7 +244,12 @@
           <div class="chips">
             <span class="chiplabel">triggers:</span>
             {#each l.trigger_words as w}
-              <button class="chip" type="button" onclick={() => insertTrigger(w)}>{w}</button>
+              <button
+                class="chip"
+                class:used={promptHas(prompt, w)}
+                type="button"
+                title={promptHas(prompt, w) ? "Already in your prompt" : "Add to prompt"}
+                onclick={() => insertTrigger(w)}>{w}</button>
             {/each}
           </div>
         {/if}
@@ -263,6 +316,9 @@
   .chip { background:var(--card); border:1px solid var(--border); border-radius:999px;
     color:var(--text-muted); font:inherit; font-size:11px; padding:2px 8px; cursor:pointer; }
   .chip:hover { background:var(--card-hover); color:var(--text); border-color:var(--border-strong); }
+  /* Already in the prompt — clicking is a deliberate no-op, so say so visually
+     rather than letting the click look broken. */
+  .chip.used { border-color:var(--accent); color:var(--accent); }
   .editor { display:flex; flex-direction:column; gap:6px; margin:8px 0 0 22px; }
   .text, .select { width:100%; background:var(--card); border:1px solid var(--border);
     border-radius:var(--radius-sm); color:var(--text); font:inherit; font-size:12.5px; padding:6px 9px; }

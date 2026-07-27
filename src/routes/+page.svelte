@@ -67,6 +67,10 @@
       request.set({ ...cfg.last_request, model });
       history.set(await listHistory());
       await refreshLibrary();
+      // Must be awaited before the model selection below: LoraPanel prunes
+      // selections whose LoRA is gone, or whose family no longer matches the
+      // model. An empty pool at that moment would look like "all gone" and
+      // silently drop a perfectly valid restored selection.
       await refreshLoras();
       // Single source of truth: if the persisted request names a managed model,
       // adopt it from the just-scanned library (re-reading model.json). If it's
