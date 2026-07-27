@@ -1,6 +1,6 @@
 <script lang="ts">
   import { get } from "svelte/store";
-  import { catalogEntries, addCatalogModel, addUrlModel, addLocalModel, pickModelFile, openExternal } from "../api";
+  import { catalogEntries, addCatalogModel, addUrlModel, addLocalModel, pickModelFile, openExternal, diskSpace } from "../api";
   import { settings, runDownload, downloadBusy, downloadProgress, downloadError } from "../stores";
   import { formatBytes, catalogTotalBytes } from "../modelFormat";
   import DownloadProgressBar from "./DownloadProgressBar.svelte";
@@ -15,6 +15,16 @@
   let catalog = $state<RatedCatalogEntry[]>([]);
   $effect(() => {
     catalogEntries(vramTotalMb, ramTotalMb).then((c) => (catalog = c)).catch((e) => (catalogError = String(e)));
+  });
+
+  // Free space where models land. Null = probe failed; we then show nothing
+  // rather than a scary blank number.
+  let freeBytes = $state<number | null>(null);
+  async function refreshFree() {
+    freeBytes = await diskSpace().catch(() => null);
+  }
+  $effect(() => {
+    refreshFree();
   });
 
   // Show what fit is rated against: VRAM if a GPU is present, else RAM (CPU path).
@@ -100,7 +110,9 @@
       {#if $downloadError}<p class="err">{$downloadError}</p>{/if}
 
       {#if tab === "catalog"}
-        <p class="vramnote">{fitLabel}</p>
+        <p class="vramnote">
+          {fitLabel}{#if freeBytes !== null} · Disk free: {formatBytes(freeBytes)}{/if}
+        </p>
         <div class="catlist">
           {#each sorted as e (e.id)}
             {@const f = compactFit(e)}
