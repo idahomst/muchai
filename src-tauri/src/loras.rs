@@ -153,6 +153,110 @@ pub fn new_lora_id() -> String {
     format!("lora-{}", uuid::Uuid::new_v4())
 }
 
+/// One pool entry as the frontend sees it: the stored row plus liveness.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LoraInfo {
+    pub id: String,
+    pub name: String,
+    pub display_name: String,
+    pub family: String,
+    pub trigger_words: Vec<String>,
+    pub size_bytes: u64,
+    /// The weight file is missing, or is a symlink whose target is gone. Same
+    /// `broken` concept `library::LibraryEntry` exposes, so the UI can treat a
+    /// dangling LoRA exactly like a dangling model.
+    pub broken: bool,
+}
+
+impl LoraInfo {
+    fn from_entry(models_dir: &Path, e: &LoraEntry) -> LoraInfo {
+        LoraInfo {
+            id: e.id.clone(),
+            name: e.name.clone(),
+            display_name: e.display_name.clone(),
+            family: e.family.clone(),
+            trigger_words: e.trigger_words.clone(),
+            size_bytes: e.size_bytes,
+            broken: is_broken(models_dir, e),
+        }
+    }
+}
+
+/// True when the entry's weight file can't be opened. `Path::exists` follows
+/// symlinks, so a link whose target the user deleted reports as broken — which
+/// is the outcome we want.
+pub fn is_broken(models_dir: &Path, entry: &LoraEntry) -> bool {
+    !weight_path(models_dir, &entry.name).exists()
+}
+
+/// Every pool entry, sorted by display name (case-insensitive) so the picker
+/// order doesn't depend on install order.
+pub fn list(models_dir: &Path) -> Vec<LoraInfo> {
+    let mut out: Vec<LoraInfo> = load_index(models_dir)
+        .loras
+        .iter()
+        .map(|e| LoraInfo::from_entry(models_dir, e))
+        .collect();
+    out.sort_by_key(|l| l.display_name.to_lowercase());
+    out
+}
+
+/// Append `entry` to the index. The caller has already put the weight file in
+/// the pool and picked a `name` through `unique_name`.
+pub fn add(models_dir: &Path, entry: LoraEntry) -> Result<LoraInfo, String> {
+    let mut index = load_index(models_dir);
+    index.schema_version = INDEX_SCHEMA_VERSION;
+    let info = LoraInfo::from_entry(models_dir, &entry);
+    index.loras.push(entry);
+    save_index(models_dir, &index).map_err(|e| e.to_string())?;
+    Ok(info)
+}
+
+/// Drop the entry and delete its weight file. For a local registration that
+/// file is a symlink, and `remove_file` removes the link, not the user's
+/// original.
+pub fn remove(models_dir: &Path, id: &str) -> Result<(), String> {
+    let mut index = load_index(models_dir);
+    let pos = index
+        .loras
+        .iter()
+        .position(|e| e.id == id)
+        .ok_or_else(|| format!("unknown LoRA {id}"))?;
+    let removed = index.loras.remove(pos);
+    index.schema_version = INDEX_SCHEMA_VERSION;
+    save_index(models_dir, &index).map_err(|e| e.to_string())?;
+    let _ = std::fs::remove_file(weight_path(models_dir, &removed.name));
+    Ok(())
+}
+
+/// Change the label and family. `name` — the engine tag, and therefore the key
+/// every gallery item and the persisted `last_request` refer to — never moves.
+pub fn rename(
+    models_dir: &Path,
+    id: &str,
+    display_name: &str,
+    family: &str,
+) -> Result<LoraInfo, String> {
+    let display_name = display_name.trim();
+    if display_name.is_empty() {
+        return Err("Give the LoRA a name.".into());
+    }
+    let mut index = load_index(models_dir);
+    let updated = {
+        let e = index
+            .loras
+            .iter_mut()
+            .find(|e| e.id == id)
+            .ok_or_else(|| format!("unknown LoRA {id}"))?;
+        e.display_name = display_name.to_string();
+        e.family = family.trim().to_string();
+        e.clone()
+    };
+    index.schema_version = INDEX_SCHEMA_VERSION;
+    save_index(models_dir, &index).map_err(|e| e.to_string())?;
+    Ok(LoraInfo::from_entry(models_dir, &updated))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -260,5 +364,105 @@ mod tests {
     fn weight_path_always_appends_the_safetensors_extension() {
         let p = weight_path(Path::new("/models"), "film-grain");
         assert_eq!(p, Path::new("/models/loras/film-grain.safetensors"));
+    }
+
+    /// Create the pool with a real weight file for each named entry.
+    fn pool_with(dir: &Path, names: &[&str]) -> LoraIndex {
+        std::fs::create_dir_all(pool_dir(dir)).unwrap();
+        let mut index = LoraIndex { schema_version: INDEX_SCHEMA_VERSION, loras: Vec::new() };
+        for n in names {
+            std::fs::write(weight_path(dir, n), b"weights").unwrap();
+            index.loras.push(entry(n));
+        }
+        save_index(dir, &index).unwrap();
+        index
+    }
+
+    #[test]
+    fn list_sorts_by_display_name_case_insensitively() {
+        let dir = tmp("list-sort");
+        let mut index = pool_with(&dir, &["zebra", "apple", "Mango"]);
+        index.loras[0].display_name = "zebra".into();
+        index.loras[1].display_name = "apple".into();
+        index.loras[2].display_name = "Mango".into();
+        save_index(&dir, &index).unwrap();
+        let names: Vec<String> = list(&dir).into_iter().map(|l| l.display_name).collect();
+        assert_eq!(names, vec!["apple", "Mango", "zebra"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn missing_weight_file_marks_the_entry_broken() {
+        let dir = tmp("broken-missing");
+        pool_with(&dir, &["present", "vanished"]);
+        std::fs::remove_file(weight_path(&dir, "vanished")).unwrap();
+        let got = list(&dir);
+        assert!(!got.iter().find(|l| l.name == "present").unwrap().broken);
+        assert!(got.iter().find(|l| l.name == "vanished").unwrap().broken);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dead_symlink_marks_the_entry_broken() {
+        // A local LoRA is a symlink into the user's own folder; if they move or
+        // delete the original, the link survives but resolves to nothing.
+        let dir = tmp("broken-symlink");
+        std::fs::create_dir_all(pool_dir(&dir)).unwrap();
+        let target = dir.join("elsewhere.safetensors");
+        std::fs::write(&target, b"weights").unwrap();
+        std::os::unix::fs::symlink(&target, weight_path(&dir, "linked")).unwrap();
+        let index = LoraIndex { schema_version: INDEX_SCHEMA_VERSION, loras: vec![entry("linked")] };
+        save_index(&dir, &index).unwrap();
+        assert!(!list(&dir)[0].broken);
+        std::fs::remove_file(&target).unwrap();
+        assert!(list(&dir)[0].broken);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn add_persists_and_remove_deletes_the_weight_file() {
+        let dir = tmp("add-remove");
+        std::fs::create_dir_all(pool_dir(&dir)).unwrap();
+        std::fs::write(weight_path(&dir, "film-grain"), b"weights").unwrap();
+        let added = add(&dir, entry("film-grain")).unwrap();
+        assert_eq!(added.name, "film-grain");
+        assert_eq!(load_index(&dir).loras.len(), 1);
+
+        remove(&dir, "lora-film-grain").unwrap();
+        assert!(load_index(&dir).loras.is_empty());
+        assert!(!weight_path(&dir, "film-grain").exists(), "the weight file is freed too");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn remove_of_an_unknown_id_errors() {
+        let dir = tmp("remove-unknown");
+        pool_with(&dir, &["a"]);
+        assert!(remove(&dir, "lora-nope").is_err());
+        assert_eq!(load_index(&dir).loras.len(), 1, "nothing is dropped on a bad id");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rename_changes_the_label_and_family_but_never_the_pool_filename() {
+        // `name` is the engine tag. Renaming the file would invalidate every
+        // saved gallery item and the persisted last_request.
+        let dir = tmp("rename");
+        pool_with(&dir, &["film-grain"]);
+        let updated = rename(&dir, "lora-film-grain", "Film Grain v2", "flux1").unwrap();
+        assert_eq!(updated.display_name, "Film Grain v2");
+        assert_eq!(updated.family, "flux1");
+        assert_eq!(updated.name, "film-grain");
+        assert!(weight_path(&dir, "film-grain").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rename_rejects_an_empty_display_name() {
+        let dir = tmp("rename-empty");
+        pool_with(&dir, &["film-grain"]);
+        assert!(rename(&dir, "lora-film-grain", "   ", "sdxl").is_err());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
