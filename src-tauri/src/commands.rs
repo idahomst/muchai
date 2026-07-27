@@ -975,6 +975,82 @@ pub fn delete_model_entry(
     trash::delete(&model_dir).map_err(|e| e.to_string())
 }
 
+/// Free bytes on the filesystem holding the models directory, or `None` when
+/// the probe failed. Drives the passive "Disk free" line in the Add dialog.
+#[tauri::command]
+pub fn disk_space(state: State<AppState>) -> Option<u64> {
+    let models_dir = state.config.lock().unwrap().models_dir.clone();
+    crate::diskspace::available_bytes(std::path::Path::new(&models_dir))
+}
+
+/// Pre-flight for a catalog install: what it needs vs. what is free.
+/// `free_bytes` is `None` when the probe failed, in which case `ok` is `true` —
+/// an unmeasurable disk must not block the user.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SpaceCheck {
+    pub required_bytes: u64,
+    pub free_bytes: Option<u64>,
+    pub ok: bool,
+}
+
+#[tauri::command]
+pub fn check_catalog_space(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    catalog_id: String,
+) -> Result<SpaceCheck, String> {
+    let models_dir = {
+        let cfg = state.config.lock().unwrap();
+        PathBuf::from(&cfg.models_dir)
+    };
+    let entry = load_bundled_catalog(&app)
+        .into_iter()
+        .find(|e| e.id == catalog_id)
+        .ok_or_else(|| format!("unknown catalog entry {catalog_id}"))?;
+    let plan = catalog::plan_entry_downloads(&entry, &models_dir);
+    let required_bytes = catalog::required_bytes(&plan);
+    let free_bytes = crate::diskspace::available_bytes(&models_dir);
+    let ok = free_bytes.map_or(true, |free| crate::diskspace::fits(free, required_bytes));
+    Ok(SpaceCheck { required_bytes, free_bytes, ok })
+}
+
+/// Installed models with their on-disk footprint — exactly what
+/// `delete_model_entry` reclaims (its own folder; pooled `shared/<family>`
+/// components are never removed by a model delete, so they are not counted
+/// against any model). Sorted largest first.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ReclaimableModel {
+    pub id: String,
+    pub name: String,
+    pub size_bytes: u64,
+}
+
+#[tauri::command]
+pub fn list_reclaimable(state: State<AppState>) -> Vec<ReclaimableModel> {
+    let models_dir = {
+        let cfg = state.config.lock().unwrap();
+        PathBuf::from(&cfg.models_dir)
+    };
+    let mut out: Vec<ReclaimableModel> = library::scan_library(&models_dir)
+        .into_iter()
+        .map(|e| {
+            let size_bytes = crate::diskspace::dir_size(&models_dir.join(&e.id));
+            ReclaimableModel { id: e.id, name: e.name, size_bytes }
+        })
+        .collect();
+    out.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
+    out
+}
+
+/// The XDG trash directory when it exists. Deleting a model moves it to the
+/// trash, which on a same-filesystem trash frees no space until emptied — the
+/// blocked panel offers to open this folder when it observes that.
+#[tauri::command]
+pub fn trash_dir() -> Option<String> {
+    let dir = directories::BaseDirs::new()?.data_dir().join("Trash");
+    dir.is_dir().then(|| dir.to_string_lossy().into_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
