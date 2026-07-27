@@ -14,6 +14,7 @@
   import ImagePreview from "$lib/components/ImagePreview.svelte";
   import ParamsPanel from "$lib/components/ParamsPanel.svelte";
   import HistoryStrip from "$lib/components/HistoryStrip.svelte";
+  import LoraPanel from "$lib/components/LoraPanel.svelte";
   import ResourceMonitor from "$lib/components/ResourceMonitor.svelte";
   import ThemeToggle from "$lib/components/ThemeToggle.svelte";
   import WelcomeDialog from "$lib/components/WelcomeDialog.svelte";
@@ -25,6 +26,7 @@
   let showPrefs = $state(false);
   let showAbout = $state(false);
   let showNew = $state(false);
+  let showAddLora = $state(false);
   let editing = $state<LibraryEntry | null>(null);
   let vramTotalMb = $state<number | null>(null);
   let ramTotalMb = $state<number | null>(null);
@@ -121,6 +123,8 @@
       <div class="divider"></div>
       <p class="section">Parameters</p>
       <SettingsPanel />
+      <div class="divider"></div>
+      <LoraPanel onAdd={() => (showAddLora = true)} />
     </div>
 
     <div class="panel-foot">
