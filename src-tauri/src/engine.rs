@@ -1,5 +1,7 @@
 use crate::command_builder::{build_args, EngineOptions};
-use crate::progress_parser::{parse_image_seed_line, parse_progress_line, parse_resolved_seed_line};
+use crate::progress_parser::{
+    parse_image_seed_line, parse_lora_warning_line, parse_progress_line, parse_resolved_seed_line,
+};
 use crate::types::{GenerationRequest, ProgressUpdate};
 use std::io::{BufReader, Read};
 use std::path::Path;
@@ -64,6 +66,16 @@ fn looks_like_oom(s: &str) -> bool {
     l.contains("out of memory") || l.contains("cuda error") || l.contains("oom")
 }
 
+/// The backend selection and per-run engine options, bundled because the
+/// caller always decides both together (see `commands::generate`) — and
+/// because `run_generation` already sits at clippy's argument-count limit,
+/// so a new parameter must come in bundled with an existing one rather than
+/// added loose.
+pub struct RunOptions<'a> {
+    pub backend: Option<&'a str>,
+    pub opts: EngineOptions,
+}
+
 /// Run one generation: spawn `binary` with args from `req`, stream stdout+stderr,
 /// call `on_progress` for each parsed progress line, and map the exit status.
 /// The engine writes the PNG to `output_path` itself. `slot` receives the child
@@ -71,19 +83,22 @@ fn looks_like_oom(s: &str) -> bool {
 /// On success, returns the actual seed of each generated image, ordered by the
 /// engine's 1-based image index (so element 0 is the first image). May be empty
 /// if the engine didn't announce seeds; callers then derive seeds themselves.
-pub fn run_generation<F: FnMut(ProgressUpdate)>(
+/// `on_notice` is called for each engine warning the user needs to see — today
+/// only the missing-LoRA warning, which is otherwise invisible because the run
+/// still succeeds.
+pub fn run_generation<F: FnMut(ProgressUpdate), N: FnMut(String)>(
     binary: &Path,
     req: &GenerationRequest,
     output_path: &Path,
-    backend: Option<&str>,
-    opts: EngineOptions,
+    run_opts: RunOptions,
     slot: &ChildSlot,
     mut on_progress: F,
+    mut on_notice: N,
 ) -> Result<Vec<i64>, GenError> {
     if !binary.exists() {
         return Err(GenError::BinaryNotFound(binary.display().to_string()));
     }
-    let args = build_args(req, &output_path.to_string_lossy(), backend, opts);
+    let args = build_args(req, &output_path.to_string_lossy(), run_opts.backend, run_opts.opts);
 
     let mut child = Command::new(binary)
         .args(&args)
@@ -124,6 +139,8 @@ pub fn run_generation<F: FnMut(ProgressUpdate)>(
             seeds.push((s.index, s.seed));
         } else if let Some(b) = parse_resolved_seed_line(&line) {
             base_seed = Some(b);
+        } else if let Some(name) = parse_lora_warning_line(&line) {
+            on_notice(name);
         }
     }
     let _ = h_out.join();
@@ -207,10 +224,10 @@ mod tests {
             &bin,
             &GenerationRequest::default(),
             Path::new("/tmp/ignored.png"),
-            None,
-            EngineOptions::default(),
+            RunOptions { backend: None, opts: EngineOptions::default() },
             &slot,
             move |p| u2.lock().unwrap().push(p),
+            |_| {},
         );
         assert!(res.is_ok());
         let got = updates.lock().unwrap();
@@ -241,10 +258,10 @@ mod tests {
             &bin,
             &GenerationRequest::default(),
             Path::new("/tmp/ignored.png"),
-            None,
-            EngineOptions::default(),
+            RunOptions { backend: None, opts: EngineOptions::default() },
             &slot,
             move |p| u2.lock().unwrap().push(p),
+            |_| {},
         );
         assert!(res.is_ok());
         let got = updates.lock().unwrap();
@@ -274,10 +291,10 @@ mod tests {
             &bin,
             &GenerationRequest::default(),
             Path::new("/tmp/ignored.png"),
-            None,
-            EngineOptions::default(),
+            RunOptions { backend: None, opts: EngineOptions::default() },
             &slot,
             move |p| u2.lock().unwrap().push(p),
+            |_| {},
         );
         assert!(res.is_ok());
         let got = updates.lock().unwrap();
@@ -298,9 +315,9 @@ mod tests {
             &bin,
             &GenerationRequest::default(),
             Path::new("/tmp/ignored.png"),
-            None,
-            EngineOptions::default(),
+            RunOptions { backend: None, opts: EngineOptions::default() },
             &slot,
+            |_| {},
             |_| {},
         );
         assert_eq!(res.unwrap(), vec![1648302913]);
@@ -318,9 +335,9 @@ mod tests {
             &bin,
             &GenerationRequest::default(),
             Path::new("/tmp/ignored.png"),
-            None,
-            EngineOptions::default(),
+            RunOptions { backend: None, opts: EngineOptions::default() },
             &slot,
+            |_| {},
             |_| {},
         );
         match res {
@@ -340,11 +357,36 @@ mod tests {
             Path::new("/no/such/sd-cli"),
             &GenerationRequest::default(),
             Path::new("/tmp/ignored.png"),
-            None,
-            EngineOptions::default(),
+            RunOptions { backend: None, opts: EngineOptions::default() },
             &slot,
+            |_| {},
             |_| {},
         );
         assert!(matches!(res, Err(GenError::BinaryNotFound(_))));
+    }
+
+    #[test]
+    fn reports_a_missing_lora_warning() {
+        // The engine warns, then exits 0 with an unmodified image. The run must
+        // still succeed AND the notice must reach the caller.
+        let _guard = spawn_lock().lock().unwrap();
+        let bin = write_fake_engine(
+            "#!/bin/sh\necho \"[WARN ] can not found lora '/tmp/loras/film-grain.safetensors'\"\nexit 0\n",
+            "loramissing",
+        );
+        let slot: ChildSlot = Arc::new(Mutex::new(None));
+        let notices = Arc::new(Mutex::new(Vec::new()));
+        let n2 = notices.clone();
+        let res = run_generation(
+            &bin,
+            &GenerationRequest::default(),
+            Path::new("/tmp/ignored.png"),
+            RunOptions { backend: None, opts: EngineOptions::default() },
+            &slot,
+            |_| {},
+            move |n| n2.lock().unwrap().push(n),
+        );
+        assert!(res.is_ok());
+        assert_eq!(*notices.lock().unwrap(), vec!["film-grain".to_string()]);
     }
 }

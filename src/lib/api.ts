@@ -41,6 +41,12 @@ export const onPreview = (cb: (path: string) => void): Promise<UnlistenFn> =>
 export const onGenNotice = (cb: () => void): Promise<UnlistenFn> =>
   listen("generation:low_vram_auto", () => cb());
 
+/** Fires when the engine reported it could not find a selected LoRA, carrying
+ *  that LoRA's name. The run still SUCCEEDS — with a silently unmodified image
+ *  — so this event is the only way the user learns the LoRA did nothing. */
+export const onLoraMissing = (cb: (name: string) => void): Promise<UnlistenFn> =>
+  listen<string>("generation:lora_missing", (e) => cb(e.payload));
+
 export const onSystemStats = (cb: (s: SystemStats) => void): Promise<UnlistenFn> =>
   listen<SystemStats>("system:stats", (e) => cb(e.payload));
 

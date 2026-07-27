@@ -2,10 +2,15 @@
   import { get } from "svelte/store";
   import { onMount } from "svelte";
   import { request, genStatus, history, currentImage, currentItem, settings, gpuDevices, sysStats, livePreview } from "../stores";
-  import { generate, cancelGeneration, imageSrc, listHistory, onProgress, onGenNotice, onPreview } from "../api";
+  import { generate, cancelGeneration, imageSrc, listHistory, onProgress, onGenNotice, onPreview, onLoraMissing } from "../api";
   import { modelIsSet } from "../types";
 
   let lowVramAuto = false;
+
+  // LoRAs the engine reported as missing during the last run. Deliberately NOT
+  // cleared when the run ends: the image lands looking normal, so the note has
+  // to outlive the run. Cleared when the next one starts.
+  let missingLoras: string[] = [];
 
   // Absolute path the engine writes the live draft to for the current run;
   // null when preview is off or no run is active. Set by the onPreview event.
@@ -24,6 +29,7 @@
     if (!req.prompt.trim()) { genStatus.set({ kind: "error", message: "Enter a prompt." }); return; }
     genStatus.set({ kind: "running", progress: null });
     lowVramAuto = false;
+    missingLoras = [];
     previewPath = null;
     livePreview.set(null);
     const vram = get(sysStats)?.gpu?.vram_total_mb ?? 0;
@@ -87,8 +93,11 @@
     });
     const unNotice = onGenNotice(() => { lowVramAuto = true; });
     const unPreview = onPreview((path) => { previewPath = path; });
+    const unLora = onLoraMissing((name) => {
+      if (!missingLoras.includes(name)) missingLoras = [...missingLoras, name];
+    });
     window.addEventListener("keydown", onKey);
-    return () => { un.then((f) => f()); unNotice.then((f) => f()); unPreview.then((f) => f()); window.removeEventListener("keydown", onKey); };
+    return () => { un.then((f) => f()); unNotice.then((f) => f()); unPreview.then((f) => f()); unLora.then((f) => f()); window.removeEventListener("keydown", onKey); };
   });
 </script>
 
@@ -112,6 +121,14 @@
 
 {#if $genStatus.kind === "running" && lowVramAuto}
   <div class="cpu-note" role="status">Low-VRAM mode auto-enabled — this model needs more memory than your GPU has, so generation will be slower.</div>
+{/if}
+
+{#if missingLoras.length > 0}
+  <div class="cpu-note" role="status">
+    {missingLoras.length === 1 ? "This LoRA was not found" : "These LoRAs were not found"}:
+    {missingLoras.join(", ")}. The image was generated without
+    {missingLoras.length === 1 ? "it" : "them"}.
+  </div>
 {/if}
 
 {#if $genStatus.kind === "error"}

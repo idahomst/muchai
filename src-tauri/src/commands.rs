@@ -288,6 +288,7 @@ pub async fn generate(
 
     let slot = state.child.clone();
     let app2 = app.clone();
+    let app3 = app.clone();
     let req = request.clone();
     let img = image_path.clone();
     let backend_owned = backend;
@@ -338,9 +339,19 @@ pub async fn generate(
 
     // Run the (blocking) engine on a worker thread so the async command yields.
     let joined = tauri::async_runtime::spawn_blocking(move || {
-        engine::run_generation(&binary, &req, &img, backend_owned.as_deref(), engine_opts, &slot, |p| {
-            let _ = app2.emit("generation:progress", p);
-        })
+        engine::run_generation(
+            &binary,
+            &req,
+            &img,
+            engine::RunOptions { backend: backend_owned.as_deref(), opts: engine_opts },
+            &slot,
+            |p| {
+                let _ = app2.emit("generation:progress", p);
+            },
+            |name| {
+                let _ = app3.emit("generation:lora_missing", name);
+            },
+        )
     })
     .await;
 
