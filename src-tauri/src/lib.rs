@@ -118,6 +118,14 @@ pub fn run() {
             commands::check_catalog_space,
             commands::list_reclaimable,
             commands::trash_dir,
+            commands::list_loras,
+            commands::list_families,
+            commands::detect_lora_family,
+            commands::pick_lora_file,
+            commands::add_local_lora,
+            commands::add_url_lora,
+            commands::edit_lora,
+            commands::delete_lora,
         ])
         .run(tauri::generate_context!())
         .expect("error while running MuchAI");

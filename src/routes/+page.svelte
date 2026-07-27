@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { get } from "svelte/store";
-  import { settings, request, history, sysStats, gpuDevices, refreshLibrary, downloadProgress, downloadBusy, downloadError, library, selectedModelId, modelNotice } from "$lib/stores";
+  import { settings, request, history, sysStats, gpuDevices, refreshLibrary, refreshLoras, downloadProgress, downloadBusy, downloadError, library, selectedModelId, modelNotice } from "$lib/stores";
   import { getSettings, setSettings, listHistory, onSystemStats, listGpuDevices, onDownloadProgress } from "$lib/api";
   import ModelSelector from "$lib/components/ModelSelector.svelte";
   import NewModelDialog from "$lib/components/NewModelDialog.svelte";
@@ -64,6 +64,7 @@
       request.set({ ...cfg.last_request, model });
       history.set(await listHistory());
       await refreshLibrary();
+      await refreshLoras();
       // Single source of truth: if the persisted request names a managed model,
       // adopt it from the just-scanned library (re-reading model.json). If it's
       // gone (deleted/renamed), clear the selection and tell the user. Ad-hoc

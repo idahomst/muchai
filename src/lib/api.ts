@@ -1,6 +1,6 @@
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { AppConfig, GalleryItem, GenerationRequest, ProgressUpdate, SystemStats, DownloadProgress, GpuDevice, RecipeInfo, GenDefaults, LibraryEntry, RatedCatalogEntry, ManifestFlags, ModelComponents, LibraryFit, SpaceCheck, ReclaimableModel } from "./types";
+import type { AppConfig, GalleryItem, GenerationRequest, ProgressUpdate, SystemStats, DownloadProgress, GpuDevice, RecipeInfo, GenDefaults, LibraryEntry, RatedCatalogEntry, ManifestFlags, ModelComponents, LibraryFit, SpaceCheck, ReclaimableModel, LoraInfo, AddedLora } from "./types";
 
 export const getSettings = () => invoke<AppConfig>("get_settings");
 /** Enumerate Vulkan devices the engine can target (cached server-side). */
@@ -103,3 +103,26 @@ export const listReclaimable = () => invoke<ReclaimableModel[]>("list_reclaimabl
 
 /** XDG trash folder, when it exists. */
 export const trashDir = () => invoke<string | null>("trash_dir");
+
+export const listLoras = () => invoke<LoraInfo[]>("list_loras");
+
+/** Every base family a LoRA can be filed under. Not the same as listRecipes() —
+ *  that omits sd15/sdxl and includes "custom". */
+export const listFamilies = () => invoke<string[]>("list_families");
+
+/** Base families a safetensors file's tensor names match. Empty = ask the user. */
+export const detectLoraFamily = (path: string) =>
+  invoke<string[]>("detect_lora_family", { path });
+
+export const pickLoraFile = () => invoke<string | null>("pick_lora_file");
+
+export const addLocalLora = (path: string, name: string, family: string) =>
+  invoke<LoraInfo>("add_local_lora", { path, name, family });
+
+export const addUrlLora = (url: string, name: string) =>
+  invoke<AddedLora>("add_url_lora", { url, name });
+
+export const editLora = (id: string, displayName: string, family: string) =>
+  invoke<LoraInfo>("edit_lora", { id, displayName, family });
+
+export const deleteLora = (id: string) => invoke<void>("delete_lora", { id });

@@ -1,7 +1,7 @@
 import { writable } from "svelte/store";
-import type { GenerationRequest, GalleryItem, SystemStats, AppConfig, ProgressUpdate, GpuDevice, LibraryEntry, DownloadProgress } from "./types";
+import type { GenerationRequest, GalleryItem, SystemStats, AppConfig, ProgressUpdate, GpuDevice, LibraryEntry, DownloadProgress, LoraInfo } from "./types";
 import { defaultRequest } from "./types";
-import { listLibrary } from "./api";
+import { listLibrary, listLoras } from "./api";
 
 export const request = writable<GenerationRequest>(defaultRequest());
 export const settings = writable<AppConfig | null>(null);
@@ -27,6 +27,14 @@ export const modelNotice = writable<string | null>(null);
 /** Reload the model library from disk. Call after any add/edit/delete. */
 export async function refreshLibrary(): Promise<void> {
   library.set(await listLibrary());
+}
+
+/** Every registered LoRA, sorted by label. */
+export const loras = writable<LoraInfo[]>([]);
+
+/** Reload the LoRA pool from disk. Call after any add/edit/delete. */
+export async function refreshLoras(): Promise<void> {
+  loras.set(await listLoras());
 }
 
 // App-level model-download state. Held here (not in NewModelDialog) so progress

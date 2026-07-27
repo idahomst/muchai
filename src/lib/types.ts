@@ -65,6 +65,27 @@ export type LibraryEntry = {
   broken: boolean;
 };
 
+/** Mirrors Rust `loras::LoraInfo`. `name` is the pool filename stem and the
+ *  engine tag — it never changes. `display_name` is the editable label.
+ *  `family` is "" when the base family is unknown (which disables filtering
+ *  for that entry rather than hiding it). */
+export interface LoraInfo {
+  id: string;
+  name: string;
+  display_name: string;
+  family: string;
+  trigger_words: string[];
+  size_bytes: number;
+  broken: boolean;
+}
+
+/** Mirrors Rust `commands::AddedLora`. When `lora.family` is "", the detector
+ *  was unsure; `candidates` narrows the dropdown when it isn't empty. */
+export interface AddedLora {
+  lora: LoraInfo;
+  candidates: string[];
+}
+
 export type CatalogFile = { url: string; filename: string; size_bytes: number };
 export type CatalogShared = { role: string; url: string; filename: string; size_bytes: number };
 export type CatalogEntry = {

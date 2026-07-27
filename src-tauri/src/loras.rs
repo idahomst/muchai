@@ -290,6 +290,24 @@ pub fn resolve_selection(
     Ok(Some(pool_dir(models_dir).to_string_lossy().into_owned()))
 }
 
+/// Put a user's existing file into the pool under `dest`.
+///
+/// A symlink, so registering a 300 MB LoRA the user already has costs nothing
+/// and editing the original is reflected immediately. The trade is that
+/// deleting the original leaves a dangling link — which `is_broken` reports,
+/// so the user sees it rather than getting a mysteriously ineffective LoRA.
+#[cfg(unix)]
+pub fn link_into_pool(src: &Path, dest: &Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(src, dest)
+}
+
+/// Windows symlinks require elevation or developer mode, so registering a local
+/// file copies it. Costs disk; always works.
+#[cfg(not(unix))]
+pub fn link_into_pool(src: &Path, dest: &Path) -> std::io::Result<()> {
+    std::fs::copy(src, dest).map(|_| ())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -539,6 +557,37 @@ mod tests {
         std::fs::remove_file(weight_path(&dir, "film-grain")).unwrap();
         let err = resolve_selection(&dir, &[sel("film-grain")]).unwrap_err();
         assert!(err.contains("Film Grain v2"), "message must name the LoRA, got: {err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn linking_a_local_file_into_the_pool_does_not_copy_it() {
+        let dir = tmp("link");
+        let outside = dir.join("elsewhere");
+        std::fs::create_dir_all(&outside).unwrap();
+        let src = outside.join("my-lora.safetensors");
+        std::fs::write(&src, b"weights").unwrap();
+        std::fs::create_dir_all(pool_dir(&dir)).unwrap();
+
+        let dest = weight_path(&dir, "my-lora");
+        link_into_pool(&src, &dest).unwrap();
+        assert!(std::fs::symlink_metadata(&dest).unwrap().file_type().is_symlink());
+        assert_eq!(std::fs::read(&dest).unwrap(), b"weights");
+
+        // Deleting the user's original must make the entry read as broken, not
+        // as a silently-empty LoRA.
+        std::fs::remove_file(&src).unwrap();
+        let entry = LoraEntry {
+            id: "lora-1".into(),
+            name: "my-lora".into(),
+            display_name: "My LoRA".into(),
+            family: "sdxl".into(),
+            source: LoraSource::Local { original_path: src.to_string_lossy().into_owned() },
+            trigger_words: Vec::new(),
+            size_bytes: 7,
+        };
+        assert!(is_broken(&dir, &entry));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
