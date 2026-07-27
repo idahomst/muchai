@@ -4,6 +4,7 @@
   import { loras, library, request, selectedModelId, refreshLoras } from "../stores";
   import { editLora, deleteLora, listFamilies } from "../api";
   import type { LoraInfo, LibraryEntry } from "../types";
+  import { HELP } from "../helpText";
 
   let { onAdd }: { onAdd: () => void } = $props();
 
@@ -145,7 +146,7 @@
 </script>
 
 <div class="head">
-  <p class="section">LoRAs</p>
+  <p class="section" title={HELP.lora}>LoRAs</p>
   <button class="addbtn" type="button" onclick={onAdd}>+ Add</button>
 </div>
 
