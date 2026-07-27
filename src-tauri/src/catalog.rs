@@ -229,9 +229,88 @@ pub fn plan_entry_downloads(entry: &CatalogEntry, models_dir: &Path) -> EntryPla
     EntryPlan { model_dir, shared_dir, files }
 }
 
+/// Bytes this plan will actually pull down: every planned file except pooled
+/// shared components already present on disk. Mirrors the skip rule in
+/// `commands::add_catalog_model`'s download loop — the two must agree or the
+/// pre-flight over-reports a reused encoder.
+pub fn required_bytes(plan: &EntryPlan) -> u64 {
+    plan.files
+        .iter()
+        .filter(|f| !(f.shared && f.dest.exists()))
+        .fold(0u64, |acc, f| acc.saturating_add(f.size_bytes))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn required_bytes_skips_pooled_components_already_on_disk() {
+        use crate::recipes::ComponentRole;
+        let root = std::env::temp_dir().join(format!("muchai-required-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let shared_dir = root.join("shared").join("flux1");
+        std::fs::create_dir_all(&shared_dir).unwrap();
+        std::fs::write(shared_dir.join("t5xxl.safetensors"), b"x").unwrap();
+
+        let plan = EntryPlan {
+            model_dir: root.join("m"),
+            shared_dir: shared_dir.clone(),
+            files: vec![
+                PlannedFile {
+                    url: "https://h/diffusion.gguf".into(),
+                    dest: root.join("m").join("diffusion.gguf"),
+                    role: ComponentRole::Diffusion,
+                    size_bytes: 7_000_000_000,
+                    shared: false,
+                },
+                PlannedFile {
+                    url: "https://h/t5xxl.safetensors".into(),
+                    dest: shared_dir.join("t5xxl.safetensors"),
+                    role: ComponentRole::T5xxl,
+                    size_bytes: 9_700_000_000,
+                    shared: true,
+                },
+                PlannedFile {
+                    url: "https://h/clip_l.safetensors".into(),
+                    dest: shared_dir.join("clip_l.safetensors"),
+                    role: ComponentRole::ClipL,
+                    size_bytes: 250_000_000,
+                    shared: true,
+                },
+            ],
+        };
+
+        // t5xxl is pooled AND present → free. clip_l is pooled but missing → counted.
+        assert_eq!(required_bytes(&plan), 7_000_000_000 + 250_000_000);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn required_bytes_counts_non_shared_files_even_when_present() {
+        use crate::recipes::ComponentRole;
+        let root = std::env::temp_dir().join(format!("muchai-required2-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let model_dir = root.join("m");
+        std::fs::create_dir_all(&model_dir).unwrap();
+        std::fs::write(model_dir.join("diffusion.gguf"), b"x").unwrap();
+
+        let plan = EntryPlan {
+            model_dir: model_dir.clone(),
+            shared_dir: root.join("shared"),
+            files: vec![PlannedFile {
+                url: "https://h/diffusion.gguf".into(),
+                dest: model_dir.join("diffusion.gguf"),
+                role: ComponentRole::Diffusion,
+                size_bytes: 7_000_000_000,
+                shared: false,
+            }],
+        };
+
+        // A stale same-named file in the model folder is overwritten, not reused.
+        assert_eq!(required_bytes(&plan), 7_000_000_000);
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn parses_unified_catalog_json() {
