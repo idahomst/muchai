@@ -3,6 +3,7 @@ mod command_builder;
 mod commands;
 mod config;
 mod devices;
+mod diskspace;
 mod downloader;
 mod engine;
 mod fit;
