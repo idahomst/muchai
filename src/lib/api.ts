@@ -1,6 +1,6 @@
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { AppConfig, GalleryItem, GenerationRequest, ProgressUpdate, SystemStats, DownloadProgress, GpuDevice, RecipeInfo, GenDefaults, LibraryEntry, RatedCatalogEntry, ManifestFlags, ModelComponents, LibraryFit } from "./types";
+import type { AppConfig, GalleryItem, GenerationRequest, ProgressUpdate, SystemStats, DownloadProgress, GpuDevice, RecipeInfo, GenDefaults, LibraryEntry, RatedCatalogEntry, ManifestFlags, ModelComponents, LibraryFit, SpaceCheck, ReclaimableModel } from "./types";
 
 export const getSettings = () => invoke<AppConfig>("get_settings");
 /** Enumerate Vulkan devices the engine can target (cached server-side). */
@@ -84,3 +84,16 @@ export const deleteModelEntry = (id: string) =>
 
 export const recommendedSettings = (id: string) =>
   invoke<GenDefaults | null>("recommended_settings", { id });
+
+/** Free bytes where models are stored; null when the probe failed. */
+export const diskSpace = () => invoke<number | null>("disk_space");
+
+/** Pre-flight a catalog install against free disk space. */
+export const checkCatalogSpace = (catalogId: string) =>
+  invoke<SpaceCheck>("check_catalog_space", { catalogId });
+
+/** Installed models with on-disk sizes, largest first. */
+export const listReclaimable = () => invoke<ReclaimableModel[]>("list_reclaimable");
+
+/** XDG trash folder, when it exists. */
+export const trashDir = () => invoke<string | null>("trash_dir");

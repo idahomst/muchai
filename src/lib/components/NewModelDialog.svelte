@@ -1,10 +1,12 @@
 <script lang="ts">
   import { get } from "svelte/store";
-  import { catalogEntries, addCatalogModel, addUrlModel, addLocalModel, pickModelFile, openExternal } from "../api";
-  import { settings, runDownload, downloadBusy, downloadProgress, downloadError } from "../stores";
+  import { catalogEntries, addCatalogModel, addUrlModel, addLocalModel, pickModelFile, openExternal,
+           diskSpace, checkCatalogSpace, listReclaimable, trashDir, deleteModelEntry, openFolder } from "../api";
+  import { settings, runDownload, downloadBusy, downloadProgress, downloadError, refreshLibrary } from "../stores";
   import { formatBytes, catalogTotalBytes } from "../modelFormat";
   import DownloadProgressBar from "./DownloadProgressBar.svelte";
-  import type { RatedCatalogEntry } from "../types";
+  import { INSUFFICIENT_SPACE_PREFIX } from "../types";
+  import type { RatedCatalogEntry, ReclaimableModel } from "../types";
 
   let { vramTotalMb, ramTotalMb, onClose }: { vramTotalMb: number | null; ramTotalMb: number | null; onClose: () => void } = $props();
 
@@ -16,6 +18,60 @@
   $effect(() => {
     catalogEntries(vramTotalMb, ramTotalMb).then((c) => (catalog = c)).catch((e) => (catalogError = String(e)));
   });
+
+  // Free space where models land. Null = probe failed; we then show nothing
+  // rather than a scary blank number.
+  let freeBytes = $state<number | null>(null);
+  async function refreshFree() {
+    freeBytes = await diskSpace().catch(() => null);
+  }
+  $effect(() => {
+    refreshFree();
+  });
+
+  // Blocked state. `required` is known for catalog pre-flights and null when we
+  // only learned about it from a download error (the error text carries the
+  // numbers in that case).
+  let blocked = $state<{ required: number | null } | null>(null);
+  let reclaimable = $state<ReclaimableModel[]>([]);
+  let confirmId = $state<string | null>(null);
+  let trashNote = $state(false);
+  let trashPath = $state<string | null>(null);
+  // Separate from `catalogError`, which only renders inside the tab body — an
+  // error raised while the blocked panel is open must be visible in the panel.
+  let reclaimError = $state<string | null>(null);
+
+  async function openBlocked(required: number | null) {
+    blocked = { required };
+    confirmId = null;
+    reclaimError = null;
+    trashNote = false;
+    reclaimable = await listReclaimable().catch(() => []);
+    trashPath = await trashDir().catch(() => null);
+    await refreshFree();
+  }
+
+  /** Delete a model to reclaim its bytes, then re-measure. If free space did
+   *  not actually grow, the trash is on the same filesystem and still holds
+   *  the data — say so instead of leaving the user confused. */
+  async function reclaim(m: ReclaimableModel) {
+    const before = freeBytes;
+    reclaimError = null;
+    try {
+      await deleteModelEntry(m.id);
+    } catch (e) {
+      reclaimError = String(e);
+      confirmId = null;
+      return;
+    }
+    confirmId = null;
+    await refreshLibrary();
+    reclaimable = await listReclaimable().catch(() => []);
+    await refreshFree();
+    if (before !== null && freeBytes !== null) {
+      trashNote = freeBytes - before < m.size_bytes / 2;
+    }
+  }
 
   // Show what fit is rated against: VRAM if a GPU is present, else RAM (CPU path).
   const fitLabel = $derived(
@@ -60,7 +116,12 @@
   // Downloads run at the app level (stores.runDownload) so busy/progress/error
   // survive this dialog closing mid-download. Close only on success.
   async function run(fn: () => Promise<unknown>) {
-    if (await runDownload(fn)) onClose();
+    if (await runDownload(fn)) {
+      onClose();
+      return;
+    }
+    const err = get(downloadError);
+    if (err?.includes(INSUFFICIENT_SPACE_PREFIX)) await openBlocked(null);
   }
 
   // Which catalog entry is currently downloading, so its progress bar renders
@@ -68,6 +129,11 @@
   // the download settles (success closes the dialog; failure returns here).
   let downloadingId = $state<string | null>(null);
   async function runCatalog(id: string) {
+    const check = await checkCatalogSpace(id).catch(() => null);
+    if (check && !check.ok) {
+      await openBlocked(check.required_bytes);
+      return;
+    }
     downloadingId = id;
     try {
       await run(() => addCatalogModel(id));
@@ -90,72 +156,120 @@
     </div>
 
     <div class="modal-body">
-      <div class="seg" role="group" aria-label="Model source">
-        <button class="seg-item" class:on={tab === "catalog"} aria-pressed={tab === "catalog"} onclick={() => (tab = "catalog")}>Catalog</button>
-        <button class="seg-item" class:on={tab === "url"} aria-pressed={tab === "url"} onclick={() => (tab = "url")}>URL</button>
-        <button class="seg-item" class:on={tab === "local"} aria-pressed={tab === "local"} onclick={() => (tab = "local")}>Local file</button>
-      </div>
+      {#if blocked}
+        <div class="blocked">
+          <p class="bhead">Not enough disk space</p>
+          {#if blocked.required !== null}
+            <p class="bsub">
+              Needs {formatBytes(blocked.required)}{#if freeBytes !== null} · {formatBytes(freeBytes)} free{/if}
+            </p>
+          {:else if $downloadError}
+            <p class="bsub">{$downloadError}</p>
+          {/if}
 
-      {#if catalogError}<p class="err">{catalogError}</p>{/if}
-      {#if $downloadError}<p class="err">{$downloadError}</p>{/if}
+          {#if reclaimError}<p class="err">{reclaimError}</p>{/if}
 
-      {#if tab === "catalog"}
-        <p class="vramnote">{fitLabel}</p>
-        <div class="catlist">
-          {#each sorted as e (e.id)}
-            {@const f = compactFit(e)}
-            <div class="catrow" class:dim={e.suitability === "too_big"}>
-              <div class="catmain">
-                <div class="catname">
-                  {e.name}
-                  {#if bestFitIds.has(e.id)}<span class="best">Best fit</span>{/if}
-                </div>
-                <div class="catmeta">
-                  <span class="fam">{e.family}</span> · {formatBytes(catalogTotalBytes(e))} · {e.license}
-                  {#if e.source_url}
-                    · <button type="button" class="src" title={e.source_url} onclick={() => openExternal(e.source_url)}>Source ↗</button>
-                  {/if}
-                </div>
-                {#if downloadingId === e.id && $downloadBusy}
-                  <div class="progress"><DownloadProgressBar progress={$downloadProgress} /></div>
-                {/if}
-              </div>
-              <div class="catadd">
-                <span class="vfit {f.cls}">{f.text}</span>
-                <button class="btn btn-ghost btn-sm" disabled={$downloadBusy} onclick={() => runCatalog(e.id)}>Add</button>
-              </div>
+          <p class="microlabel">Delete a model to make room</p>
+          {#if reclaimable.length === 0}
+            <p class="bsub">No installed models to remove.</p>
+          {/if}
+          {#each reclaimable as m (m.id)}
+            <div class="rrow">
+              <span class="rname">{m.name}</span>
+              <span class="rsize">{formatBytes(m.size_bytes)}</span>
+              {#if confirmId === m.id}
+                <span class="rconfirm">Move to trash?</span>
+                <button class="btn btn-danger btn-sm" onclick={() => reclaim(m)}>Delete</button>
+                <button class="btn btn-ghost btn-sm" onclick={() => (confirmId = null)}>Cancel</button>
+              {:else}
+                <button class="btn btn-ghost btn-sm" onclick={() => (confirmId = m.id)}>Delete</button>
+              {/if}
             </div>
           {/each}
-        </div>
-      {:else if tab === "url"}
-        <div class="dlg-field">
-          <p class="microlabel">URL (https)</p>
-          <input class="dlg-input" bind:value={url} placeholder="https://…" />
-        </div>
-        <div class="dlg-field">
-          <p class="microlabel">Name</p>
-          <input class="dlg-input" bind:value={urlName} placeholder="My model" />
-        </div>
-        <button class="btn btn-primary" disabled={$downloadBusy || !url.startsWith("https://")} onclick={() => run(() => addUrlModel(url, urlName))}>
-          Download &amp; add
-        </button>
-        {#if $downloadBusy}<div class="progress"><DownloadProgressBar progress={$downloadProgress} /></div>{/if}
-      {:else}
-        <div class="dlg-field">
-          <p class="microlabel">File</p>
-          <div class="pick">
-            <input class="dlg-input" readonly value={localPath} placeholder="Choose a .safetensors/.gguf…" />
-            <button class="btn btn-ghost" onclick={pickLocal}>Browse…</button>
+
+          {#if trashNote}
+            <p class="tnote">
+              Deleted models are in the Trash and still use disk space.
+              {#if trashPath}
+                <button type="button" class="src" onclick={() => openFolder(trashPath!)}>Open Trash ↗</button>
+              {/if}
+            </p>
+          {/if}
+
+          <div class="bfoot">
+            <button class="btn btn-ghost" onclick={() => (blocked = null)}>Back</button>
           </div>
         </div>
-        <div class="dlg-field">
-          <p class="microlabel">Name</p>
-          <input class="dlg-input" bind:value={localName} placeholder="My model" />
+      {:else}
+        <div class="seg" role="group" aria-label="Model source">
+          <button class="seg-item" class:on={tab === "catalog"} aria-pressed={tab === "catalog"} onclick={() => (tab = "catalog")}>Catalog</button>
+          <button class="seg-item" class:on={tab === "url"} aria-pressed={tab === "url"} onclick={() => (tab = "url")}>URL</button>
+          <button class="seg-item" class:on={tab === "local"} aria-pressed={tab === "local"} onclick={() => (tab = "local")}>Local file</button>
         </div>
-        <button class="btn btn-primary" disabled={$downloadBusy || !localPath} onclick={() => run(() => addLocalModel(localPath, localName, null))}>
-          Add (reference in place)
-        </button>
-        {#if $downloadBusy}<div class="progress"><DownloadProgressBar progress={$downloadProgress} /></div>{/if}
+
+        {#if catalogError}<p class="err">{catalogError}</p>{/if}
+        {#if $downloadError}<p class="err">{$downloadError}</p>{/if}
+
+        {#if tab === "catalog"}
+          <p class="vramnote">
+            {fitLabel}{#if freeBytes !== null} · Disk free: {formatBytes(freeBytes)}{/if}
+          </p>
+          <div class="catlist">
+            {#each sorted as e (e.id)}
+              {@const f = compactFit(e)}
+              <div class="catrow" class:dim={e.suitability === "too_big"}>
+                <div class="catmain">
+                  <div class="catname">
+                    {e.name}
+                    {#if bestFitIds.has(e.id)}<span class="best">Best fit</span>{/if}
+                  </div>
+                  <div class="catmeta">
+                    <span class="fam">{e.family}</span> · {formatBytes(catalogTotalBytes(e))} · {e.license}
+                    {#if e.source_url}
+                      · <button type="button" class="src" title={e.source_url} onclick={() => openExternal(e.source_url)}>Source ↗</button>
+                    {/if}
+                  </div>
+                  {#if downloadingId === e.id && $downloadBusy}
+                    <div class="progress"><DownloadProgressBar progress={$downloadProgress} /></div>
+                  {/if}
+                </div>
+                <div class="catadd">
+                  <span class="vfit {f.cls}">{f.text}</span>
+                  <button class="btn btn-ghost btn-sm" disabled={$downloadBusy} onclick={() => runCatalog(e.id)}>Add</button>
+                </div>
+              </div>
+            {/each}
+          </div>
+        {:else if tab === "url"}
+          <div class="dlg-field">
+            <p class="microlabel">URL (https)</p>
+            <input class="dlg-input" bind:value={url} placeholder="https://…" />
+          </div>
+          <div class="dlg-field">
+            <p class="microlabel">Name</p>
+            <input class="dlg-input" bind:value={urlName} placeholder="My model" />
+          </div>
+          <button class="btn btn-primary" disabled={$downloadBusy || !url.startsWith("https://")} onclick={() => run(() => addUrlModel(url, urlName))}>
+            Download &amp; add
+          </button>
+          {#if $downloadBusy}<div class="progress"><DownloadProgressBar progress={$downloadProgress} /></div>{/if}
+        {:else}
+          <div class="dlg-field">
+            <p class="microlabel">File</p>
+            <div class="pick">
+              <input class="dlg-input" readonly value={localPath} placeholder="Choose a .safetensors/.gguf…" />
+              <button class="btn btn-ghost" onclick={pickLocal}>Browse…</button>
+            </div>
+          </div>
+          <div class="dlg-field">
+            <p class="microlabel">Name</p>
+            <input class="dlg-input" bind:value={localName} placeholder="My model" />
+          </div>
+          <button class="btn btn-primary" disabled={$downloadBusy || !localPath} onclick={() => run(() => addLocalModel(localPath, localName, null))}>
+            Add (reference in place)
+          </button>
+          {#if $downloadBusy}<div class="progress"><DownloadProgressBar progress={$downloadProgress} /></div>{/if}
+        {/if}
       {/if}
     </div>
   </div>
@@ -185,4 +299,14 @@
   .pick .dlg-input { flex: 1; }
   .err { color: var(--danger); font-size: 12px; margin: 0 0 10px; }
   .progress { margin-top: 12px; }
+
+  .blocked { display: flex; flex-direction: column; gap: 10px; }
+  .bhead { font-size: 15px; font-weight: 700; color: var(--danger); margin: 0; }
+  .bsub { font-size: 12.5px; color: var(--text-muted); margin: 0; }
+  .rrow { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--border); }
+  .rname { font-size: 13px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rsize { font-family: var(--mono); font-size: 11.5px; color: var(--text-muted); margin-left: auto; }
+  .rconfirm { font-size: 11.5px; color: var(--text-muted); }
+  .tnote { font-size: 11.5px; color: var(--warn); margin: 0; }
+  .bfoot { display: flex; justify-content: flex-end; margin-top: 4px; }
 </style>
