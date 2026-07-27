@@ -1,4 +1,5 @@
 mod catalog;
+mod civitai;
 mod command_builder;
 mod commands;
 mod config;

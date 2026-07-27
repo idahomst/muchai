@@ -1,0 +1,25 @@
+{
+  "id": 128713,
+  "name": "v1.0",
+  "baseModel": "Flux.1 D",
+  "trainedWords": ["film grain", "35mm photo"],
+  "model": { "name": "Film Grain", "type": "LORA" },
+  "files": [
+    {
+      "id": 1,
+      "name": "film_grain_v1_preview.safetensors",
+      "sizeKB": 128.5,
+      "type": "Training Data",
+      "primary": false,
+      "downloadUrl": "https://civitai.com/api/download/models/128713?type=Training%20Data"
+    },
+    {
+      "id": 2,
+      "name": "film_grain_v1.safetensors",
+      "sizeKB": 164096.0,
+      "type": "Model",
+      "primary": true,
+      "downloadUrl": "https://civitai.com/api/download/models/128713"
+    }
+  ]
+}
