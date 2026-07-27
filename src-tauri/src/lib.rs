@@ -11,6 +11,7 @@ mod gallery;
 mod hf;
 mod library;
 mod lora_detect;
+mod loras;
 mod manifest;
 mod models;
 mod progress_parser;
