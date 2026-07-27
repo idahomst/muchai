@@ -328,6 +328,7 @@ pub async fn generate(
         low_vram,
         preview_path: preview.as_ref().map(|p| p.to_string_lossy().into_owned()),
         weight_type,
+        ..Default::default()
     };
 
     // Run the (blocking) engine on a worker thread so the async command yields.
