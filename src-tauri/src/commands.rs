@@ -2,7 +2,7 @@ use crate::engine::{self, ChildSlot, GenError};
 use crate::types::{AppConfig, DownloadProgress, GalleryItem, GenerationRequest, GpuDevice};
 use crate::recipes::{self, ComponentRole};
 use crate::types::ModelRef;
-use crate::{catalog, config, downloader, fit, gallery, hf, library, manifest, models, types};
+use crate::{catalog, config, downloader, fit, gallery, hf, library, loras, manifest, models, types};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -260,6 +260,11 @@ pub async fn generate(
             ));
         }
     }
+    // LoRAs are validated here, before anything expensive happens, for the same
+    // reason the component check above is: the engine's own failure mode is a
+    // warning and a wrong-looking-but-successful image.
+    let lora_dir =
+        loras::resolve_selection(std::path::Path::new(&cfg.models_dir), &request.loras)?;
     // Validate the saved device against the enumerated list (cached) and map it
     // to a backend; a stale/absent selection falls back to the engine default
     // when a real GPU exists, or to the CPU backend when none does.
@@ -328,7 +333,7 @@ pub async fn generate(
         low_vram,
         preview_path: preview.as_ref().map(|p| p.to_string_lossy().into_owned()),
         weight_type,
-        ..Default::default()
+        lora_dir,
     };
 
     // Run the (blocking) engine on a worker thread so the async command yields.

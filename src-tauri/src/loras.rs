@@ -257,6 +257,39 @@ pub fn rename(
     Ok(LoraInfo::from_entry(models_dir, &updated))
 }
 
+/// Validate a run's LoRA selection and return the pool directory to pass to the
+/// engine, or `None` when nothing is selected.
+///
+/// Every selection is resolved against the index and its file checked before
+/// the engine is spawned. This is not belt-and-braces: a LoRA the engine cannot
+/// find is only a `[WARN] can not found lora` line followed by a successful
+/// exit and a silently unmodified image, so a missing LoRA that reaches the
+/// engine is a failure the user never sees.
+pub fn resolve_selection(
+    models_dir: &Path,
+    selections: &[crate::types::LoraSelection],
+) -> Result<Option<String>, String> {
+    if selections.is_empty() {
+        return Ok(None);
+    }
+    let index = load_index(models_dir);
+    for s in selections {
+        let entry = index.loras.iter().find(|e| e.name == s.name).ok_or_else(|| {
+            format!(
+                "The LoRA \"{}\" is no longer in your library. Remove it from the selection and try again.",
+                s.name
+            )
+        })?;
+        if is_broken(models_dir, entry) {
+            return Err(format!(
+                "The LoRA \"{}\" is missing its file. Re-add it, or remove it from the selection.",
+                entry.display_name
+            ));
+        }
+    }
+    Ok(Some(pool_dir(models_dir).to_string_lossy().into_owned()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -463,6 +496,49 @@ mod tests {
         let dir = tmp("rename-empty");
         pool_with(&dir, &["film-grain"]);
         assert!(rename(&dir, "lora-film-grain", "   ", "sdxl").is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn sel(name: &str) -> crate::types::LoraSelection {
+        crate::types::LoraSelection { name: name.to_string(), weight: 1.0 }
+    }
+
+    #[test]
+    fn no_selection_resolves_to_no_pool_directory() {
+        let dir = tmp("resolve-none");
+        assert_eq!(resolve_selection(&dir, &[]).unwrap(), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_valid_selection_resolves_to_the_pool_directory() {
+        let dir = tmp("resolve-ok");
+        pool_with(&dir, &["film-grain"]);
+        let got = resolve_selection(&dir, &[sel("film-grain")]).unwrap();
+        assert_eq!(got, Some(pool_dir(&dir).to_string_lossy().into_owned()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_selection_naming_an_unknown_lora_is_rejected_by_name() {
+        // The engine would only WARN and produce an unmodified image, so this
+        // has to fail loudly here or the user never learns anything went wrong.
+        let dir = tmp("resolve-unknown");
+        pool_with(&dir, &["film-grain"]);
+        let err = resolve_selection(&dir, &[sel("ghost")]).unwrap_err();
+        assert!(err.contains("ghost"), "message must name the LoRA, got: {err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_selection_whose_file_vanished_is_rejected_by_label() {
+        let dir = tmp("resolve-broken");
+        let mut index = pool_with(&dir, &["film-grain"]);
+        index.loras[0].display_name = "Film Grain v2".into();
+        save_index(&dir, &index).unwrap();
+        std::fs::remove_file(weight_path(&dir, "film-grain")).unwrap();
+        let err = resolve_selection(&dir, &[sel("film-grain")]).unwrap_err();
+        assert!(err.contains("Film Grain v2"), "message must name the LoRA, got: {err}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
