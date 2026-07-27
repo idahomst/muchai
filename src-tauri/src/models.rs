@@ -61,14 +61,20 @@ pub fn scan_models_excluding(dirs: &[PathBuf], exclude: &HashSet<PathBuf>) -> Ve
     out
 }
 
-/// Total size in BYTES of the given files. Returns `None` if ANY path can't be
-/// stat'd (missing/unreadable), so callers treat a broken model as "size unknown"
-/// rather than silently undercounting. An empty slice sums to `Some(0)`.
-pub fn sum_file_sizes(paths: &[String]) -> Option<u64> {
+/// Total size in BYTES the given files will occupy *once loaded by the engine*.
+///
+/// Returns `None` if ANY path can't be stat'd (missing/unreadable), so callers
+/// treat a broken model as "size unknown" rather than silently undercounting.
+/// An empty slice sums to `Some(0)`.
+///
+/// Each file is measured with `weights::memory_bytes`, which widens fp8
+/// safetensors tensors the way the engine does. There is deliberately no
+/// file-size equivalent here: summing on-disk bytes to decide a VRAM question
+/// is the bug this replaced. Disk-space accounting lives in `diskspace`.
+pub fn sum_memory_bytes(paths: &[String]) -> Option<u64> {
     let mut total: u64 = 0;
     for p in paths {
-        let meta = fs::metadata(p).ok()?;
-        total = total.saturating_add(meta.len());
+        total = total.saturating_add(crate::weights::memory_bytes(Path::new(p))?);
     }
     Some(total)
 }
@@ -138,7 +144,9 @@ mod tests {
     }
 
     #[test]
-    fn sum_file_sizes_totals_existing_files() {
+    fn sum_memory_bytes_totals_existing_files() {
+        // Files of zero bytes aren't safetensors, so each falls back to its own
+        // size: this pins the summing, not the format detection.
         let root = std::env::temp_dir().join(format!("muchai-sumsz-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         touch(&root.join("a.safetensors"), 100);
@@ -147,12 +155,12 @@ mod tests {
             root.join("a.safetensors").to_string_lossy().into_owned(),
             root.join("b.safetensors").to_string_lossy().into_owned(),
         ];
-        assert_eq!(sum_file_sizes(&paths), Some(350));
+        assert_eq!(sum_memory_bytes(&paths), Some(350));
         let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
-    fn sum_file_sizes_is_none_if_any_file_missing() {
+    fn sum_memory_bytes_is_none_if_any_file_missing() {
         let root = std::env::temp_dir().join(format!("muchai-sumsz2-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         touch(&root.join("a.safetensors"), 100);
@@ -160,12 +168,12 @@ mod tests {
             root.join("a.safetensors").to_string_lossy().into_owned(),
             root.join("gone.safetensors").to_string_lossy().into_owned(),
         ];
-        assert_eq!(sum_file_sizes(&paths), None);
+        assert_eq!(sum_memory_bytes(&paths), None);
         let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
-    fn sum_file_sizes_empty_is_zero() {
-        assert_eq!(sum_file_sizes(&[]), Some(0));
+    fn sum_memory_bytes_empty_is_zero() {
+        assert_eq!(sum_memory_bytes(&[]), Some(0));
     }
 }

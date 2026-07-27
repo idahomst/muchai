@@ -25,8 +25,10 @@ export const ROLE_LABELS: Record<ComponentRole, string> = {
 
 // Engine enums, from src-tauri/fixtures/sd-help.txt. Empty = let engine auto-detect.
 // Mirror the pinned stable-diffusion.cpp build's `--vae-format` / `--prediction`
-// value sets (see src-tauri/fixtures/sd-help.txt, engine b290693). FLUX.2 klein
-// uses `sefi_flow` (SeFi-Image FLOW mode), NOT `flux2_flow`.
+// value sets (see src-tauri/fixtures/sd-help.txt, engine b290693). These are the
+// values the engine *accepts*; picking a wrong one for a checkpoint aborts the
+// engine mid-graph. FLUX.2 in particular must be left unset — see the flux2
+// recipe in src-tauri/src/recipes.rs.
 export const VAE_FORMATS = ["", "auto", "flux", "sd3", "flux2", "wan"] as const;
 export const PREDICTIONS = ["", "eps", "v", "edm_v", "sd3_flow", "flux_flow", "sefi_flow"] as const;
 
@@ -177,7 +179,25 @@ export interface AppConfig {
   // AppConfig.live_preview, #[serde(default = "default_true")] → true for old
   // configs).
   live_preview: boolean;
+  // Load-time weight precision for the diffusion model (mirrors Rust
+  // AppConfig.load_precision, #[serde(default)] → "auto" for old configs).
+  // "auto" re-quantises only when the model won't fit the selected GPU,
+  // "original" never does, any other value is an engine weight type.
+  load_precision: LoadPrecision;
 }
+
+// Values accepted by AppConfig.load_precision. The quantised entries must stay
+// in sync with fit::QUANT_LADDER on the Rust side — the string is passed to the
+// engine verbatim as a --tensor-type-rules target.
+export type LoadPrecision = "auto" | "original" | "q8_0" | "q5_1" | "q4_K";
+
+export const LOAD_PRECISION_OPTIONS: { value: LoadPrecision; label: string; hint: string }[] = [
+  { value: "auto", label: "Auto", hint: "Reduce precision only when the model won't fit your GPU" },
+  { value: "original", label: "Original", hint: "Always load the model exactly as stored" },
+  { value: "q8_0", label: "8-bit", hint: "About half the memory of a 16-bit model, near-identical output" },
+  { value: "q5_1", label: "5-bit", hint: "Smaller again, slight quality loss" },
+  { value: "q4_K", label: "4-bit", hint: "Smallest; noticeable quality loss, but runs on modest GPUs" },
+];
 
 export const defaultRequest = (): GenerationRequest => ({
   model: { type: "single_file", path: "" }, prompt: "", negative_prompt: "",

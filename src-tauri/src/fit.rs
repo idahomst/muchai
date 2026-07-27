@@ -14,6 +14,78 @@ pub fn estimate_vram_mb(file_size_bytes: u64) -> u64 {
     (weights_mb * 1.15) as u64 + ACTIVATION_BUDGET_MB
 }
 
+/// Load-time quantisation ladder for the diffusion model, best quality first,
+/// as `(engine type name, bits per weight)`. The bit widths come from ggml's
+/// block layouts: q8_0 is 34 bytes per 32 weights (8.5 bpw), q5_1 is 24 per 32
+/// (6.0), q4_K is 144 per 256 (4.5).
+///
+/// Verified against engine `b290693` on a 17,316 MB (f16-resident) FLUX.2 klein
+/// diffusion model: predicted q8_0 9,199 MB vs 9,291 MB measured, predicted
+/// q4_K 4,870 MB vs 5,011 MB measured — both within 3%.
+pub const QUANT_LADDER: [(&str, f64); 3] = [("q8_0", 8.5), ("q5_1", 6.0), ("q4_K", 4.5)];
+
+/// Resident bytes of `memory_bytes` worth of f16 weights after re-quantising to
+/// `bits_per_weight`. The f16 baseline (2 bytes/weight) is what the engine
+/// actually holds before quantisation, including widened fp8 tensors.
+fn quantized_bytes(memory_bytes: u64, bits_per_weight: f64) -> u64 {
+    let weights = memory_bytes as f64 / 2.0;
+    (weights * bits_per_weight / 8.0) as u64
+}
+
+/// Pick a load-time weight type for the diffusion model, or `None` to load it
+/// unchanged.
+///
+/// `diffusion_bytes` and `other_bytes` are *in-memory* bytes (see
+/// `weights::memory_bytes`); only the diffusion model is quantised, so
+/// `other_bytes` — text encoders, VAE — is added untouched at every rung.
+///
+/// Returns `None` when VRAM is unknown or the model already fits: quantising a
+/// model that fits would cost quality for nothing. When nothing on the ladder
+/// fits, the bottom rung is returned anyway — a degraded model that runs beats
+/// one that cannot load.
+pub fn choose_weight_type(
+    diffusion_bytes: u64,
+    other_bytes: u64,
+    vram_mb: Option<u64>,
+) -> Option<&'static str> {
+    let vram = vram_mb?;
+    let as_is = diffusion_bytes.saturating_add(other_bytes);
+    if estimate_vram_mb(as_is) <= vram {
+        return None;
+    }
+    let mut last = None;
+    for (name, bpw) in QUANT_LADDER {
+        let total = quantized_bytes(diffusion_bytes, bpw).saturating_add(other_bytes);
+        if estimate_vram_mb(total) <= vram {
+            return Some(name);
+        }
+        last = Some(name);
+    }
+    last
+}
+
+/// Resolve the user's `load_precision` preference into an engine weight type
+/// for one run, or `None` to load the model unchanged.
+///
+/// `auto` defers to `choose_weight_type`; `original` always declines; anything
+/// else is taken as an explicit engine type and passed through. Quantisation is
+/// pointless on CPU (there is no VRAM ceiling to duck under) and is skipped there.
+pub fn resolve_weight_type(
+    preference: &str,
+    diffusion_bytes: Option<u64>,
+    other_bytes: Option<u64>,
+    device_vram_mb: Option<u64>,
+    is_cpu_device: bool,
+) -> Option<String> {
+    if is_cpu_device || preference == crate::types::LOAD_PRECISION_ORIGINAL {
+        return None;
+    }
+    if preference != crate::types::LOAD_PRECISION_AUTO {
+        return Some(preference.to_string());
+    }
+    choose_weight_type(diffusion_bytes?, other_bytes?, device_vram_mb).map(str::to_string)
+}
+
 /// Whether a model is expected to fit the selected device's VRAM.
 /// Reuses the suitability vocabulary for UI consistency with `catalog::rate`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -181,6 +253,116 @@ mod tests {
         // CPU has no GPU VRAM to overflow; offload flags don't apply.
         let twenty_gb = 20u64 * 1024 * MB;
         assert_eq!(resolve_low_vram(false, Some(twenty_gb), Some(12000), true), (false, false));
+    }
+
+    #[test]
+    fn no_quantisation_when_the_model_already_fits() {
+        // est(1 GB) ≈ 2677 MB < 12000 → loading it degraded would be pure loss.
+        assert_eq!(choose_weight_type(1024 * MB, 0, Some(12000)), None);
+    }
+
+    #[test]
+    fn no_quantisation_when_vram_unknown() {
+        // Can't tell whether it's needed; never silently degrade quality.
+        assert_eq!(choose_weight_type(64 * 1024 * MB, 0, None), None);
+    }
+
+    #[test]
+    fn picks_the_highest_quality_rung_that_fits() {
+        // Diffusion 17,316 MB resident (the measured fp8 klein 9B, widened to
+        // f16) on a 12 GB card: as-is est ≈ 19,913 > 12,000, so it must degrade.
+        // q8_0 → 9,199 MB + 4,816 MB encoder = 14,015; est ≈ 17,617 > 12,000 → no.
+        // q5_1 → 6,493 + 4,816 = 11,309; est ≈ 14,505 > 12,000 → no.
+        // q4_K → 4,870 + 4,816 = 9,686; est ≈ 12,639 > 12,000 → also no,
+        // so the bottom rung is returned as best effort.
+        let diffusion = 17_316 * MB;
+        let other = 4_816 * MB;
+        assert_eq!(choose_weight_type(diffusion, other, Some(12_000)), Some("q4_K"));
+    }
+
+    #[test]
+    fn stops_at_q8_0_when_that_is_enough() {
+        // 17,316 MB alone on a 24 GB card: as-is est ≈ 19,913+1500 > 24,000? No —
+        // est = 17316*1.15 + 1500 = 21,413 <= 24,000, so it fits and returns None.
+        assert_eq!(choose_weight_type(17_316 * MB, 0, Some(24_000)), None);
+        // Drop the budget to 20,000: as-is 21,413 doesn't fit, q8_0 (9,199 MB →
+        // est 12,079) does, and it's the top rung.
+        assert_eq!(choose_weight_type(17_316 * MB, 0, Some(20_000)), Some("q8_0"));
+    }
+
+    #[test]
+    fn falls_through_to_the_bottom_rung_when_nothing_fits() {
+        // A model so large no rung helps still gets the smallest type rather
+        // than None — refusing to quantise would guarantee a load failure.
+        assert_eq!(choose_weight_type(400 * 1024 * MB, 0, Some(8000)), Some("q4_K"));
+    }
+
+    #[test]
+    fn untouched_components_are_counted_at_every_rung() {
+        // Encoder + VAE are never quantised, so a budget they alone exceed can
+        // never be satisfied: the ladder bottoms out instead of claiming a fit.
+        assert_eq!(choose_weight_type(1024 * MB, 40 * 1024 * MB, Some(8000)), Some("q4_K"));
+    }
+
+    #[test]
+    fn precision_original_never_quantises_however_bad_the_fit() {
+        let huge = 400 * 1024 * MB;
+        assert_eq!(resolve_weight_type("original", Some(huge), Some(0), Some(8000), false), None);
+    }
+
+    #[test]
+    fn precision_auto_follows_the_ladder() {
+        // Same inputs as picks_the_highest_quality_rung_that_fits.
+        assert_eq!(
+            resolve_weight_type("auto", Some(17_316 * MB), Some(4_816 * MB), Some(12_000), false),
+            Some("q4_K".to_string())
+        );
+        // …and stays out of the way when the model already fits.
+        assert_eq!(
+            resolve_weight_type("auto", Some(1024 * MB), Some(0), Some(12_000), false),
+            None
+        );
+    }
+
+    #[test]
+    fn explicit_precision_is_passed_through_even_when_the_model_fits() {
+        // The user asked for 8-bit; honour it rather than second-guessing.
+        assert_eq!(
+            resolve_weight_type("q8_0", Some(1024 * MB), Some(0), Some(24_000), false),
+            Some("q8_0".to_string())
+        );
+    }
+
+    #[test]
+    fn explicit_precision_does_not_need_measurable_sizes() {
+        // Unknown bytes must not silently downgrade an explicit choice to "off".
+        assert_eq!(
+            resolve_weight_type("q4_K", None, None, None, false),
+            Some("q4_K".to_string())
+        );
+    }
+
+    #[test]
+    fn auto_precision_declines_when_sizes_are_unknown() {
+        assert_eq!(resolve_weight_type("auto", None, Some(0), Some(8000), false), None);
+        assert_eq!(resolve_weight_type("auto", Some(1024 * MB), None, Some(8000), false), None);
+    }
+
+    #[test]
+    fn cpu_device_never_quantises() {
+        // No VRAM ceiling to duck under, so quantising would only lose quality —
+        // and this holds even for an explicit request.
+        let huge = 400 * 1024 * MB;
+        assert_eq!(resolve_weight_type("auto", Some(huge), Some(0), Some(8000), true), None);
+        assert_eq!(resolve_weight_type("q4_K", Some(huge), Some(0), Some(8000), true), None);
+    }
+
+    #[test]
+    fn ladder_is_ordered_best_quality_first() {
+        // choose_weight_type returns the FIRST fitting rung, so a mis-ordered
+        // ladder would silently hand back a worse type than necessary.
+        let bpws: Vec<f64> = QUANT_LADDER.iter().map(|(_, b)| *b).collect();
+        assert!(bpws.windows(2).all(|w| w[0] > w[1]), "ladder must descend: {bpws:?}");
     }
 
     #[test]

@@ -42,6 +42,7 @@ pub fn default_config() -> AppConfig {
         civitai_token: None,
         low_vram: false,
         live_preview: true,
+        load_precision: crate::types::LOAD_PRECISION_AUTO.to_string(),
         last_request: GenerationRequest::default(),
     }
 }

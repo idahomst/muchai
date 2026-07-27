@@ -135,6 +135,16 @@ impl ModelRef {
             }
         }
     }
+
+    /// Path of the diffusion weights alone. For a single-file checkpoint that
+    /// is the whole file. Used by the load-time quantisation decision, which
+    /// only ever re-quantises the diffusion model.
+    pub fn diffusion_path(&self) -> &str {
+        match self {
+            ModelRef::SingleFile { path } => path,
+            ModelRef::MultiFile(c) => &c.diffusion_model,
+        }
+    }
 }
 
 /// Component slots whose file no longer exists on disk. Empty = all good.
@@ -353,8 +363,24 @@ pub struct AppConfig {
     /// default to true via `default_true`.
     #[serde(default = "default_true")]
     pub live_preview: bool,
+    /// Load-time weight precision for the diffusion model. `auto` (default)
+    /// re-quantises only when the model won't otherwise fit the selected GPU;
+    /// `original` never does; an explicit engine type (`q8_0`, `q5_1`, `q4_K`)
+    /// always does. Old configs lack the key and get `auto`.
+    #[serde(default = "default_load_precision")]
+    pub load_precision: String,
     pub last_request: GenerationRequest,
 }
+
+/// serde default for `AppConfig.load_precision`.
+fn default_load_precision() -> String {
+    LOAD_PRECISION_AUTO.to_string()
+}
+
+/// `load_precision` value meaning "decide from the VRAM fit estimate".
+pub const LOAD_PRECISION_AUTO: &str = "auto";
+/// `load_precision` value meaning "never re-quantise".
+pub const LOAD_PRECISION_ORIGINAL: &str = "original";
 
 #[cfg(test)]
 mod tests {

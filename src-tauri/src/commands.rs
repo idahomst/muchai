@@ -98,7 +98,11 @@ pub struct LibraryFit {
 }
 
 /// Rate every installed library model against the detected VRAM budget. Thin
-/// glue over `models::sum_file_sizes` + `fit::estimate_and_verdict`.
+/// glue over `models::sum_memory_bytes` + `fit::estimate_and_verdict`.
+///
+/// Deliberately *memory* bytes, not file bytes: an fp8 checkpoint occupies
+/// roughly twice its file size once loaded, and rating it by file size showed
+/// models as "tight" that cannot physically fit.
 #[tauri::command]
 pub fn rate_library(state: State<AppState>, vram_total_mb: Option<u64>) -> Vec<LibraryFit> {
     let models_dir = {
@@ -108,7 +112,7 @@ pub fn rate_library(state: State<AppState>, vram_total_mb: Option<u64>) -> Vec<L
     library::scan_library(&models_dir)
         .into_iter()
         .map(|e| {
-            let bytes = models::sum_file_sizes(&e.model.component_paths());
+            let bytes = models::sum_memory_bytes(&e.model.component_paths());
             let (estimate_mb, verdict) = fit::estimate_and_verdict(bytes, vram_total_mb);
             LibraryFit { id: e.id, estimate_mb, verdict }
         })
@@ -284,10 +288,12 @@ pub async fn generate(
     let backend_owned = backend;
     // Decide Low-VRAM for THIS run: manual toggle forces it on; otherwise
     // auto-engage when the summed weight bytes won't fit the selected GPU's VRAM.
-    // Weights are summed in bytes (what estimate_vram_mb expects). A broken model
-    // (some file un-stat'able) yields None → treated as "unknown", no auto-engage.
+    // Weights are summed as *in-memory* bytes (what estimate_vram_mb expects), so
+    // fp8 checkpoints — which the engine widens to f16 on load — are counted at
+    // their real cost. A broken model (some file un-stat'able) yields None →
+    // treated as "unknown", no auto-engage.
     let is_cpu = backend_owned.as_deref() == Some("cpu");
-    let weights_bytes = models::sum_file_sizes(&request.model.component_paths());
+    let weights_bytes = models::sum_memory_bytes(&request.model.component_paths());
     let (low_vram, auto_engaged) =
         crate::fit::resolve_low_vram(cfg.low_vram, weights_bytes, device_vram_mb, is_cpu);
     if auto_engaged {
@@ -304,9 +310,24 @@ pub async fn generate(
         // Tell the frontend where the draft will appear (file arrives ~step 2).
         let _ = app.emit("generation:preview", p.to_string_lossy().to_string());
     }
+    // Load-time precision: only the diffusion model is ever re-quantised, so it
+    // is measured on its own and the remaining components counted as fixed cost.
+    let diffusion_bytes =
+        crate::weights::memory_bytes(std::path::Path::new(request.model.diffusion_path()));
+    let other_bytes = weights_bytes
+        .zip(diffusion_bytes)
+        .map(|(all, diffusion)| all.saturating_sub(diffusion));
+    let weight_type = crate::fit::resolve_weight_type(
+        &cfg.load_precision,
+        diffusion_bytes,
+        other_bytes,
+        device_vram_mb,
+        is_cpu,
+    );
     let engine_opts = crate::command_builder::EngineOptions {
         low_vram,
         preview_path: preview.as_ref().map(|p| p.to_string_lossy().into_owned()),
+        weight_type,
     };
 
     // Run the (blocking) engine on a worker thread so the async command yields.
@@ -1081,7 +1102,9 @@ mod tests {
 
         let flux2 = flags_for_family("flux2");
         assert_eq!(flux2.vae_format.as_deref(), Some("flux2"));
-        assert_eq!(flux2.prediction.as_deref(), Some("sefi_flow"));
+        // flux2 pins the VAE format but leaves prediction to the engine — see
+        // the recipe comment; an explicit override crashed every generation.
+        assert_eq!(flux2.prediction, None);
 
         let qwen = flags_for_family("qwen-image");
         assert_eq!(qwen.vae_format.as_deref(), Some("auto"));

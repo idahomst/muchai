@@ -1,6 +1,7 @@
 <script lang="ts">
   import { settings } from "$lib/stores";
   import { setSettings } from "$lib/api";
+  import { LOAD_PRECISION_OPTIONS, type LoadPrecision } from "$lib/types";
   import ModelFolders from "./ModelFolders.svelte";
   import GalleryLocation from "./GalleryLocation.svelte";
   import DevicePicker from "./DevicePicker.svelte";
@@ -83,6 +84,28 @@
       }
     });
   }
+
+  // Optimistic save of the load-precision select, on the same serialized chain
+  // as the toggles above so no save races or is dropped. Reverts on failure.
+  function saveLoadPrecision(value: LoadPrecision) {
+    saveChain = saveChain.then(async () => {
+      const cur = $settings;
+      if (!cur || cur.load_precision === value) return;
+      const next = { ...cur, load_precision: value };
+      settings.set(next);
+      error = null;
+      try {
+        await setSettings(next);
+      } catch (e) {
+        settings.set({ ...($settings ?? cur), load_precision: cur.load_precision });
+        error = String(e);
+      }
+    });
+  }
+
+  const precisionHint = $derived(
+    LOAD_PRECISION_OPTIONS.find((o) => o.value === ($settings?.load_precision ?? "auto"))?.hint ?? ""
+  );
 </script>
 
 <div class="modal-backdrop" onclick={(e) => { if (e.target === e.currentTarget) onclose(); }} role="presentation">
@@ -146,6 +169,18 @@
         <span class="check-box"></span>
         <span>Live preview <em>— rough draft while generating, cancel early</em></span>
       </label>
+      <div class="dlg-field precision">
+        <p class="microlabel">Load precision</p>
+        <select class="dlg-select"
+          value={$settings?.load_precision ?? "auto"}
+          disabled={!$settings}
+          onchange={(e) => saveLoadPrecision(e.currentTarget.value as LoadPrecision)}>
+          {#each LOAD_PRECISION_OPTIONS as o (o.value)}
+            <option value={o.value}>{o.label}</option>
+          {/each}
+        </select>
+        <p class="hint">{precisionHint}</p>
+      </div>
 
       <p class="section-hdr">Appearance</p>
       <div class="prefrow theme-row">
@@ -172,6 +207,7 @@
   .dlg-input.mono { font-family:var(--mono); font-size:12px; }
   .hint { font-size:11.5px; color:var(--text-muted); margin:5px 0 0; }
   .check { margin-top:14px; }
+  .dlg-field.precision { margin-top:14px; margin-bottom:0; }
   .check em { color:var(--text-muted); font-style:normal; }
   .prefrow { display:flex; align-items:center; gap:12px; padding:10px 0; }
   .prefrow.theme-row { padding-top:0; }

@@ -1,15 +1,38 @@
 use crate::types::{GenerationRequest, ModelRef};
 
 /// Engine knobs that aren't part of the generation request itself. A struct
-/// (not a bare bool) leaves room for the deferred expert controls (--max-vram,
-/// --stream-layers, per-component --backend) without another signature churn.
+/// (not a bare bool) leaves room for the remaining expert controls
+/// (per-component `--backend`, `--params-backend`) without another signature churn.
 #[derive(Debug, Clone, Default)]
 pub struct EngineOptions {
     pub low_vram: bool,
     /// When `Some(path)`, enable a live preview written to `path`
     /// (`--preview proj --preview-interval 2`); `None` disables it.
     pub preview_path: Option<String>,
+    /// When `Some(type)`, re-quantise the diffusion model at load time to that
+    /// engine weight type (`q8_0`, `q5_1`, `q4_K`). See `DIFFUSION_TENSOR_RULES`.
+    pub weight_type: Option<String>,
 }
+
+/// Tensor-name prefixes that identify diffusion-model weights.
+///
+/// Load-time quantisation is applied through `--tensor-type-rules` rather than
+/// the global `--type` because `--type` also re-quantises the text encoder — and
+/// when that encoder is an already-compact GGUF, the "quantisation" is an
+/// *upcast*. Measured on engine `b290693` with a FLUX.2 klein q2_K encoder:
+///
+/// ```text
+/// baseline                       22,296 MB   (diffusion 17,316 | encoder 4,816)
+/// --type q8_0                    17,119 MB   (diffusion  9,291 | encoder 7,670)  ← encoder grew
+/// --tensor-type-rules …=q8_0     14,271 MB   (diffusion  9,291 | encoder 4,816)
+/// ```
+///
+/// Three prefixes because checkpoints differ in how deeply they namespace: the
+/// ComfyUI export path writes `model.diffusion_model.*`, while many FLUX
+/// checkpoints store bare `double_blocks.*` / `single_blocks.*`. Prefixes that
+/// match nothing are simply inert.
+const DIFFUSION_TENSOR_RULES: [&str; 3] =
+    [r"^model\.diffusion_model\.", r"^double_blocks\.", r"^single_blocks\."];
 
 /// Build the argument vector for stable-diffusion.cpp's CLI.
 /// Pure function (no I/O) so it is fully unit-testable.
@@ -70,12 +93,34 @@ pub fn build_args(
         a.push("--backend".into());
         a.push(b.to_string());
     }
+    if let Some(t) = &opts.weight_type {
+        a.push("--tensor-type-rules".into());
+        let rules: Vec<String> =
+            DIFFUSION_TENSOR_RULES.iter().map(|p| format!("{p}={t}")).collect();
+        a.push(rules.join(","));
+    }
     if opts.low_vram {
         // Weights paged from RAM, tiled VAE decode, flash attention — the
         // low-VRAM/high-headroom bundle so models larger than VRAM can run.
         a.push("--offload-to-cpu".into());
         a.push("--vae-tiling".into());
         a.push("--diffusion-fa".into());
+        // Graph-cut segmented execution against a VRAM budget, plus
+        // residency+prefetch streaming of layers (inert without --max-vram).
+        // A negative budget makes the engine auto-detect free VRAM and spare
+        // that many GiB, which beats any number the app could guess: measured
+        // "auto-detected 11.83 GiB free VRAM (12.24 GiB total), reserving
+        // 1.00 GiB; using 10.83 GiB".
+        //
+        // NOT `--auto-fit`, despite it being the more automatic-sounding flag:
+        // its own help says it overrides `--backend`, so it can silently move
+        // work onto a weaker integrated GPU that the user did not select.
+        //
+        // The value must be a separate argv entry — the engine's parser rejects
+        // `--max-vram=-1` as an unknown argument.
+        a.push("--max-vram".into());
+        a.push("-1".into());
+        a.push("--stream-layers".into());
     }
     if let Some(p) = &opts.preview_path {
         // Cheap linear latent→RGB projection written every 2 steps; the app
@@ -225,11 +270,63 @@ mod tests {
     }
 
     #[test]
+    fn low_vram_appends_graph_cut_and_streaming() {
+        let args = build_args(&sample(), "/out/x.png", None, EngineOptions { low_vram: true, ..Default::default() });
+        assert_eq!(val_after(&args, "--max-vram"), Some("-1"));
+        assert!(args.iter().any(|x| x == "--stream-layers"));
+    }
+
+    #[test]
+    fn max_vram_value_is_a_separate_argv_entry() {
+        // The engine's parser rejects `--max-vram=-1` outright; joining them
+        // would break every low-VRAM run with "unknown argument".
+        let args = build_args(&sample(), "/out/x.png", None, EngineOptions { low_vram: true, ..Default::default() });
+        assert!(args.iter().any(|x| x == "--max-vram"));
+        assert!(!args.iter().any(|x| x.contains("--max-vram=")));
+    }
+
+    #[test]
+    fn never_emits_auto_fit() {
+        // --auto-fit overrides --backend, which would let the engine relocate
+        // work to a GPU the user didn't pick. Pinned so it can't creep back in.
+        for low_vram in [true, false] {
+            let args = build_args(&sample(), "/out/x.png", Some("vulkan1"), EngineOptions { low_vram, ..Default::default() });
+            assert!(!args.iter().any(|x| x == "--auto-fit"));
+        }
+    }
+
+    #[test]
     fn low_vram_off_omits_offload_flags() {
         let args = build_args(&sample(), "/out/x.png", None, EngineOptions { low_vram: false, ..Default::default() });
-        for flag in ["--offload-to-cpu", "--vae-tiling", "--diffusion-fa"] {
+        for flag in ["--offload-to-cpu", "--vae-tiling", "--diffusion-fa", "--max-vram", "--stream-layers"] {
             assert!(!args.iter().any(|x| x == flag), "{flag} must be absent");
         }
+    }
+
+    #[test]
+    fn weight_type_emits_diffusion_only_tensor_rules() {
+        let opts = EngineOptions { weight_type: Some("q8_0".into()), ..Default::default() };
+        let args = build_args(&sample(), "/out/x.png", None, opts);
+        let rules = val_after(&args, "--tensor-type-rules").expect("rules present");
+        assert_eq!(
+            rules,
+            r"^model\.diffusion_model\.=q8_0,^double_blocks\.=q8_0,^single_blocks\.=q8_0"
+        );
+    }
+
+    #[test]
+    fn weight_type_never_emits_the_global_type_flag() {
+        // Global --type would re-quantise the text encoder too, which upcasts an
+        // already-compact GGUF and costs more RAM than it saves.
+        let opts = EngineOptions { weight_type: Some("q4_K".into()), ..Default::default() };
+        let args = build_args(&sample(), "/out/x.png", None, opts);
+        assert!(!args.iter().any(|x| x == "--type"));
+    }
+
+    #[test]
+    fn no_weight_type_omits_tensor_rules() {
+        let args = build_args(&sample(), "/out/x.png", None, EngineOptions::default());
+        assert!(!args.iter().any(|x| x == "--tensor-type-rules"));
     }
 
     #[test]

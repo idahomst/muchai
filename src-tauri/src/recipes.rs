@@ -254,10 +254,14 @@ pub fn recipes() -> Vec<ModelRecipe> {
                 role(ComponentRole::Vae, true, &["vae", "ae."]),
             ],
             vae_format: Some("flux2"),
-            // FLUX.2 klein runs as the engine's "SeFi-Image dual-time FLOW" mode
-            // (Flux2Scheduler + SefiFlowDenoiser); its prediction override is
-            // `sefi_flow`. The pinned binary does NOT accept `flux2_flow`.
-            prediction: Some("sefi_flow"),
+            // No prediction override: the engine identifies the checkpoint itself
+            // ("Version: Flux.2 klein" → "running in Flux FLOW mode") and picks the
+            // right denoiser. Forcing `sefi_flow` here used to abort every FLUX.2
+            // generation with `GGML_ASSERT(ggml_can_repeat(b, a))` inside
+            // `Flux::modulate` — measured on engine b290693 with both a 4B GGUF and
+            // a 9B fp8 klein checkpoint, which generate cleanly once the override is
+            // gone. `flux2_flow` is not a value the pinned binary accepts at all.
+            prediction: None,
             shared: vec![
                 SharedComponent {
                     role: ComponentRole::Llm,
@@ -468,8 +472,10 @@ mod tests {
             }
             // vae_format / prediction within the engine's known sets. These
             // MUST mirror the pinned binary's `--help` (see fixtures/sd-help.txt),
-            // not any newer upstream build — the pinned engine names FLUX.2's
-            // prediction `sefi_flow`, not `flux2_flow`.
+            // not any newer upstream build. Accepting a value is not the same as
+            // it being correct: the engine takes `sefi_flow` happily and then
+            // aborts mid-graph on a FLUX.2 checkpoint, which is why flux2 sets
+            // no prediction at all.
             const VAE: [&str; 5] = ["auto", "flux", "sd3", "flux2", "wan"];
             const PRED: [&str; 6] = ["eps", "v", "edm_v", "sd3_flow", "flux_flow", "sefi_flow"];
             if let Some(v) = r.vae_format {
@@ -485,7 +491,9 @@ mod tests {
     fn flux2_recipe_is_registered_with_expected_shape() {
         let r = recipe_for("flux2").expect("flux2 recipe must exist");
         assert_eq!(r.vae_format, Some("flux2"));
-        assert_eq!(r.prediction, Some("sefi_flow"));
+        // Deliberately unset: forcing `sefi_flow` aborted the engine in
+        // `Flux::modulate`. Auto-detection picks the working denoiser.
+        assert_eq!(r.prediction, None);
         // Required roles: diffusion + llm + vae; no t5xxl/clip.
         let required: Vec<ComponentRole> =
             r.roles.iter().filter(|s| s.required).map(|s| s.role).collect();

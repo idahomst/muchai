@@ -16,6 +16,7 @@ mod progress_parser;
 mod recipes;
 mod sysmon;
 mod types;
+mod weights;
 
 use commands::AppState;
 use std::sync::atomic::AtomicBool;
