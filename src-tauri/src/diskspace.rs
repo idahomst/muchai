@@ -45,26 +45,55 @@ pub fn fmt_bytes(n: u64) -> String {
     }
 }
 
-/// Free bytes on the filesystem holding `path`, or `None` when no mount matches
-/// (never expected on Linux, where `/` always does). Callers treat `None` as
-/// "unknown — do not block".
-pub fn available_bytes(path: &Path) -> Option<u64> {
+/// The mount point and free bytes of the filesystem holding `path`, walking up
+/// to the first existing ancestor so a not-yet-created models dir still
+/// resolves. One `Disks` refresh serves both callers.
+fn disk_for(path: &Path) -> Option<(PathBuf, u64)> {
     let existing = existing_ancestor(path)?;
     let target = existing.canonicalize().unwrap_or(existing);
     let disks = sysinfo::Disks::new_with_refreshed_list();
     disks
         .iter()
-        .filter(|d| target.starts_with(d.mount_point()))
         // Longest matching mount point wins: /home/x/models on a separate
         // drive must not be answered by the `/` mount.
+        .filter(|d| target.starts_with(d.mount_point()))
         .max_by_key(|d| d.mount_point().as_os_str().len())
-        .map(|d| d.available_space())
+        .map(|d| (d.mount_point().to_path_buf(), d.available_space()))
+}
+
+/// Free bytes on the filesystem holding `path`, or `None` when no mount matches
+/// (never expected on Linux, where `/` always does). Callers treat `None` as
+/// "unknown — do not block".
+pub fn available_bytes(path: &Path) -> Option<u64> {
+    disk_for(path).map(|(_, free)| free)
+}
+
+/// Mount point of the filesystem holding `path`.
+pub fn mount_point(path: &Path) -> Option<PathBuf> {
+    disk_for(path).map(|(mount, _)| mount)
 }
 
 /// First ancestor of `path` (including `path` itself) that exists on disk.
 /// The models directory may not have been created yet.
 fn existing_ancestor(path: &Path) -> Option<PathBuf> {
     path.ancestors().find(|p| p.exists()).map(|p| p.to_path_buf())
+}
+
+/// Where the `trash` crate actually lands a deleted model. It uses the home
+/// XDG trash only when the file shares that filesystem; otherwise it writes to
+/// `<mount>/.Trash-<uid>/files` on the file's own drive. Keeping models on a
+/// second drive is ordinary here, and pointing the user at a folder that never
+/// received their model is worse than offering no button — so mirror the rule
+/// and return `None` unless the directory really exists.
+pub fn trash_dir_for(path: &Path) -> Option<PathBuf> {
+    let home_trash = directories::BaseDirs::new()?.data_dir().join("Trash");
+    let target_mount = mount_point(path)?;
+    if mount_point(&home_trash) == Some(target_mount.clone()) {
+        return home_trash.is_dir().then_some(home_trash);
+    }
+    let uid = std::fs::metadata("/proc/self").map(|m| std::os::unix::fs::MetadataExt::uid(&m)).ok()?;
+    let per_mount = target_mount.join(format!(".Trash-{uid}")).join("files");
+    per_mount.is_dir().then_some(per_mount)
 }
 
 /// Recursive size of everything under `dir`. Symlinks are not followed (they
@@ -176,5 +205,14 @@ mod tests {
         let gone = std::env::temp_dir().join("muchai-dirsize-does-not-exist");
         let _ = fs::remove_dir_all(&gone);
         assert_eq!(dir_size(&gone), 0);
+    }
+
+    #[test]
+    fn trash_dir_for_never_returns_a_path_that_does_not_exist() {
+        // The UI only offers "Open Trash" when this resolves, so a returned
+        // path must be openable.
+        if let Some(p) = trash_dir_for(&std::env::temp_dir()) {
+            assert!(p.is_dir(), "returned {p:?} which is not a directory");
+        }
     }
 }

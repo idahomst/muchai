@@ -1042,13 +1042,15 @@ pub fn list_reclaimable(state: State<AppState>) -> Vec<ReclaimableModel> {
     out
 }
 
-/// The XDG trash directory when it exists. Deleting a model moves it to the
-/// trash, which on a same-filesystem trash frees no space until emptied — the
-/// blocked panel offers to open this folder when it observes that.
+/// The trash folder that a model delete on this models directory actually
+/// writes to, when it exists. Deleting a model moves it to the trash, which on
+/// a same-filesystem trash frees no space until emptied — the blocked panel
+/// offers to open this folder when it observes that.
 #[tauri::command]
-pub fn trash_dir() -> Option<String> {
-    let dir = directories::BaseDirs::new()?.data_dir().join("Trash");
-    dir.is_dir().then(|| dir.to_string_lossy().into_owned())
+pub fn trash_dir(state: State<AppState>) -> Option<String> {
+    let models_dir = state.config.lock().unwrap().models_dir.clone();
+    crate::diskspace::trash_dir_for(std::path::Path::new(&models_dir))
+        .map(|p| p.to_string_lossy().into_owned())
 }
 
 #[cfg(test)]
