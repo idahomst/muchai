@@ -32,7 +32,14 @@ pub fn fmt_bytes(n: u64) -> String {
     if i == 0 {
         format!("{} {}", n, UNITS[i])
     } else if v < 10.0 {
-        format!("{:.1} {}", v, UNITS[i])
+        // Round to one decimal (same as the JS `toFixed(1)` this mirrors),
+        // then drop a trailing ".0" so whole numbers match the frontend,
+        // which coerces the rounded string back through `Number(...)`.
+        let rounded = format!("{:.1}", v);
+        match rounded.strip_suffix(".0") {
+            Some(whole) => format!("{} {}", whole, UNITS[i]),
+            None => format!("{} {}", rounded, UNITS[i]),
+        }
     } else {
         format!("{} {}", v.round() as u64, UNITS[i])
     }
@@ -112,6 +119,19 @@ mod tests {
         assert_eq!(fmt_bytes(999), "999 B");
         assert_eq!(fmt_bytes(6_780_000_000), "6.8 GB");
         assert_eq!(fmt_bytes(23_400_000_000), "23 GB");
+    }
+
+    #[test]
+    fn fmt_bytes_drops_a_trailing_zero_like_the_frontend_does() {
+        // `formatBytes` in modelFormat.ts is `+v.toFixed(1)`, which coerces back
+        // to a Number — 5.0 renders as "5". The blocked panel shows Rust-built
+        // and JS-built figures side by side, so they must not disagree.
+        assert_eq!(fmt_bytes(5_000_000_000), "5 GB");
+        assert_eq!(fmt_bytes(3_000_000_000), "3 GB");
+        assert_eq!(fmt_bytes(2_000_000), "2 MB");
+        // Non-integer tenths keep their decimal.
+        assert_eq!(fmt_bytes(6_780_000_000), "6.8 GB");
+        assert_eq!(fmt_bytes(3_100_000_000), "3.1 GB");
     }
 
     use std::fs;
