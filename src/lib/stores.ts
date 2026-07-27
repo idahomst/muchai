@@ -47,18 +47,19 @@ export const downloadError = writable<string | null>(null);
 /** Run a model-download invoke as an app-level task: busy/progress/error live in
  *  stores so the UI survives the dialog closing mid-download. The `model:download:
  *  progress` event feeds `downloadProgress` (wired once at app mount). Resolves
- *  true on success. */
-export async function runDownload(fn: () => Promise<unknown>): Promise<boolean> {
+ *  to what `fn` returned, or `null` if it failed — callers must test against
+ *  `null`, not truthiness, since a task may legitimately resolve to nothing. */
+export async function runDownload<T>(fn: () => Promise<T>): Promise<T | null> {
   downloadBusy.set(true);
   downloadError.set(null);
   downloadProgress.set(null);
   try {
-    await fn();
+    const result = await fn();
     await refreshLibrary();
-    return true;
+    return result;
   } catch (e) {
     downloadError.set(String(e));
-    return false;
+    return null;
   } finally {
     downloadBusy.set(false);
     downloadProgress.set(null);

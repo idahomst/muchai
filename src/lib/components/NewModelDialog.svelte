@@ -116,7 +116,7 @@
   // Downloads run at the app level (stores.runDownload) so busy/progress/error
   // survive this dialog closing mid-download. Close only on success.
   async function run(fn: () => Promise<unknown>) {
-    if (await runDownload(fn)) {
+    if ((await runDownload(fn)) !== null) {
       onClose();
       return;
     }

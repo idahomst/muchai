@@ -6,6 +6,7 @@
   import ModelSelector from "$lib/components/ModelSelector.svelte";
   import NewModelDialog from "$lib/components/NewModelDialog.svelte";
   import ModelEditor from "$lib/components/ModelEditor.svelte";
+  import AddLoraDialog from "$lib/components/AddLoraDialog.svelte";
   import DownloadStatus from "$lib/components/DownloadStatus.svelte";
   import type { LibraryEntry } from "$lib/types";
   import PromptPanel from "$lib/components/PromptPanel.svelte";
@@ -157,6 +158,9 @@
 {/if}
 {#if editing}
   <ModelEditor entry={editing} onClose={() => (editing = null)} />
+{/if}
+{#if showAddLora}
+  <AddLoraDialog onClose={() => (showAddLora = false)} />
 {/if}
 
 <!-- Persistent download status when the New-model dialog is closed but a
