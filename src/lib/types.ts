@@ -263,3 +263,24 @@ export interface RatedMultiFile {
   overrides: unknown[]; min_vram_mb: number; recommended_vram_mb: number;
   suitability: Suitability;
 }
+
+/** Mirrors Rust `commands::SpaceCheck`. `free_bytes` is null when the disk
+ *  probe failed, in which case `ok` is true — never block on an unknown. */
+export interface SpaceCheck {
+  required_bytes: number;
+  free_bytes: number | null;
+  ok: boolean;
+}
+
+/** Mirrors Rust `commands::ReclaimableModel`: an installed model and the bytes
+ *  deleting it would free. */
+export interface ReclaimableModel {
+  id: string;
+  name: string;
+  size_bytes: number;
+}
+
+/** Shared with Rust `downloader::INSUFFICIENT_SPACE_PREFIX`. Tauri command
+ *  errors arrive as plain strings, so the disk-full failure is recognised by
+ *  this prefix. Keep the two in sync. */
+export const INSUFFICIENT_SPACE_PREFIX = "Not enough disk space";
