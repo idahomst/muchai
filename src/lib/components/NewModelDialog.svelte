@@ -45,6 +45,7 @@
     blocked = { required };
     confirmId = null;
     reclaimError = null;
+    trashNote = false;
     reclaimable = await listReclaimable().catch(() => []);
     trashPath = await trashDir().catch(() => null);
     await refreshFree();
@@ -67,8 +68,8 @@
     await refreshLibrary();
     reclaimable = await listReclaimable().catch(() => []);
     await refreshFree();
-    if (before !== null && freeBytes !== null && freeBytes - before < m.size_bytes / 2) {
-      trashNote = true;
+    if (before !== null && freeBytes !== null) {
+      trashNote = freeBytes - before < m.size_bytes / 2;
     }
   }
 
