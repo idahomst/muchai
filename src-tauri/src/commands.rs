@@ -1010,7 +1010,7 @@ pub fn check_catalog_space(
     let plan = catalog::plan_entry_downloads(&entry, &models_dir);
     let required_bytes = catalog::required_bytes(&plan);
     let free_bytes = crate::diskspace::available_bytes(&models_dir);
-    let ok = free_bytes.map_or(true, |free| crate::diskspace::fits(free, required_bytes));
+    let ok = free_bytes.is_none_or(|free| crate::diskspace::fits(free, required_bytes));
     Ok(SpaceCheck { required_bytes, free_bytes, ok })
 }
 
