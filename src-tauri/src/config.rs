@@ -63,12 +63,18 @@ pub fn default_config() -> AppConfig {
 }
 
 /// One-time migration of the legacy `sd_binary_path` override into the explicit
-/// `EngineSelection`. Idempotent: it only fires while `engine` is still the
-/// default `Builtin` *and* the old field is still set, so re-running it on an
-/// already-migrated config is a no-op. Pure, so it is unit-testable.
+/// `EngineSelection`. Idempotent: after the first run the legacy field is gone,
+/// so re-running it on an already-migrated config is a no-op. Pure, so it is
+/// unit-testable.
+///
+/// The legacy field is cleared unconditionally, even when `engine` is already
+/// set and the path is therefore discarded. Leaving a stale path behind would
+/// let a later revert to `Builtin` resurrect it as `Custom` on the next load —
+/// the user would ask for the bundled engine and silently get someone else's
+/// binary back.
 fn migrate_engine_selection(cfg: &mut AppConfig) {
-    if cfg.engine == EngineSelection::Builtin {
-        if let Some(p) = cfg.sd_binary_path.take() {
+    if let Some(p) = cfg.sd_binary_path.take() {
+        if cfg.engine == EngineSelection::Builtin {
             cfg.engine = EngineSelection::Custom { path: p };
         }
     }
@@ -520,6 +526,33 @@ mod tests {
         let back = load_config_from(&path);
 
         assert_eq!(back, cfg);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn explicit_engine_wins_and_the_stale_legacy_path_is_dropped() {
+        use crate::types::EngineSelection;
+        let dir = std::env::temp_dir().join(format!("muchai-cfg-eng4-{}", std::process::id()));
+        let path = dir.join("config.json");
+        std::fs::create_dir_all(&dir).unwrap();
+        // Hand-edited config: an explicit engine AND a leftover legacy path.
+        std::fs::write(
+            &path,
+            r#"{"sd_binary_path":"/opt/sd/sd-cli","engine":{"type":"downloaded","tag":"master-797-5ef4a75"},"default_model_path":null,"gallery_dir":"/tmp/g","last_request":{"model":{"type":"single_file","path":""},"prompt":"","negative_prompt":"","steps":20,"cfg_scale":7.0,"sampler":"euler_a","width":512,"height":512,"seed":-1,"batch_count":1}}"#,
+        )
+        .unwrap();
+
+        let cfg = load_config_from(&path);
+
+        assert_eq!(
+            cfg.engine,
+            EngineSelection::Downloaded { tag: "master-797-5ef4a75".into() },
+            "the explicit selection must win over the legacy path"
+        );
+        assert_eq!(
+            cfg.sd_binary_path, None,
+            "the stale path must be dropped, or reverting to Builtin later would resurrect it"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
