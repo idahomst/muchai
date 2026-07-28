@@ -1,6 +1,6 @@
 <script lang="ts">
   import { get } from "svelte/store";
-  import { currentImage, currentItem, history, request, livePreview, selectedModelId } from "../stores";
+  import { currentImage, currentItem, history, livePreview } from "../stores";
   import { deleteImage, listHistory, imageSrc, openFolder } from "../api";
 
   // The live draft (if any) wins over the settled image. When a draft 404s
@@ -52,11 +52,10 @@
       // Select the item that slid into the deleted slot, else the new last, else clear.
       const pick = next[Math.min(idx, next.length - 1)] ?? null;
       if (pick) {
+        // Viewing only, like every other selection — the left panel is the
+        // user's working state and a delete must not rewrite it.
         currentImage.set(imageSrc(pick.image_path));
         currentItem.set(pick);
-        // Re-selecting after delete is a replay too: stay ad-hoc, drop any library highlight.
-        request.set({ ...pick.request, model_id: null });
-        selectedModelId.set(null);
       } else {
         currentImage.set(null);
         currentItem.set(null);
