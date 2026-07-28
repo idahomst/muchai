@@ -338,6 +338,26 @@ fn default_true() -> bool {
     true
 }
 
+/// Which engine binary MuchAI runs.
+///
+/// Replaces the overloaded `AppConfig.sd_binary_path`, which could not tell
+/// "the user pointed at a self-compiled build" apart from "the updater
+/// installed this" — so an auto-update would have silently stomped a
+/// deliberate choice. The updater only ever moves between `Builtin` and
+/// `Downloaded`; it refuses to touch `Custom`.
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum EngineSelection {
+    /// The engine bundled with this MuchAI build. Always present, never
+    /// pruned, so it is always available as the revert target.
+    #[default]
+    Builtin,
+    /// A release the updater downloaded, living in `engines/<tag>/`.
+    Downloaded { tag: String },
+    /// A path the user chose by hand.
+    Custom { path: String },
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AppConfig {
     pub sd_binary_path: Option<String>, // None => use bundled sidecar
@@ -387,6 +407,25 @@ pub struct AppConfig {
     /// always does. Old configs lack the key and get `auto`.
     #[serde(default = "default_load_precision")]
     pub load_precision: String,
+    /// Which engine binary to run. `#[serde(default)]` → `Builtin` for configs
+    /// written before this field existed; `load_config_from` then migrates any
+    /// legacy `sd_binary_path` into `Custom`.
+    #[serde(default)]
+    pub engine: EngineSelection,
+    /// Ask GitHub for a newer engine release at most once a day. Default ON,
+    /// following the `live_preview` precedent; turning it off suppresses the
+    /// outbound request entirely.
+    #[serde(default = "default_true")]
+    pub engine_update_check: bool,
+    /// Unix seconds of the last update check — the once-a-day rate limit.
+    /// `None` means "never checked", which is deliberately distinct from a
+    /// check that happened at the Unix epoch.
+    #[serde(default)]
+    pub engine_last_check: Option<u64>,
+    /// Newest tag the user has already been shown, so the badge does not come
+    /// back on every launch until they install.
+    #[serde(default)]
+    pub engine_seen_tag: Option<String>,
     pub last_request: GenerationRequest,
 }
 

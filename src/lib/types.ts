@@ -188,6 +188,13 @@ export interface GpuSelection {
   name: string;
 }
 
+// Wire values MUST match the Rust `EngineSelection` enum's serde form
+// (`#[serde(tag = "type", rename_all = "snake_case")]`, src-tauri/src/types.rs).
+export type EngineSelection =
+  | { type: "builtin" }
+  | { type: "downloaded"; tag: string }
+  | { type: "custom"; path: string };
+
 export interface AppConfig {
   sd_binary_path: string | null;
   default_model_path: string | null;
@@ -219,6 +226,14 @@ export interface AppConfig {
   // "auto" re-quantises only when the model won't fit the selected GPU,
   // "original" never does, any other value is an engine weight type.
   load_precision: LoadPrecision;
+  // Which engine binary the backend spawns. Mirrors Rust AppConfig.engine
+  // (#[serde(default)] → { type: "builtin" } for old configs).
+  engine: EngineSelection;
+  // Daily update check (mirrors Rust AppConfig.engine_update_check,
+  // #[serde(default = "default_true")] → true for old configs).
+  engine_update_check: boolean;
+  engine_last_check: number | null;
+  engine_seen_tag: string | null;
 }
 
 // Values accepted by AppConfig.load_precision. The quantised entries must stay
