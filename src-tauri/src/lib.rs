@@ -41,6 +41,7 @@ pub fn run() {
             download_cancel: Arc::new(AtomicBool::new(false)),
             gpu_devices: Arc::new(Mutex::new(None)),
             engine_version: Arc::new(Mutex::new(None)),
+            generating: Arc::new(AtomicBool::new(false)),
         })
         .setup(move |app| {
             // Allow the configured gallery dir for the asset protocol so saved

@@ -30,6 +30,38 @@ pub struct AppState {
     pub download_cancel: Arc<AtomicBool>,
     pub gpu_devices: Arc<Mutex<Option<Vec<GpuDevice>>>>,
     pub engine_version: Arc<Mutex<Option<Option<String>>>>,
+    /// Set for the whole of a `generate` call — see [`RunGuard`].
+    pub generating: Arc<AtomicBool>,
+}
+
+/// Holds the single-flight claim on generation, releasing it on drop.
+///
+/// Generation shares three singletons: the one `child` slot (so Cancel kills
+/// whichever run registered last), the one fixed live-preview path (so two runs
+/// interleave frames, and the first to finish deletes the other's draft), and
+/// one un-tagged stream of `generation:*` events. A second concurrent run
+/// corrupts all three. The Generate button already gates this in the UI; the
+/// guard makes it the backend's own invariant, so any future caller — a queue,
+/// a shortcut, a local API — is turned away instead of quietly breaking it.
+///
+/// Drop-based release rather than an explicit clear: `generate` has many `?`
+/// early returns, and a leaked flag would refuse every later run for the rest
+/// of the session.
+struct RunGuard(Arc<AtomicBool>);
+
+impl RunGuard {
+    /// `Some` when this call claimed the slot, `None` when a run is already active.
+    fn claim(flag: &Arc<AtomicBool>) -> Option<Self> {
+        flag.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .ok()
+            .map(|_| Self(flag.clone()))
+    }
+}
+
+impl Drop for RunGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
 }
 
 fn now_unix() -> u64 {
@@ -217,7 +249,7 @@ pub fn delete_image(image_path: String) -> Result<(), String> {
 /// Fixed path for the live-preview draft the engine overwrites during a run.
 /// In the OS temp dir (tmpfs on Linux) so the tiny, constantly-rewritten file
 /// is RAM-backed and cleared on reboot. Safe as a fixed (non-unique) path
-/// because generation is single-flight (one `child` slot in AppState).
+/// because generation is single-flight — enforced by [`RunGuard`].
 pub fn preview_path() -> PathBuf {
     std::env::temp_dir().join("muchai-preview").join("preview.png")
 }
@@ -240,6 +272,11 @@ pub async fn generate(
     request: GenerationRequest,
     device_vram_mb: Option<u64>,
 ) -> Result<Vec<GalleryItem>, String> {
+    // Claimed first, before any work: everything below assumes it is the only
+    // run in flight. Released when `_run` drops on any exit path.
+    let _run = RunGuard::claim(&state.generating).ok_or_else(|| {
+        "A generation is already running. Wait for it to finish, or press Cancel.".to_string()
+    })?;
     let cfg = state.config.lock().unwrap().clone();
     // Single source of truth: for a managed model, re-read its components from
     // model.json here — the last stop before the engine — so a stale snapshot
@@ -1393,6 +1430,44 @@ pub fn delete_lora(state: State<'_, AppState>, id: String) -> Result<(), String>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn run_guard_claims_a_free_slot() {
+        let flag = Arc::new(AtomicBool::new(false));
+        assert!(RunGuard::claim(&flag).is_some());
+    }
+
+    #[test]
+    fn run_guard_refuses_a_second_concurrent_claim() {
+        let flag = Arc::new(AtomicBool::new(false));
+        let _held = RunGuard::claim(&flag).expect("first claim must succeed");
+        assert!(RunGuard::claim(&flag).is_none(), "a second run must be turned away");
+    }
+
+    #[test]
+    fn run_guard_releases_on_drop() {
+        let flag = Arc::new(AtomicBool::new(false));
+        drop(RunGuard::claim(&flag).expect("first claim must succeed"));
+        assert!(
+            RunGuard::claim(&flag).is_some(),
+            "the flag must be free again once the run ends"
+        );
+    }
+
+    #[test]
+    fn run_guard_releases_on_unwind() {
+        // Every early `?` return in `generate` drops the guard; so does a panic
+        // in the command body. Both are the same Drop path, and if it ever
+        // stopped running the app would wedge with Generate permanently refused.
+        let flag = Arc::new(AtomicBool::new(false));
+        let f = flag.clone();
+        let caught = std::panic::catch_unwind(move || {
+            let _held = RunGuard::claim(&f).expect("first claim must succeed");
+            panic!("boom");
+        });
+        assert!(caught.is_err());
+        assert!(RunGuard::claim(&flag).is_some(), "a panic must not wedge the flag");
+    }
 
     #[test]
     fn infers_family_from_filename() {
