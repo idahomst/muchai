@@ -1,4 +1,4 @@
-use crate::types::{GenerationRequest, ModelRef};
+use crate::types::{GenerationRequest, LoraSelection, ModelRef};
 
 /// Engine knobs that aren't part of the generation request itself. A struct
 /// (not a bare bool) leaves room for the remaining expert controls
@@ -12,6 +12,11 @@ pub struct EngineOptions {
     /// When `Some(type)`, re-quantise the diffusion model at load time to that
     /// engine weight type (`q8_0`, `q5_1`, `q4_K`). See `DIFFUSION_TENSOR_RULES`.
     pub weight_type: Option<String>,
+    /// Absolute path of the flat LoRA pool (`models_dir/loras`). `Some` only
+    /// when the caller has validated every selection; `None` suppresses both
+    /// `--lora-model-dir` and the prompt tags, because tags without a directory
+    /// resolve against the engine's default path and silently apply nothing.
+    pub lora_dir: Option<String>,
 }
 
 /// Tensor-name prefixes that identify diffusion-model weights.
@@ -34,6 +39,30 @@ pub struct EngineOptions {
 const DIFFUSION_TENSOR_RULES: [&str; 3] =
     [r"^model\.diffusion_model\.", r"^double_blocks\.", r"^single_blocks\."];
 
+/// The prompt as the engine should receive it: the user's text followed by one
+/// `<lora:NAME:WEIGHT>` tag per selection.
+///
+/// This is how stable-diffusion.cpp selects LoRAs — there is no CLI flag for
+/// it. The engine strips each tag before tokenisation, so the text the model
+/// actually sees is unchanged; weights are formatted `%.2f` to match the
+/// engine's own formatting. The user's stored prompt is never modified, only
+/// this copy.
+fn prompt_with_loras(prompt: &str, loras: &[LoraSelection]) -> String {
+    if loras.is_empty() {
+        return prompt.to_string();
+    }
+    let tags = loras
+        .iter()
+        .map(|l| format!("<lora:{}:{:.2}>", l.name, l.weight))
+        .collect::<Vec<_>>()
+        .join(" ");
+    if prompt.is_empty() {
+        tags
+    } else {
+        format!("{prompt} {tags}")
+    }
+}
+
 /// Build the argument vector for stable-diffusion.cpp's CLI.
 /// Pure function (no I/O) so it is fully unit-testable.
 /// Flag spellings are confirmed against `fixtures/sd-help.txt`.
@@ -46,6 +75,9 @@ pub fn build_args(
     let mut a: Vec<String> = Vec::new();
     a.push("-M".into());
     a.push("img_gen".into());
+    // Selections are honoured only alongside a pool directory (see EngineOptions).
+    let loras: &[LoraSelection] =
+        if opts.lora_dir.is_some() { req.loras.as_slice() } else { &[] };
     let mut push = |flag: &str, val: String| {
         a.push(flag.to_string());
         a.push(val);
@@ -77,7 +109,7 @@ pub fn build_args(
             }
         }
     }
-    push("-p", req.prompt.clone());
+    push("-p", prompt_with_loras(&req.prompt, loras));
     if !req.negative_prompt.is_empty() {
         push("-n", req.negative_prompt.clone());
     }
@@ -92,6 +124,10 @@ pub fn build_args(
     if let Some(b) = backend {
         a.push("--backend".into());
         a.push(b.to_string());
+    }
+    if !loras.is_empty() {
+        a.push("--lora-model-dir".into());
+        a.push(opts.lora_dir.clone().expect("lora_dir is Some when loras is non-empty"));
     }
     if let Some(t) = &opts.weight_type {
         a.push("--tensor-type-rules".into());
@@ -344,5 +380,82 @@ mod tests {
         for flag in ["--preview", "--preview-path", "--preview-interval"] {
             assert!(!args.iter().any(|x| x == flag), "{flag} must be absent");
         }
+    }
+
+    fn with_loras(pairs: &[(&str, f32)]) -> GenerationRequest {
+        let mut req = sample();
+        req.loras =
+            pairs.iter().map(|(n, w)| LoraSelection { name: (*n).into(), weight: *w }).collect();
+        req
+    }
+
+    fn lora_opts() -> EngineOptions {
+        EngineOptions { lora_dir: Some("/models/loras".into()), ..Default::default() }
+    }
+
+    #[test]
+    fn lora_tags_are_appended_to_the_prompt_in_order() {
+        // The engine has no CLI flag for LoRA selection: the tag rides in the
+        // prompt and is stripped before tokenisation.
+        let req = with_loras(&[("film-grain", 0.8), ("detail-tweaker", 1.0)]);
+        let args = build_args(&req, "/out/x.png", None, lora_opts());
+        assert_eq!(
+            val_after(&args, "-p"),
+            Some("a cat <lora:film-grain:0.80> <lora:detail-tweaker:1.00>")
+        );
+    }
+
+    #[test]
+    fn lora_weights_use_two_decimals() {
+        // The engine formats weights as %.2f internally; matching it keeps the
+        // argv we log identical to what the engine reports back.
+        let req = with_loras(&[("a", 0.5), ("b", 1.0), ("c", 1.333), ("d", 0.0)]);
+        let args = build_args(&req, "/out/x.png", None, lora_opts());
+        assert_eq!(
+            val_after(&args, "-p"),
+            Some("a cat <lora:a:0.50> <lora:b:1.00> <lora:c:1.33> <lora:d:0.00>")
+        );
+    }
+
+    #[test]
+    fn lora_model_dir_is_emitted_once_when_a_lora_is_selected() {
+        let args = build_args(&with_loras(&[("film-grain", 0.8)]), "/out/x.png", None, lora_opts());
+        assert_eq!(val_after(&args, "--lora-model-dir"), Some("/models/loras"));
+        assert_eq!(args.iter().filter(|x| *x == "--lora-model-dir").count(), 1);
+    }
+
+    #[test]
+    fn tags_are_the_whole_prompt_when_the_prompt_is_empty() {
+        let mut req = with_loras(&[("film-grain", 0.8)]);
+        req.prompt = String::new();
+        let args = build_args(&req, "/out/x.png", None, lora_opts());
+        assert_eq!(val_after(&args, "-p"), Some("<lora:film-grain:0.80>"));
+    }
+
+    #[test]
+    fn no_selection_produces_a_byte_identical_command() {
+        // A user who never touches LoRAs must get exactly today's argv — no
+        // stray flag, no trailing space on the prompt.
+        let baseline = build_args(&sample(), "/out/x.png", Some("vulkan1"), EngineOptions::default());
+        let with_dir = build_args(&sample(), "/out/x.png", Some("vulkan1"), lora_opts());
+        assert_eq!(with_dir, baseline);
+        assert!(!with_dir.iter().any(|x| x == "--lora-model-dir"));
+    }
+
+    #[test]
+    fn selection_is_ignored_when_no_pool_directory_is_supplied() {
+        // Without a directory the engine would resolve tags against its own
+        // default path and silently apply nothing. Emitting neither is honest.
+        let args = build_args(&with_loras(&[("film-grain", 0.8)]), "/out/x.png", None, EngineOptions::default());
+        assert_eq!(val_after(&args, "-p"), Some("a cat"));
+        assert!(!args.iter().any(|x| x == "--lora-model-dir"));
+    }
+
+    #[test]
+    fn never_emits_the_lora_apply_mode_flag() {
+        // `auto` is already correct (at_runtime for quantised weights,
+        // immediately otherwise) and an override is a footgun. Pinned.
+        let args = build_args(&with_loras(&[("a", 1.0)]), "/out/x.png", None, lora_opts());
+        assert!(!args.iter().any(|x| x == "--lora-apply-mode"));
     }
 }

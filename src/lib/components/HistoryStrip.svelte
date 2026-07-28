@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { history, currentImage, currentItem, request, selectedModelId } from "../stores";
+  import { history, currentImage, currentItem } from "../stores";
   import { imageSrc } from "../api";
   import type { GalleryItem } from "../types";
 
@@ -23,13 +23,13 @@
 
   $: groups = groupByBatch($history);
 
+  // Viewing only. Clicking a thumbnail used to overwrite the whole left panel,
+  // which destroyed whatever the user was in the middle of composing just to
+  // look at an earlier image. Reusing an image's settings is now the explicit
+  // Load button in ParamsPanel.
   function open(item: GalleryItem) {
     currentImage.set(imageSrc(item.image_path));
     currentItem.set(item);
-    // Replaying history is ad-hoc: use the frozen ref verbatim, never re-resolve
-    // against a since-changed manifest.
-    request.set({ ...item.request, model_id: null });
-    selectedModelId.set(null);
   }
 </script>
 

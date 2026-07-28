@@ -24,6 +24,9 @@ export const HELP = {
     "File type for saved images. PNG keeps the best quality; JPEG makes smaller files.",
   seed:
     "The random starting point. −1 makes a new random image each time; set a fixed number to reproduce the exact same image.",
+  // LoraPanel
+  lora:
+    "Small add-on files that nudge a model toward a particular style, character, or subject — like a filter for the AI. Turn one on and slide its strength up or down. If a LoRA lists trigger words, click one to add it to your prompt.",
   // ModelLibrary / DevicePicker
   model:
     "The AI model that turns your words into images. Download one to get started — different models produce different styles.",

@@ -1,4 +1,5 @@
 mod catalog;
+mod civitai;
 mod command_builder;
 mod commands;
 mod config;
@@ -10,6 +11,8 @@ mod fit;
 mod gallery;
 mod hf;
 mod library;
+mod lora_detect;
+mod loras;
 mod manifest;
 mod models;
 mod progress_parser;
@@ -38,6 +41,7 @@ pub fn run() {
             download_cancel: Arc::new(AtomicBool::new(false)),
             gpu_devices: Arc::new(Mutex::new(None)),
             engine_version: Arc::new(Mutex::new(None)),
+            generating: Arc::new(AtomicBool::new(false)),
         })
         .setup(move |app| {
             // Allow the configured gallery dir for the asset protocol so saved
@@ -115,6 +119,14 @@ pub fn run() {
             commands::check_catalog_space,
             commands::list_reclaimable,
             commands::trash_dir,
+            commands::list_loras,
+            commands::list_families,
+            commands::detect_lora_family,
+            commands::pick_lora_file,
+            commands::add_local_lora,
+            commands::add_url_lora,
+            commands::edit_lora,
+            commands::delete_lora,
         ])
         .run(tauri::generate_context!())
         .expect("error while running MuchAI");

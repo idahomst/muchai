@@ -1,11 +1,12 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { get } from "svelte/store";
-  import { settings, request, history, sysStats, gpuDevices, refreshLibrary, downloadProgress, downloadBusy, downloadError, library, selectedModelId, modelNotice } from "$lib/stores";
+  import { settings, request, history, sysStats, gpuDevices, refreshLibrary, refreshLoras, downloadProgress, downloadBusy, downloadError, library, selectedModelId, modelNotice } from "$lib/stores";
   import { getSettings, setSettings, listHistory, onSystemStats, listGpuDevices, onDownloadProgress } from "$lib/api";
   import ModelSelector from "$lib/components/ModelSelector.svelte";
   import NewModelDialog from "$lib/components/NewModelDialog.svelte";
   import ModelEditor from "$lib/components/ModelEditor.svelte";
+  import AddLoraDialog from "$lib/components/AddLoraDialog.svelte";
   import DownloadStatus from "$lib/components/DownloadStatus.svelte";
   import type { LibraryEntry } from "$lib/types";
   import PromptPanel from "$lib/components/PromptPanel.svelte";
@@ -14,6 +15,7 @@
   import ImagePreview from "$lib/components/ImagePreview.svelte";
   import ParamsPanel from "$lib/components/ParamsPanel.svelte";
   import HistoryStrip from "$lib/components/HistoryStrip.svelte";
+  import LoraPanel from "$lib/components/LoraPanel.svelte";
   import ResourceMonitor from "$lib/components/ResourceMonitor.svelte";
   import ThemeToggle from "$lib/components/ThemeToggle.svelte";
   import WelcomeDialog from "$lib/components/WelcomeDialog.svelte";
@@ -25,6 +27,7 @@
   let showPrefs = $state(false);
   let showAbout = $state(false);
   let showNew = $state(false);
+  let showAddLora = $state(false);
   let editing = $state<LibraryEntry | null>(null);
   let vramTotalMb = $state<number | null>(null);
   let ramTotalMb = $state<number | null>(null);
@@ -64,6 +67,11 @@
       request.set({ ...cfg.last_request, model });
       history.set(await listHistory());
       await refreshLibrary();
+      // Must be awaited before the model selection below: LoraPanel prunes
+      // selections whose LoRA is gone, or whose family no longer matches the
+      // model. An empty pool at that moment would look like "all gone" and
+      // silently drop a perfectly valid restored selection.
+      await refreshLoras();
       // Single source of truth: if the persisted request names a managed model,
       // adopt it from the just-scanned library (re-reading model.json). If it's
       // gone (deleted/renamed), clear the selection and tell the user. Ad-hoc
@@ -120,6 +128,8 @@
       <div class="divider"></div>
       <p class="section">Parameters</p>
       <SettingsPanel />
+      <div class="divider"></div>
+      <LoraPanel onAdd={() => (showAddLora = true)} />
     </div>
 
     <div class="panel-foot">
@@ -152,6 +162,9 @@
 {/if}
 {#if editing}
   <ModelEditor entry={editing} onClose={() => (editing = null)} />
+{/if}
+{#if showAddLora}
+  <AddLoraDialog onClose={() => (showAddLora = false)} />
 {/if}
 
 <!-- Persistent download status when the New-model dialog is closed but a

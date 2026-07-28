@@ -1,6 +1,14 @@
 use crate::types::{GenDefaults, ModelComponents, Sampler};
 use serde::{Deserialize, Serialize};
 
+/// Every base family a model in the library can carry, for the LoRA family
+/// dropdown. Deliberately not derived from `RECIPES`: `sd15` and `sdxl` have no
+/// recipe (they are single-file models, family inferred from the filename), and
+/// the `custom` recipe is not a base family. Keep in sync with
+/// `family_defaults` below and with `catalog::validate`.
+pub const FAMILIES: &[&str] =
+    &["sd15", "sdxl", "sd3", "flux1", "flux2", "qwen-image", "z-image"];
+
 /// A typed slot in a split model, each wired to one engine flag.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -683,5 +691,22 @@ mod tests {
         assert_eq!(d.cfg_scale, 1.0);
         assert_eq!(d.sampler, crate::types::Sampler::Euler);
         assert_eq!((d.width, d.height), (1024, 1024));
+    }
+
+    #[test]
+    fn every_recipe_family_except_custom_is_in_the_family_list() {
+        for info in recipe_infos() {
+            if info.family == "custom" {
+                continue;
+            }
+            assert!(
+                FAMILIES.contains(&info.family.as_str()),
+                "recipe family {} is missing from FAMILIES",
+                info.family
+            );
+        }
+        // The two that have no recipe at all — the reason this list exists.
+        assert!(FAMILIES.contains(&"sd15"));
+        assert!(FAMILIES.contains(&"sdxl"));
     }
 }

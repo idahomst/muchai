@@ -78,22 +78,20 @@ pub fn memory_bytes_from_header(header_json: &str) -> Option<u64> {
     seen.then_some(total)
 }
 
-/// Bytes this weight file will occupy once loaded by the engine.
+/// The JSON header of a safetensors file, verbatim.
 ///
-/// Falls back to the plain file size for GGUF, for unreadable headers, and for
-/// anything that isn't recognisably safetensors — so an unknown format is never
-/// worse than the previous behaviour. `None` only when the file can't be stat'ed.
+/// `None` for anything that isn't a readable safetensors container: GGUF, a
+/// file shorter than its own claimed header, a garbage length prefix, or
+/// non-UTF-8 bytes. Callers read that as "this file tells us nothing".
 ///
-/// Note the file is identified by its *contents*, not its extension: models
+/// Shared by `memory_bytes` (which sums tensor payload sizes) and
+/// `lora_detect` (which reads tensor names), so the `MAX_HEADER_BYTES`
+/// allocation guard exists in exactly one place.
+///
+/// Note the file is identified by its *contents*, not its extension: weights
 /// downloaded from Civitai routinely arrive with no extension at all.
-pub fn memory_bytes(path: &Path) -> Option<u64> {
+pub fn read_header(path: &Path) -> Option<String> {
     let file_len = fs::metadata(path).ok()?.len();
-    Some(safetensors_memory_bytes(path, file_len).unwrap_or(file_len))
-}
-
-/// The safetensors path of `memory_bytes`. `None` for any file that isn't a
-/// readable safetensors container, which the caller reads as "use the file size".
-fn safetensors_memory_bytes(path: &Path, file_len: u64) -> Option<u64> {
     let mut file = fs::File::open(path).ok()?;
     let mut prefix = [0u8; 8];
     file.read_exact(&mut prefix).ok()?;
@@ -107,7 +105,18 @@ fn safetensors_memory_bytes(path: &Path, file_len: u64) -> Option<u64> {
     }
     let mut buf = vec![0u8; header_len as usize];
     file.read_exact(&mut buf).ok()?;
-    memory_bytes_from_header(std::str::from_utf8(&buf).ok()?)
+    String::from_utf8(buf).ok()
+}
+
+/// Bytes this weight file will occupy once loaded by the engine.
+///
+/// Falls back to the plain file size for GGUF, for unreadable headers, and for
+/// anything that isn't recognisably safetensors — so an unknown format is never
+/// worse than the previous behaviour. `None` only when the file can't be stat'ed.
+pub fn memory_bytes(path: &Path) -> Option<u64> {
+    let file_len = fs::metadata(path).ok()?.len();
+    let from_header = read_header(path).and_then(|h| memory_bytes_from_header(&h));
+    Some(from_header.unwrap_or(file_len))
 }
 
 #[cfg(test)]
@@ -255,5 +264,36 @@ mod tests {
     #[test]
     fn missing_file_is_none() {
         assert_eq!(memory_bytes(Path::new("/nonexistent/muchai/model.safetensors")), None);
+    }
+
+    #[test]
+    fn read_header_returns_the_json_for_a_safetensors_file() {
+        let dir = tmp("readhdr");
+        let p = dir.join("x.safetensors");
+        let header = r#"{"w":{"dtype":"F16","shape":[2],"data_offsets":[0,4]}}"#;
+        write_safetensors(&p, header, 4);
+        assert_eq!(read_header(&p).as_deref(), Some(header));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn read_header_is_none_for_non_safetensors() {
+        let dir = tmp("readhdr-none");
+        // GGUF magic, a file too short for its 8-byte prefix, and an absurd
+        // claimed header length all mean "not a readable safetensors header".
+        let gguf = dir.join("a.gguf");
+        fs::write(&gguf, b"GGUF\0\0\0\0padding").unwrap();
+        let tiny = dir.join("b.safetensors");
+        fs::write(&tiny, b"abc").unwrap();
+        let garbage = dir.join("c.safetensors");
+        let mut f = fs::File::create(&garbage).unwrap();
+        f.write_all(&u64::MAX.to_le_bytes()).unwrap();
+        f.write_all(&[0u8; 92]).unwrap();
+        drop(f);
+        for p in [&gguf, &tiny, &garbage] {
+            assert_eq!(read_header(p), None, "{}", p.display());
+        }
+        assert_eq!(read_header(Path::new("/nonexistent/muchai/x.safetensors")), None);
+        let _ = fs::remove_dir_all(&dir);
     }
 }

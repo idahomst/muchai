@@ -93,6 +93,26 @@ pub fn parse_resolved_seed_line(line: &str) -> Option<i64> {
     tok.parse().ok()
 }
 
+/// Parse stable-diffusion.cpp's missing-LoRA warning, e.g.
+///   "[WARN ] stable-diffusion.cpp:1583 - can not found lora '/…/loras/film-grain.safetensors'"
+/// and return the LoRA's name — the pool filename stem, which is exactly the
+/// string the user picked in the LoRA panel.
+///
+/// Everything else in this file parses progress. This one parses a *silent
+/// failure*: the engine emits this warning and then exits 0 having produced a
+/// perfectly normal-looking, completely unmodified image. Nothing else tells
+/// the user their LoRA did nothing.
+pub fn parse_lora_warning_line(line: &str) -> Option<String> {
+    let rest = line.split("can not found lora").nth(1)?.trim();
+    let rest = rest.trim_matches(|c| c == '\'' || c == '"');
+    let name = rest.rsplit(['/', '\\']).next()?;
+    let name = name.strip_suffix(".safetensors").unwrap_or(name);
+    if name.is_empty() {
+        return None;
+    }
+    Some(name.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -172,5 +192,25 @@ mod tests {
         assert_eq!(parse_resolved_seed_line("generating image: 1/1 - seed 43"), None);
         assert_eq!(parse_resolved_seed_line("  |####| 5/30"), None);
         assert_eq!(parse_resolved_seed_line("output_path: \"/tmp/x.png\","), None);
+    }
+
+    #[test]
+    fn parses_a_missing_lora_warning() {
+        let line = "[WARN ] stable-diffusion.cpp:1583 - can not found lora '/home/u/models/loras/film-grain.safetensors'";
+        assert_eq!(parse_lora_warning_line(line), Some("film-grain".to_string()));
+    }
+
+    #[test]
+    fn missing_lora_warning_without_quotes_or_extension() {
+        let line = "[WARN ] can not found lora /tmp/loradir/probe";
+        assert_eq!(parse_lora_warning_line(line), Some("probe".to_string()));
+    }
+
+    #[test]
+    fn missing_lora_warning_ignores_other_lines() {
+        assert_eq!(parse_lora_warning_line("  |####| 5/30 - 2.3it/s"), None);
+        assert_eq!(parse_lora_warning_line("[INFO ] loading lora from '/x/y.safetensors'"), None);
+        // Truncated line with nothing after the phrase — nothing to name.
+        assert_eq!(parse_lora_warning_line("can not found lora "), None);
     }
 }

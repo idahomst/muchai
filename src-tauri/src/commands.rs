@@ -2,7 +2,7 @@ use crate::engine::{self, ChildSlot, GenError};
 use crate::types::{AppConfig, DownloadProgress, GalleryItem, GenerationRequest, GpuDevice};
 use crate::recipes::{self, ComponentRole};
 use crate::types::ModelRef;
-use crate::{catalog, config, downloader, fit, gallery, hf, library, manifest, models, types};
+use crate::{catalog, config, downloader, fit, gallery, hf, library, loras, manifest, models, types};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -30,6 +30,38 @@ pub struct AppState {
     pub download_cancel: Arc<AtomicBool>,
     pub gpu_devices: Arc<Mutex<Option<Vec<GpuDevice>>>>,
     pub engine_version: Arc<Mutex<Option<Option<String>>>>,
+    /// Set for the whole of a `generate` call — see [`RunGuard`].
+    pub generating: Arc<AtomicBool>,
+}
+
+/// Holds the single-flight claim on generation, releasing it on drop.
+///
+/// Generation shares three singletons: the one `child` slot (so Cancel kills
+/// whichever run registered last), the one fixed live-preview path (so two runs
+/// interleave frames, and the first to finish deletes the other's draft), and
+/// one un-tagged stream of `generation:*` events. A second concurrent run
+/// corrupts all three. The Generate button already gates this in the UI; the
+/// guard makes it the backend's own invariant, so any future caller — a queue,
+/// a shortcut, a local API — is turned away instead of quietly breaking it.
+///
+/// Drop-based release rather than an explicit clear: `generate` has many `?`
+/// early returns, and a leaked flag would refuse every later run for the rest
+/// of the session.
+struct RunGuard(Arc<AtomicBool>);
+
+impl RunGuard {
+    /// `Some` when this call claimed the slot, `None` when a run is already active.
+    fn claim(flag: &Arc<AtomicBool>) -> Option<Self> {
+        flag.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .ok()
+            .map(|_| Self(flag.clone()))
+    }
+}
+
+impl Drop for RunGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
 }
 
 fn now_unix() -> u64 {
@@ -217,7 +249,7 @@ pub fn delete_image(image_path: String) -> Result<(), String> {
 /// Fixed path for the live-preview draft the engine overwrites during a run.
 /// In the OS temp dir (tmpfs on Linux) so the tiny, constantly-rewritten file
 /// is RAM-backed and cleared on reboot. Safe as a fixed (non-unique) path
-/// because generation is single-flight (one `child` slot in AppState).
+/// because generation is single-flight — enforced by [`RunGuard`].
 pub fn preview_path() -> PathBuf {
     std::env::temp_dir().join("muchai-preview").join("preview.png")
 }
@@ -240,6 +272,11 @@ pub async fn generate(
     request: GenerationRequest,
     device_vram_mb: Option<u64>,
 ) -> Result<Vec<GalleryItem>, String> {
+    // Claimed first, before any work: everything below assumes it is the only
+    // run in flight. Released when `_run` drops on any exit path.
+    let _run = RunGuard::claim(&state.generating).ok_or_else(|| {
+        "A generation is already running. Wait for it to finish, or press Cancel.".to_string()
+    })?;
     let cfg = state.config.lock().unwrap().clone();
     // Single source of truth: for a managed model, re-read its components from
     // model.json here — the last stop before the engine — so a stale snapshot
@@ -260,6 +297,11 @@ pub async fn generate(
             ));
         }
     }
+    // LoRAs are validated here, before anything expensive happens, for the same
+    // reason the component check above is: the engine's own failure mode is a
+    // warning and a wrong-looking-but-successful image.
+    let lora_dir =
+        loras::resolve_selection(std::path::Path::new(&cfg.models_dir), &request.loras)?;
     // Validate the saved device against the enumerated list (cached) and map it
     // to a backend; a stale/absent selection falls back to the engine default
     // when a real GPU exists, or to the CPU backend when none does.
@@ -283,6 +325,7 @@ pub async fn generate(
 
     let slot = state.child.clone();
     let app2 = app.clone();
+    let app3 = app.clone();
     let req = request.clone();
     let img = image_path.clone();
     let backend_owned = backend;
@@ -328,13 +371,24 @@ pub async fn generate(
         low_vram,
         preview_path: preview.as_ref().map(|p| p.to_string_lossy().into_owned()),
         weight_type,
+        lora_dir,
     };
 
     // Run the (blocking) engine on a worker thread so the async command yields.
     let joined = tauri::async_runtime::spawn_blocking(move || {
-        engine::run_generation(&binary, &req, &img, backend_owned.as_deref(), engine_opts, &slot, |p| {
-            let _ = app2.emit("generation:progress", p);
-        })
+        engine::run_generation(
+            &binary,
+            &req,
+            &img,
+            engine::RunOptions { backend: backend_owned.as_deref(), opts: engine_opts },
+            &slot,
+            |p| {
+                let _ = app2.emit("generation:progress", p);
+            },
+            |name| {
+                let _ = app3.emit("generation:lora_missing", name);
+            },
+        )
     })
     .await;
 
@@ -417,6 +471,9 @@ pub async fn generate(
         // of an opaque "exited with code N".
         Err(GenError::NonZero { code, stderr_tail, .. }) => {
             let tail = stderr_tail.trim();
+            if let Some(hint) = lora_shape_hint(tail, &request.loras) {
+                return Err(format!("{hint}\n\n{tail}"));
+            }
             if tail.is_empty() {
                 Err(format!("Image generation failed (engine exited with code {code:?})."))
             } else {
@@ -498,17 +555,47 @@ pub fn cancel_download(state: State<AppState>) {
 /// name heuristic when no family keyword matches.
 fn infer_single_file_family(filename: &str) -> String {
     let lower = filename.to_lowercase();
+    // Separators are dropped before matching. Vendors write the same model as
+    // "flux2", "flux-2" and "flux_2", and testing the raw string filed a real
+    // `flux-2-klein-4b-Q8.gguf` under `flux1` — it missed the "flux2" needle
+    // and hit "flux" instead. That mislabelled model then hid every flux2 LoRA.
+    let squashed: String = lower.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
     for (needle, family) in [
         ("flux2", "flux2"),
         ("flux", "flux1"),
         ("qwen", "qwen-image"),
+        ("zimage", "z-image"),
         ("sd3", "sd3"),
     ] {
-        if lower.contains(needle) {
+        if squashed.contains(needle) {
             return family.to_string();
         }
     }
     if lower.contains("xl") { "sdxl".into() } else { "sd15".into() }
+}
+
+/// Translate a tensor-shape abort into something actionable, when a LoRA was in
+/// play and is therefore the likely cause.
+///
+/// The engine dies on `GGML_ASSERT(ggml_can_mul_mat(a, b))` deep in the graph
+/// and prints a C source path — unreadable, and it names no LoRA. A LoRA
+/// trained for a different size of the same architecture reaches this: MuchAI's
+/// family granularity cannot tell FLUX.2 klein 4B from klein 9B, so the user is
+/// allowed to try the combination and needs to be told what went wrong.
+///
+/// Pure, and deliberately silent when nothing was selected — a shape mismatch
+/// with no LoRA is a different bug and must not be misattributed.
+fn lora_shape_hint(stderr_tail: &str, selection: &[types::LoraSelection]) -> Option<String> {
+    if selection.is_empty() || !stderr_tail.contains("ggml_can_mul_mat") {
+        return None;
+    }
+    let names: Vec<&str> = selection.iter().map(|s| s.name.as_str()).collect();
+    Some(format!(
+        "This model and LoRA don't fit together — the LoRA was trained for a \
+         differently-sized version of this model. Turn off {} and try again, or \
+         switch to the model it was made for.",
+        names.join(", ")
+    ))
 }
 
 /// A filesystem-safe unique model id.
@@ -1074,9 +1161,313 @@ pub fn trash_dir(state: State<AppState>) -> Option<String> {
         .map(|p| p.to_string_lossy().into_owned())
 }
 
+/// A freshly-added LoRA plus the detector's opinion of its base family.
+///
+/// `candidates` exists because a URL can only be inspected after it has been
+/// downloaded. When `lora.family` came back empty, the detector was either
+/// silent or torn between the entries in `candidates`, and the dialog asks the
+/// user — seeding the dropdown from `candidates` when it isn't empty.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AddedLora {
+    pub lora: loras::LoraInfo,
+    pub candidates: Vec<String>,
+}
+
+/// Pick the family to store from a detector result: only an unambiguous single
+/// candidate is trusted. Anything else stays empty and the user is asked.
+fn settled_family(candidates: &[String]) -> String {
+    match candidates {
+        [only] => only.clone(),
+        _ => String::new(),
+    }
+}
+
+#[tauri::command]
+pub fn list_loras(state: State<AppState>) -> Vec<loras::LoraInfo> {
+    let models_dir = state.config.lock().unwrap().models_dir.clone();
+    loras::list(std::path::Path::new(&models_dir))
+}
+
+/// Every family a LoRA can be filed under. **Not** `list_recipes` — that
+/// returns multi-file download recipes, which omits `sd15` and `sdxl` (they are
+/// single-file heuristics, see `commands::infer_single_file_family`) and
+/// includes `custom` (not a base family). Between them those two omissions
+/// cover most LoRAs published anywhere.
+#[tauri::command]
+pub fn list_families() -> Vec<String> {
+    recipes::FAMILIES.iter().map(|s| s.to_string()).collect()
+}
+
+/// Base families a safetensors file's tensor names are consistent with. Empty
+/// means "can't tell" — the caller asks the user.
+#[tauri::command]
+pub fn detect_lora_family(path: String) -> Vec<String> {
+    crate::lora_detect::detect_family(std::path::Path::new(&path))
+}
+
+#[tauri::command]
+pub async fn pick_lora_file(app: AppHandle) -> Option<String> {
+    use tauri_plugin_dialog::DialogExt;
+    let file = app
+        .dialog()
+        .file()
+        .add_filter("LoRAs", &["safetensors"])
+        .blocking_pick_file();
+    file.and_then(|f| f.into_path().ok()).map(|p| p.to_string_lossy().into_owned())
+}
+
+/// Register a LoRA the user already has on disk. Symlinked into the pool, so
+/// nothing is duplicated.
+#[tauri::command]
+pub fn add_local_lora(
+    state: State<'_, AppState>,
+    path: String,
+    name: String,
+    family: String,
+) -> Result<loras::LoraInfo, String> {
+    let models_dir = {
+        let cfg = state.config.lock().unwrap();
+        PathBuf::from(&cfg.models_dir)
+    };
+    if models_dir.as_os_str().is_empty() {
+        return Err("models directory is not set".into());
+    }
+    let src = PathBuf::from(&path);
+    if !src.is_file() {
+        return Err(format!("no such file: {path}"));
+    }
+    let pool = loras::pool_dir(&models_dir);
+    std::fs::create_dir_all(&pool).map_err(|e| e.to_string())?;
+
+    let filename = basename(&path);
+    let label = if name.trim().is_empty() {
+        loras::strip_weight_ext(&filename).to_string()
+    } else {
+        name.trim().to_string()
+    };
+    let index = loras::load_index(&models_dir);
+    let pool_name = loras::unique_name(&models_dir, &index, &loras::sanitize_name(&label));
+    let dest = loras::weight_path(&models_dir, &pool_name);
+    loras::link_into_pool(&src, &dest).map_err(|e| e.to_string())?;
+
+    let size_bytes = std::fs::metadata(&src).map(|m| m.len()).unwrap_or(0);
+    let entry = loras::LoraEntry {
+        id: loras::new_lora_id(),
+        name: pool_name,
+        display_name: label,
+        family: family.trim().to_string(),
+        // A file on disk carries no provenance — only Civitai reports one.
+        base_model: String::new(),
+        source: loras::LoraSource::Local { original_path: path },
+        trigger_words: Vec::new(),
+        size_bytes,
+    };
+    match loras::add(&models_dir, entry) {
+        Ok(info) => Ok(info),
+        Err(e) => {
+            // The index is the source of truth; a weight file it doesn't list
+            // would be an orphan nobody can select or delete.
+            let _ = std::fs::remove_file(&dest);
+            Err(e)
+        }
+    }
+}
+
+/// Download a LoRA from a pasted URL. Civitai links are resolved through its
+/// API first, which is the only way to learn a LoRA's trigger words — and, for
+/// a model-page link, the only way to learn what file to fetch at all.
+#[tauri::command]
+pub async fn add_url_lora(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    url: String,
+    name: String,
+) -> Result<AddedLora, String> {
+    if !url.starts_with("https://") {
+        return Err("URL must be https".into());
+    }
+    let (models_dir, hf_token, civitai_token) = {
+        let cfg = state.config.lock().unwrap();
+        (
+            PathBuf::from(&cfg.models_dir),
+            cfg.hf_token.clone().unwrap_or_default(),
+            cfg.civitai_token.clone().unwrap_or_default(),
+        )
+    };
+    if models_dir.as_os_str().is_empty() {
+        return Err("models directory is not set".into());
+    }
+
+    // Resolve Civitai metadata off the async runtime — it's blocking I/O.
+    let meta = match crate::civitai::parse_civitai_url(&url) {
+        Some(r) => {
+            let tok = civitai_token.clone();
+            let v = tauri::async_runtime::spawn_blocking(move || crate::civitai::fetch_version(r, &tok))
+                .await
+                .map_err(|e| e.to_string())??;
+            Some(v)
+        }
+        None => None,
+    };
+    let download_url = meta.as_ref().map(|m| m.download_url.clone()).unwrap_or_else(|| url.clone());
+    let trigger_words = meta.as_ref().map(|m| m.trigger_words.clone()).unwrap_or_default();
+
+    // Label priority: what the user typed, then Civitai's name, then the
+    // filename the URL implies (which for a Civitai download link is a bare id).
+    let label = if !name.trim().is_empty() {
+        name.trim().to_string()
+    } else if let Some(m) = &meta {
+        m.display_name.clone()
+    } else {
+        loras::strip_weight_ext(&downloader::derive_filename(None, &download_url)).to_string()
+    };
+
+    let pool = loras::pool_dir(&models_dir);
+    std::fs::create_dir_all(&pool).map_err(|e| e.to_string())?;
+    let index = loras::load_index(&models_dir);
+    let pool_name = loras::unique_name(&models_dir, &index, &loras::sanitize_name(&label));
+    let dest = loras::weight_path(&models_dir, &pool_name);
+
+    let cancel = state.download_cancel.clone();
+    // The UI triggers at most one download at a time; this reset assumes that
+    // single-flight invariant (concurrent downloads would share one cancel flag).
+    cancel.store(false, Ordering::SeqCst);
+    let app2 = app.clone();
+    let dl_url = download_url.clone();
+    let dest2 = dest.clone();
+    let name_for_event = format!("{pool_name}.safetensors");
+
+    let dl = tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        let token = token_for_url(&dl_url, &hf_token, &civitai_token);
+        let mut last_emit: u64 = 0;
+        downloader::download_to(
+            &dl_url,
+            &token,
+            &dest2,
+            move |downloaded, total| {
+                if downloaded.saturating_sub(last_emit) >= 4 << 20 || Some(downloaded) == total {
+                    last_emit = downloaded;
+                    let _ = app2.emit(
+                        "model:download:progress",
+                        DownloadProgress {
+                            downloaded,
+                            total,
+                            file_index: Some(0),
+                            file_count: Some(1),
+                            file_name: Some(name_for_event.clone()),
+                        },
+                    );
+                }
+            },
+            &cancel,
+        )
+        .map_err(|e| e.message())
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+
+    if let Err(e) = dl {
+        // Only the one file — the pool is shared, so never remove the directory.
+        let _ = std::fs::remove_file(&dest);
+        return Err(e);
+    }
+
+    // A Civitai link that needs a token answers HTTP 200 with a web page, so
+    // the download "succeeds" and an HTML file lands as <name>.safetensors.
+    // Nothing downstream would notice — the entry looks healthy and pre-flight
+    // passes — until the engine fails to load it mid-run.
+    if let Err(e) = loras::verify_weights_file(&dest) {
+        let _ = std::fs::remove_file(&dest);
+        return Err(e);
+    }
+
+    let candidates = crate::lora_detect::detect_family(&dest);
+    let size_bytes = std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0);
+    let entry = loras::LoraEntry {
+        id: loras::new_lora_id(),
+        name: pool_name,
+        display_name: label,
+        family: settled_family(&candidates),
+        base_model: meta.as_ref().map(|m| m.base_model.clone()).unwrap_or_default(),
+        source: loras::LoraSource::Url { url },
+        trigger_words,
+        size_bytes,
+    };
+    match loras::add(&models_dir, entry) {
+        Ok(lora) => Ok(AddedLora { lora, candidates }),
+        Err(e) => {
+            let _ = std::fs::remove_file(&dest);
+            Err(e)
+        }
+    }
+}
+
+/// Change a LoRA's label and family. Its pool name — the engine tag, and the
+/// key stored in every gallery item — is deliberately immutable.
+#[tauri::command]
+pub fn edit_lora(
+    state: State<'_, AppState>,
+    id: String,
+    display_name: String,
+    family: String,
+) -> Result<loras::LoraInfo, String> {
+    let models_dir = {
+        let cfg = state.config.lock().unwrap();
+        PathBuf::from(&cfg.models_dir)
+    };
+    loras::rename(&models_dir, &id, &display_name, &family)
+}
+
+#[tauri::command]
+pub fn delete_lora(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    let models_dir = {
+        let cfg = state.config.lock().unwrap();
+        PathBuf::from(&cfg.models_dir)
+    };
+    loras::remove(&models_dir, &id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn run_guard_claims_a_free_slot() {
+        let flag = Arc::new(AtomicBool::new(false));
+        assert!(RunGuard::claim(&flag).is_some());
+    }
+
+    #[test]
+    fn run_guard_refuses_a_second_concurrent_claim() {
+        let flag = Arc::new(AtomicBool::new(false));
+        let _held = RunGuard::claim(&flag).expect("first claim must succeed");
+        assert!(RunGuard::claim(&flag).is_none(), "a second run must be turned away");
+    }
+
+    #[test]
+    fn run_guard_releases_on_drop() {
+        let flag = Arc::new(AtomicBool::new(false));
+        drop(RunGuard::claim(&flag).expect("first claim must succeed"));
+        assert!(
+            RunGuard::claim(&flag).is_some(),
+            "the flag must be free again once the run ends"
+        );
+    }
+
+    #[test]
+    fn run_guard_releases_on_unwind() {
+        // Every early `?` return in `generate` drops the guard; so does a panic
+        // in the command body. Both are the same Drop path, and if it ever
+        // stopped running the app would wedge with Generate permanently refused.
+        let flag = Arc::new(AtomicBool::new(false));
+        let f = flag.clone();
+        let caught = std::panic::catch_unwind(move || {
+            let _held = RunGuard::claim(&f).expect("first claim must succeed");
+            panic!("boom");
+        });
+        assert!(caught.is_err());
+        assert!(RunGuard::claim(&flag).is_some(), "a panic must not wedge the flag");
+    }
 
     #[test]
     fn infers_family_from_filename() {
@@ -1087,8 +1478,66 @@ mod tests {
     }
 
     #[test]
+    fn a_separator_does_not_turn_flux2_into_flux1() {
+        // Regression: this exact filename was filed as `flux1`, and the wrong
+        // family then hid every flux2 LoRA from the picker.
+        for name in ["flux-2-klein-4b-Q8.gguf", "flux_2_klein_9b.safetensors", "FLUX.2-dev.gguf"] {
+            assert_eq!(infer_single_file_family(name), "flux2", "{name}");
+        }
+        assert_eq!(infer_single_file_family("z-image-turbo-Q2_K.gguf"), "z-image");
+    }
+
+    #[test]
     fn new_model_id_is_unique() {
         assert_ne!(new_model_id(), new_model_id());
+    }
+
+    #[test]
+    fn a_shape_abort_is_blamed_on_the_lora_only_when_one_was_selected() {
+        let abort = "ggml/src/ggml.c:3243: GGML_ASSERT(ggml_can_mul_mat(a, b)) failed";
+        let sel = vec![types::LoraSelection { name: "klein4b-style".into(), weight: 1.0 }];
+        let hint = lora_shape_hint(abort, &sel).expect("hint");
+        assert!(hint.contains("klein4b-style"), "must name what to turn off: {hint}");
+        // No LoRA in the run — the same abort means something else entirely.
+        assert_eq!(lora_shape_hint(abort, &[]), None);
+        // A LoRA is selected but the engine failed for an unrelated reason.
+        assert_eq!(lora_shape_hint("failed to load model", &sel), None);
+    }
+
+    #[test]
+    fn only_an_unambiguous_detection_settles_the_family() {
+        let c = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(settled_family(&c(&["sdxl"])), "sdxl");
+        // Torn or silent both mean "ask the user", not "guess the first one".
+        assert_eq!(settled_family(&c(&["sdxl", "sd15"])), "");
+        assert_eq!(settled_family(&c(&[])), "");
+    }
+
+    /// `npm run check` can't see across the Rust↔TS boundary, so the field
+    /// names the frontend reads are pinned here. Renaming one without updating
+    /// `src/lib/types.ts` would otherwise surface as `undefined` at runtime.
+    #[test]
+    fn lora_payloads_keep_the_field_names_the_frontend_reads() {
+        let added = AddedLora {
+            lora: loras::LoraInfo {
+                id: "lora-1".into(),
+                name: "film-grain".into(),
+                display_name: "Film Grain".into(),
+                family: "sdxl".into(),
+                base_model: "SDXL 1.0".into(),
+                trigger_words: vec!["film grain".into()],
+                size_bytes: 42,
+                broken: false,
+            },
+            candidates: vec!["sdxl".into()],
+        };
+        let v: serde_json::Value = serde_json::to_value(&added).unwrap();
+        assert!(v.get("candidates").is_some());
+        let l = v.get("lora").expect("lora");
+        for key in ["id", "name", "display_name", "family", "trigger_words", "size_bytes", "broken"]
+        {
+            assert!(l.get(key).is_some(), "LoraInfo lost the `{key}` field");
+        }
     }
 
     #[test]

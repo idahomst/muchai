@@ -1,10 +1,37 @@
 <script lang="ts">
-  import { currentItem, settings } from "$lib/stores";
+  import { currentItem, settings, request, selectedModelId, loras } from "$lib/stores";
   import { setSettings } from "$lib/api";
   import { SAMPLERS, modelLabel } from "$lib/types";
+  import type { LoraSelection } from "$lib/types";
 
   let busy = $state(false);
   let error = $state<string | null>(null);
+
+  // Brief confirmation on the Load button. Without it the click looks inert:
+  // the panel that changed is on the other side of the window.
+  let justLoaded = $state(false);
+  let loadedTimer: ReturnType<typeof setTimeout> | undefined;
+
+  /** Copy this image's settings into the left panel. Explicit, never automatic —
+   *  selecting an image is for looking at it, and silently overwriting a
+   *  half-composed prompt to do that was the old behaviour. */
+  function load() {
+    const item = $currentItem;
+    if (!item) return;
+    // A replay is ad-hoc: keep the frozen ModelRef verbatim rather than
+    // re-resolving it against a manifest that may have changed since.
+    request.set({ ...item.request, model_id: null });
+    selectedModelId.set(null);
+    justLoaded = true;
+    clearTimeout(loadedTimer);
+    loadedTimer = setTimeout(() => (justLoaded = false), 1600);
+  }
+
+  // The engine tag is the pool filename; show the label the user knows it by.
+  function loraLabel(s: LoraSelection): string {
+    const name = $loras.find((l) => l.name === s.name)?.display_name ?? s.name;
+    return `${name} @ ${s.weight.toFixed(2)}`;
+  }
 
   const samplerLabel = (v: string) =>
     SAMPLERS.find((s) => s.value === v)?.label ?? v;
@@ -33,17 +60,25 @@
 {#if $currentItem}
   {@const r = $currentItem.request}
   <div class="params">
-    <button class="hdr" onclick={toggle} disabled={busy}
-            aria-expanded={expanded}
-            title={expanded ? "Collapse parameters" : "Expand parameters"}>
-      <span class="chev">{expanded ? "▾" : "▸"}</span>
-      <span class="ttl">Parameters</span>
-      {#if expanded}
-        <span class="src">from this image</span>
-      {:else}
-        <span class="summary">Seed {r.seed} · {r.steps} steps · CFG {r.cfg_scale} · {r.width}×{r.height}</span>
-      {/if}
-    </button>
+    <div class="top">
+      <button class="hdr" onclick={toggle} disabled={busy}
+              aria-expanded={expanded}
+              title={expanded ? "Collapse parameters" : "Expand parameters"}>
+        <span class="chev">{expanded ? "▾" : "▸"}</span>
+        <span class="ttl">Parameters</span>
+        {#if expanded}
+          <span class="src">from this image</span>
+        {:else}
+          <span class="summary">Seed {r.seed} · {r.steps} steps · CFG {r.cfg_scale} · {r.width}×{r.height}</span>
+        {/if}
+      </button>
+      <!-- Outside .hdr, not inside: .hdr is itself a button and nesting one
+           inside another is invalid. -->
+      <button class="load" onclick={load}
+              title="Copy these settings into the panel on the left">
+        {justLoaded ? "Loaded ✓" : "Load"}
+      </button>
+    </div>
     {#if expanded}
       <div class="grid">
         <div class="kv"><span class="k">Model</span><span class="v mono" title={modelLabel(r.model)}>{modelLabel(r.model)}</span></div>
@@ -53,6 +88,9 @@
         <div class="kv"><span class="k">Sampler</span><span class="v">{samplerLabel(r.sampler)}</span></div>
         <div class="kv"><span class="k">Size</span><span class="v">{r.width}×{r.height}</span></div>
         <div class="kv"><span class="k">Format</span><span class="v">{r.output_format.toUpperCase()}</span></div>
+        {#if r.loras.length > 0}
+          <div class="kv wide"><span class="k">LoRAs</span><span class="v">{r.loras.map(loraLabel).join(", ")}</span></div>
+        {/if}
         <div class="kv wide"><span class="k">Prompt</span><span class="v">{r.prompt}</span></div>
         {#if r.negative_prompt}
           <div class="kv wide"><span class="k">Negative</span><span class="v">{r.negative_prompt}</span></div>
@@ -66,7 +104,12 @@
 <style>
   .params { border:1px solid var(--border); border-radius:8px;
     padding:.55rem .7rem; display:flex; flex-direction:column; gap:.55rem; flex:0 0 auto; }
-  .hdr { display:flex; align-items:center; gap:.45rem; width:100%; padding:0;
+  .top { display:flex; align-items:center; gap:.6rem; }
+  .load { flex:0 0 auto; background:var(--card); border:1px solid var(--border);
+    color:var(--text-muted); border-radius:var(--radius-sm); font:inherit;
+    font-size:11.5px; font-weight:600; padding:3px 10px; cursor:pointer; white-space:nowrap; }
+  .load:hover { background:var(--card-hover); color:var(--text); border-color:var(--border-strong); }
+  .hdr { display:flex; align-items:center; gap:.45rem; flex:1; min-width:0; padding:0;
     background:none; border:none; color:var(--text-muted); font:inherit;
     text-align:left; cursor:pointer; }
   .hdr:hover:not(:disabled) { color:var(--text); }
