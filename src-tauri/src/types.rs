@@ -21,10 +21,11 @@ pub struct ModelComponents {
     pub prediction: Option<String>, // --prediction
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Sampler {
     Euler,
+    #[default]
     EulerA,
     Heun,
     Dpm2,
@@ -54,15 +55,10 @@ impl Sampler {
     }
 }
 
-impl Default for Sampler {
-    fn default() -> Self {
-        Sampler::EulerA
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OutputFormat {
+    #[default]
     Png,
     Jpeg,
 }
@@ -77,24 +73,13 @@ impl OutputFormat {
     }
 }
 
-impl Default for OutputFormat {
-    fn default() -> Self {
-        OutputFormat::Png
-    }
-}
-
 /// UI color theme. Persisted in `AppConfig`. Defaults to Dark.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Theme {
+    #[default]
     Dark,
     Light,
-}
-
-impl Default for Theme {
-    fn default() -> Self {
-        Theme::Dark
-    }
 }
 
 /// A model reference: single all-in-one file, or split components.
@@ -124,11 +109,9 @@ impl ModelRef {
             ModelRef::SingleFile { path } => vec![path.clone()],
             ModelRef::MultiFile(c) => {
                 let mut paths = vec![c.diffusion_model.clone()];
-                for opt in [&c.vae, &c.clip_l, &c.clip_g, &c.t5xxl, &c.llm] {
-                    if let Some(p) = opt {
-                        if !p.trim().is_empty() {
-                            paths.push(p.clone());
-                        }
+                for p in [&c.vae, &c.clip_l, &c.clip_g, &c.t5xxl, &c.llm].into_iter().flatten() {
+                    if !p.trim().is_empty() {
+                        paths.push(p.clone());
                     }
                 }
                 paths
@@ -308,15 +291,6 @@ pub struct GalleryItem {
     /// Total images in the batch. 0 on legacy sidecars; normalize with `.max(1)`.
     #[serde(default)]
     pub batch_size: u32,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ModelInfo {
-    /// Absolute path passed to the engine via `-m`.
-    pub path: String,
-    /// File stem, shown in the UI.
-    pub name: String,
-    pub size_bytes: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -548,8 +522,10 @@ mod tests {
 
     #[test]
     fn generation_request_model_id_round_trips() {
-        let mut req = GenerationRequest::default();
-        req.model_id = Some("flux2-klein-9b-q4".into());
+        let req = GenerationRequest {
+            model_id: Some("flux2-klein-9b-q4".into()),
+            ..Default::default()
+        };
         let json = serde_json::to_string(&req).unwrap();
         let back: GenerationRequest = serde_json::from_str(&json).unwrap();
         assert_eq!(back.model_id.as_deref(), Some("flux2-klein-9b-q4"));

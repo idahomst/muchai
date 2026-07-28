@@ -842,7 +842,7 @@ pub async fn list_hf_variants(
     match parsed {
         hf::HfUrl::File { repo, path } => {
             let name = hf::basename(&path);
-            let family = crate::recipes::detect_best(&[name.clone()]).map(|(r, _)| r.family.to_string());
+            let family = crate::recipes::detect_best(std::slice::from_ref(&name)).map(|(r, _)| r.family.to_string());
             let variant = hf::HfVariant {
                 label: hf::precision_label(&name).unwrap_or_else(|| hf::stem(&path)),
                 family,

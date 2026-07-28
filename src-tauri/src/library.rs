@@ -220,14 +220,16 @@ mod tests {
         };
         manifest::save_to(&dir, &m).unwrap();
 
-        let mut req = GenerationRequest::default();
-        req.model_id = Some("qwen-image".into());
-        // Stale snapshot with the WRONG encoder — must be ignored.
-        req.model = ModelRef::MultiFile(ModelComponents {
-            diffusion_model: "/stale/diff.gguf".into(),
-            llm: Some("/wrong/Qwen3-8B.gguf".into()),
+        let req = GenerationRequest {
+            model_id: Some("qwen-image".into()),
+            // Stale snapshot with the WRONG encoder — must be ignored.
+            model: ModelRef::MultiFile(ModelComponents {
+                diffusion_model: "/stale/diff.gguf".into(),
+                llm: Some("/wrong/Qwen3-8B.gguf".into()),
+                ..Default::default()
+            }),
             ..Default::default()
-        });
+        };
 
         let resolved = resolve_request_model(&root, &req).unwrap();
         match resolved {
@@ -246,9 +248,11 @@ mod tests {
         use crate::types::GenerationRequest;
         let root = std::env::temp_dir().join(format!("muchai-req2-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        let mut req = GenerationRequest::default();
-        req.model = ModelRef::SingleFile { path: "/adhoc/model.safetensors".into() };
-        req.model_id = None;
+        let req = GenerationRequest {
+            model: ModelRef::SingleFile { path: "/adhoc/model.safetensors".into() },
+            model_id: None,
+            ..Default::default()
+        };
         let resolved = resolve_request_model(&root, &req).unwrap();
         assert_eq!(resolved, ModelRef::SingleFile { path: "/adhoc/model.safetensors".into() });
     }
@@ -258,8 +262,10 @@ mod tests {
         use crate::types::GenerationRequest;
         let root = std::env::temp_dir().join(format!("muchai-req3-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        let mut req = GenerationRequest::default();
-        req.model_id = Some("deleted".into());
+        let req = GenerationRequest {
+            model_id: Some("deleted".into()),
+            ..Default::default()
+        };
         assert!(resolve_request_model(&root, &req).is_err());
     }
 }

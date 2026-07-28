@@ -179,7 +179,6 @@ pub struct PlannedFile {
 #[derive(Debug, Clone)]
 pub struct EntryPlan {
     pub model_dir: PathBuf,
-    pub shared_dir: PathBuf,
     pub files: Vec<PlannedFile>,
 }
 
@@ -226,7 +225,7 @@ pub fn plan_entry_downloads(entry: &CatalogEntry, models_dir: &Path) -> EntryPla
         }
     }
 
-    EntryPlan { model_dir, shared_dir, files }
+    EntryPlan { model_dir, files }
 }
 
 /// Bytes this plan will actually pull down: every planned file except pooled
@@ -255,7 +254,6 @@ mod tests {
 
         let plan = EntryPlan {
             model_dir: root.join("m"),
-            shared_dir: shared_dir.clone(),
             files: vec![
                 PlannedFile {
                     url: "https://h/diffusion.gguf".into(),
@@ -297,7 +295,6 @@ mod tests {
 
         let plan = EntryPlan {
             model_dir: model_dir.clone(),
-            shared_dir: root.join("shared"),
             files: vec![PlannedFile {
                 url: "https://h/diffusion.gguf".into(),
                 dest: model_dir.join("diffusion.gguf"),

@@ -1,6 +1,6 @@
 use std::fs::File;
 use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Shared with `INSUFFICIENT_SPACE_PREFIX` in `src/lib/types.ts`. Tauri commands
@@ -36,24 +36,6 @@ impl DownloadError {
             ),
         }
     }
-}
-
-/// Download `url` into `dest_dir`, choosing the filename from headers/URL and
-/// de-duplicating on collision. Thin wrapper over `download_to`.
-pub fn download_model<F: FnMut(u64, Option<u64>)>(
-    url: &str,
-    token: &str,
-    dest_dir: &Path,
-    on_progress: F,
-    cancel: &AtomicBool,
-) -> Result<PathBuf, DownloadError> {
-    // We need the filename before the request to compute the unique path, but the
-    // server's Content-Disposition may refine it. Derive from the URL up front for
-    // the unique-path base; `download_to` streams to exactly the path we choose.
-    let filename = derive_filename(None, url);
-    let dest = unique_path(dest_dir, &filename);
-    download_to(url, token, &dest, on_progress, cancel)?;
-    Ok(dest)
 }
 
 /// Download `url` to exactly `dest_path`, streaming to a sibling `.part` file and
@@ -193,28 +175,6 @@ pub fn derive_filename(content_disposition: Option<&str>, url: &str) -> String {
     sanitize_filename(path)
 }
 
-/// Return `dir/filename`, appending " (n)" before the extension if it exists.
-pub fn unique_path(dir: &Path, filename: &str) -> PathBuf {
-    let candidate = dir.join(filename);
-    if !candidate.exists() {
-        return candidate;
-    }
-    let path = Path::new(filename);
-    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or(filename);
-    let ext = path.extension().and_then(|s| s.to_str());
-    for n in 1.. {
-        let name = match ext {
-            Some(e) => format!("{stem} ({n}).{e}"),
-            None => format!("{stem} ({n})"),
-        };
-        let p = dir.join(name);
-        if !p.exists() {
-            return p;
-        }
-    }
-    unreachable!()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -250,17 +210,5 @@ mod tests {
         );
         assert!(msg.contains("12 GB"), "should name the requirement, got: {msg}");
         assert!(msg.contains("3.1 GB"), "should name the free space, got: {msg}");
-    }
-
-    #[test]
-    fn unique_path_suffixes_on_collision() {
-        let dir = std::env::temp_dir().join(format!("muchai-uniq-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("m.safetensors"), b"x").unwrap();
-        assert_eq!(unique_path(&dir, "m.safetensors").file_name().unwrap(), "m (1).safetensors");
-        std::fs::write(dir.join("m (1).safetensors"), b"x").unwrap();
-        assert_eq!(unique_path(&dir, "m.safetensors").file_name().unwrap(), "m (2).safetensors");
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }
