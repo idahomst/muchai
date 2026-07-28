@@ -67,13 +67,16 @@ export type LibraryEntry = {
 
 /** Mirrors Rust `loras::LoraInfo`. `name` is the pool filename stem and the
  *  engine tag — it never changes. `display_name` is the editable label.
- *  `family` is "" when the base family is unknown (which disables filtering
- *  for that entry rather than hiding it). */
+ *  `family` is "" when the base family is unknown; it drives a compatibility
+ *  hint only, never what the picker shows. `base_model` is Civitai's own label
+ *  ("Flux.2 Klein"), shown verbatim so the user can judge a fit the family is
+ *  too coarse to express — it is "" for a local file. */
 export interface LoraInfo {
   id: string;
   name: string;
   display_name: string;
   family: string;
+  base_model: string;
   trigger_words: string[];
   size_bytes: number;
   broken: boolean;

@@ -29,15 +29,15 @@
 
   const modelFamily = $derived(lib.find((e) => e.id === selId)?.family ?? "");
 
-  // An ad-hoc model (added by file path, not through a recipe) carries no
-  // family. Filtering on that would hide every LoRA and look like a bug, so an
-  // unknown model family disables filtering entirely. A LoRA with no family is
-  // always listed for the same reason.
-  const visible = $derived(
-    modelFamily === ""
-      ? entries
-      : entries.filter((l) => l.family === "" || l.family === modelFamily),
-  );
+  // Every LoRA is always listed. Family is a hint, never a filter: it is too
+  // coarse to decide compatibility (a klein-4B and a klein-9B LoRA are both
+  // `flux2` yet only one will load), and it is itself guessed — a model
+  // mislabelled by the filename heuristic used to hide every LoRA the user had,
+  // with no way to override it. So the picker shows what it knows and the user
+  // makes the call.
+  function mismatched(l: LoraInfo): boolean {
+    return modelFamily !== "" && l.family !== "" && l.family !== modelFamily;
+  }
 
   function isOn(name: string): boolean {
     return selected.some((s) => s.name === name);
@@ -117,34 +117,13 @@
     });
   });
 
-  // Auto-disable on model switch. A mismatched LoRA is never a hard error, but
-  // it must not stay silently selected either — the user is told what was
-  // turned off. `lastFamily` starts null and is only adopted once the pool has
-  // loaded, so the restored selection isn't pruned against an empty list at
-  // startup.
-  let lastFamily: string | null = null;
-  $effect(() => {
-    const fam = modelFamily;
-    const all = entries;
-    if (all.length === 0) return;
-    if (fam === lastFamily) return;
-    const prev = lastFamily;
-    lastFamily = fam;
-    if (prev === null || fam === "") return;
-    untrack(() => {
-      const allowed = new Set(
-        all.filter((l) => l.family === "" || l.family === fam).map((l) => l.name),
-      );
-      const mismatched = new Set(
-        get(request).loras.map((s) => s.name).filter((n) => !allowed.has(n)),
-      );
-      dropSelections(
-        mismatched,
-        all,
-        `${mismatched.size === 1 ? "it doesn't" : "they don't"} match this model.`,
-      );
-    });
-  });
+  // Switching models no longer turns anything off. The old behaviour silently
+  // un-picked a LoRA the user had deliberately chosen, on the strength of a
+  // guessed family. Selections that look wrong are flagged in the list and in
+  // the strip below instead, and the run is left to the user.
+  const selectedMismatches = $derived(
+    entries.filter((l) => isOn(l.name) && mismatched(l)).map((l) => l.display_name),
+  );
 
   // Row-level editor: rename, change family, delete. One inline form rather
   // than a popup menu, since rename and change-family are the same form.
@@ -205,13 +184,21 @@
   </div>
 {/if}
 
+{#if selectedMismatches.length > 0}
+  <div class="notice" role="status">
+    <span>
+      {selectedMismatches.join(", ")} {selectedMismatches.length === 1 ? "was" : "were"}
+      trained for a different model family than the one selected. It may be ignored,
+      or stop the run — turn it off if generation fails.
+    </span>
+  </div>
+{/if}
+
 {#if entries.length === 0}
   <p class="empty">No LoRAs yet. Add one to nudge a model toward a style or subject.</p>
-{:else if visible.length === 0}
-  <p class="empty">None of your LoRAs match this model's family ({modelFamily}).</p>
 {:else}
   <ul class="list">
-    {#each visible as l (l.id)}
+    {#each entries as l (l.id)}
       <li class="row" class:broken={l.broken}>
         <div class="line">
           <label class="pick">
@@ -222,6 +209,12 @@
               onchange={() => toggle(l)}
             />
             <span class="label" title={l.display_name}>{l.display_name}</span>
+            {#if mismatched(l)}
+              <!-- A hint, not a veto: the checkbox stays live. -->
+              <span
+                class="badge"
+                title="Trained for {l.family}; this model is {modelFamily}. You can still try it.">!</span>
+            {/if}
           </label>
           <input
             class="slider"
@@ -240,7 +233,14 @@
 
         {#if l.broken}
           <p class="brokenmsg">File missing — re-add this LoRA or remove it.</p>
-        {:else if l.trigger_words.length > 0}
+        {:else}
+          <!-- What the source says it was trained for. Finer-grained than a
+               family ("Flux.2 Klein" vs plain `flux2`) and often the only way to
+               tell a 4B LoRA from a 9B one, so it is shown rather than acted on. -->
+          {#if l.base_model}
+            <p class="basemodel">for {l.base_model}</p>
+          {/if}
+          {#if l.trigger_words.length > 0}
           <div class="chips">
             <span class="chiplabel">triggers:</span>
             {#each l.trigger_words as w}
@@ -252,6 +252,7 @@
                 onclick={() => insertTrigger(w)}>{w}</button>
             {/each}
           </div>
+          {/if}
         {/if}
 
         {#if editingId === l.id}
@@ -311,6 +312,10 @@
     background:transparent; border:1px solid transparent; }
   .iconbtn:hover { background:var(--card-hover); color:var(--text); }
   .brokenmsg { margin:4px 0 0 22px; font-size:11px; color:var(--warn); }
+  .basemodel { margin:3px 0 0 22px; font-size:10.5px; color:var(--text-muted); overflow-wrap:anywhere; }
+  .badge { flex:0 0 auto; width:14px; height:14px; border-radius:50%; display:grid;
+    place-items:center; font-size:9.5px; font-weight:700; cursor:help;
+    background:var(--warn-tint); color:var(--warn); }
   .chips { display:flex; flex-wrap:wrap; gap:5px; margin:5px 0 0 22px; align-items:center; }
   .chiplabel { font-size:10.5px; color:var(--text-muted); }
   .chip { background:var(--card); border:1px solid var(--border); border-radius:999px;

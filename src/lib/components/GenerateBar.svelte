@@ -7,6 +7,11 @@
 
   let lowVramAuto = false;
 
+  // Hides the error banner without touching `genStatus`, which stays "error"
+  // until the next run and is read elsewhere. Reset when a run starts, so a new
+  // failure is never swallowed by an earlier dismissal.
+  let errorDismissed = false;
+
   // LoRAs the engine reported as missing during the last run. Deliberately NOT
   // cleared when the run ends: the image lands looking normal, so the note has
   // to outlive the run. Cleared when the next one starts.
@@ -29,6 +34,7 @@
     if (!req.prompt.trim()) { genStatus.set({ kind: "error", message: "Enter a prompt." }); return; }
     genStatus.set({ kind: "running", progress: null });
     lowVramAuto = false;
+    errorDismissed = false;
     missingLoras = [];
     previewPath = null;
     livePreview.set(null);
@@ -134,8 +140,11 @@
   </div>
 {/if}
 
-{#if $genStatus.kind === "error"}
-  <div class="error" role="alert">{$genStatus.message}</div>
+{#if $genStatus.kind === "error" && !errorDismissed}
+  <div class="error" role="alert">
+    <span class="errortext">{$genStatus.message}</span>
+    <button class="error-x" aria-label="Dismiss error" on:click={() => (errorDismissed = true)}>✕</button>
+  </div>
 {/if}
 
 <style>
@@ -158,7 +167,15 @@
      tensor names) forcing horizontal overflow. */
   .error { margin-top:.5rem; padding:.5rem; border-radius:6px; background:var(--danger-tint);
     color:var(--danger-soft); font-size:.8rem; white-space:pre-wrap; overflow-wrap:anywhere;
-    max-height:7.5rem; overflow-y:auto; scrollbar-width:thin; scrollbar-color:var(--danger) transparent; }
+    max-height:7.5rem; overflow-y:auto; scrollbar-width:thin; scrollbar-color:var(--danger) transparent;
+    display:flex; align-items:flex-start; gap:.5rem; }
+  .errortext { flex:1; min-width:0; }
+  /* Sticks to the top of a scrolled banner so it stays reachable on a long
+     engine dump. */
+  .error-x { position:sticky; top:0; flex:0 0 auto; width:18px; height:18px; display:grid;
+    place-items:center; border:none; background:transparent; color:inherit; cursor:pointer;
+    font-size:11px; line-height:1; padding:0; }
+  .error-x:hover { opacity:.7; }
   .cpu-note { margin-top:.5rem; padding:.4rem .5rem; border-radius:6px; background:var(--warn-tint);
     color:var(--warn); font-size:.75rem; }
 </style>

@@ -434,6 +434,9 @@ pub async fn generate(
         // of an opaque "exited with code N".
         Err(GenError::NonZero { code, stderr_tail, .. }) => {
             let tail = stderr_tail.trim();
+            if let Some(hint) = lora_shape_hint(tail, &request.loras) {
+                return Err(format!("{hint}\n\n{tail}"));
+            }
             if tail.is_empty() {
                 Err(format!("Image generation failed (engine exited with code {code:?})."))
             } else {
@@ -515,17 +518,47 @@ pub fn cancel_download(state: State<AppState>) {
 /// name heuristic when no family keyword matches.
 fn infer_single_file_family(filename: &str) -> String {
     let lower = filename.to_lowercase();
+    // Separators are dropped before matching. Vendors write the same model as
+    // "flux2", "flux-2" and "flux_2", and testing the raw string filed a real
+    // `flux-2-klein-4b-Q8.gguf` under `flux1` — it missed the "flux2" needle
+    // and hit "flux" instead. That mislabelled model then hid every flux2 LoRA.
+    let squashed: String = lower.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
     for (needle, family) in [
         ("flux2", "flux2"),
         ("flux", "flux1"),
         ("qwen", "qwen-image"),
+        ("zimage", "z-image"),
         ("sd3", "sd3"),
     ] {
-        if lower.contains(needle) {
+        if squashed.contains(needle) {
             return family.to_string();
         }
     }
     if lower.contains("xl") { "sdxl".into() } else { "sd15".into() }
+}
+
+/// Translate a tensor-shape abort into something actionable, when a LoRA was in
+/// play and is therefore the likely cause.
+///
+/// The engine dies on `GGML_ASSERT(ggml_can_mul_mat(a, b))` deep in the graph
+/// and prints a C source path — unreadable, and it names no LoRA. A LoRA
+/// trained for a different size of the same architecture reaches this: MuchAI's
+/// family granularity cannot tell FLUX.2 klein 4B from klein 9B, so the user is
+/// allowed to try the combination and needs to be told what went wrong.
+///
+/// Pure, and deliberately silent when nothing was selected — a shape mismatch
+/// with no LoRA is a different bug and must not be misattributed.
+fn lora_shape_hint(stderr_tail: &str, selection: &[types::LoraSelection]) -> Option<String> {
+    if selection.is_empty() || !stderr_tail.contains("ggml_can_mul_mat") {
+        return None;
+    }
+    let names: Vec<&str> = selection.iter().map(|s| s.name.as_str()).collect();
+    Some(format!(
+        "This model and LoRA don't fit together — the LoRA was trained for a \
+         differently-sized version of this model. Turn off {} and try again, or \
+         switch to the model it was made for.",
+        names.join(", ")
+    ))
 }
 
 /// A filesystem-safe unique model id.
@@ -1186,6 +1219,8 @@ pub fn add_local_lora(
         name: pool_name,
         display_name: label,
         family: family.trim().to_string(),
+        // A file on disk carries no provenance — only Civitai reports one.
+        base_model: String::new(),
         source: loras::LoraSource::Local { original_path: path },
         trigger_words: Vec::new(),
         size_bytes,
@@ -1316,6 +1351,7 @@ pub async fn add_url_lora(
         name: pool_name,
         display_name: label,
         family: settled_family(&candidates),
+        base_model: meta.as_ref().map(|m| m.base_model.clone()).unwrap_or_default(),
         source: loras::LoraSource::Url { url },
         trigger_words,
         size_bytes,
@@ -1367,8 +1403,30 @@ mod tests {
     }
 
     #[test]
+    fn a_separator_does_not_turn_flux2_into_flux1() {
+        // Regression: this exact filename was filed as `flux1`, and the wrong
+        // family then hid every flux2 LoRA from the picker.
+        for name in ["flux-2-klein-4b-Q8.gguf", "flux_2_klein_9b.safetensors", "FLUX.2-dev.gguf"] {
+            assert_eq!(infer_single_file_family(name), "flux2", "{name}");
+        }
+        assert_eq!(infer_single_file_family("z-image-turbo-Q2_K.gguf"), "z-image");
+    }
+
+    #[test]
     fn new_model_id_is_unique() {
         assert_ne!(new_model_id(), new_model_id());
+    }
+
+    #[test]
+    fn a_shape_abort_is_blamed_on_the_lora_only_when_one_was_selected() {
+        let abort = "ggml/src/ggml.c:3243: GGML_ASSERT(ggml_can_mul_mat(a, b)) failed";
+        let sel = vec![types::LoraSelection { name: "klein4b-style".into(), weight: 1.0 }];
+        let hint = lora_shape_hint(abort, &sel).expect("hint");
+        assert!(hint.contains("klein4b-style"), "must name what to turn off: {hint}");
+        // No LoRA in the run — the same abort means something else entirely.
+        assert_eq!(lora_shape_hint(abort, &[]), None);
+        // A LoRA is selected but the engine failed for an unrelated reason.
+        assert_eq!(lora_shape_hint("failed to load model", &sel), None);
     }
 
     #[test]
@@ -1391,6 +1449,7 @@ mod tests {
                 name: "film-grain".into(),
                 display_name: "Film Grain".into(),
                 family: "sdxl".into(),
+                base_model: "SDXL 1.0".into(),
                 trigger_words: vec!["film grain".into()],
                 size_bytes: 42,
                 broken: false,

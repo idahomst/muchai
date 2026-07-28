@@ -56,6 +56,12 @@ pub struct CivitaiVersion {
     pub version_id: u64,
     /// "<model name> (<version name>)", or just the model name when unnamed.
     pub display_name: String,
+    /// Civitai's own base-model label, verbatim — "Flux.2 Klein", "SDXL 1.0",
+    /// "Qwen Image". Kept as free text rather than mapped onto MuchAI's family
+    /// list, because it is finer-grained than a family and only the user can
+    /// judge the difference (a Klein 4B LoRA on a Klein 9B model is `flux2`
+    /// either way, and aborts the engine mid-graph).
+    pub base_model: String,
     pub trigger_words: Vec<String>,
     pub download_url: String,
     pub size_bytes: u64,
@@ -86,6 +92,8 @@ struct RawVersion {
     id: u64,
     #[serde(default)]
     name: String,
+    #[serde(rename = "baseModel", default)]
+    base_model: String,
     #[serde(rename = "trainedWords", default)]
     trained_words: Vec<String>,
     #[serde(default)]
@@ -119,6 +127,7 @@ pub fn parse_version_json(body: &str) -> Result<CivitaiVersion, String> {
     Ok(CivitaiVersion {
         version_id: raw.id,
         display_name,
+        base_model: raw.base_model.clone(),
         trigger_words: raw.trained_words.clone(),
         download_url: file.download_url.clone(),
         size_bytes: (file.size_kb * 1024.0).round() as u64,
@@ -221,6 +230,8 @@ mod tests {
         assert_eq!(v.version_id, 128713);
         assert_eq!(v.display_name, "Film Grain (v1.0)");
         assert_eq!(v.trigger_words, vec!["film grain".to_string(), "35mm photo".to_string()]);
+        // Kept verbatim: it is shown to the user, not matched against anything.
+        assert_eq!(v.base_model, "Flux.1 D");
         // The primary file, NOT the first one — Civitai lists training data and
         // preview archives alongside the weights.
         assert_eq!(v.download_url, "https://civitai.com/api/download/models/128713");

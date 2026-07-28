@@ -38,6 +38,15 @@ pub struct LoraEntry {
     /// `flux2`, `qwen-image`, `z-image`). Empty means "unknown", which disables
     /// family filtering for this entry rather than hiding it.
     pub family: String,
+    /// The source's own base-model label, verbatim — "Flux.2 Klein", "Illustrious".
+    /// Empty for a local file, which carries no such metadata.
+    ///
+    /// Shown next to the LoRA and never acted on. A `family` is too coarse to
+    /// decide compatibility (Klein 4B and Klein 9B are both `flux2` but have
+    /// different tensor shapes, and mixing them aborts the engine), so this is
+    /// the string that lets the *user* make the call.
+    #[serde(default)]
+    pub base_model: String,
     pub source: LoraSource,
     #[serde(default)]
     pub trigger_words: Vec<String>,
@@ -168,6 +177,7 @@ pub struct LoraInfo {
     pub name: String,
     pub display_name: String,
     pub family: String,
+    pub base_model: String,
     pub trigger_words: Vec<String>,
     pub size_bytes: u64,
     /// The weight file is missing, or is a symlink whose target is gone. Same
@@ -183,6 +193,7 @@ impl LoraInfo {
             name: e.name.clone(),
             display_name: e.display_name.clone(),
             family: e.family.clone(),
+            base_model: e.base_model.clone(),
             trigger_words: e.trigger_words.clone(),
             size_bytes: e.size_bytes,
             broken: is_broken(models_dir, e),
@@ -376,6 +387,7 @@ mod tests {
             name: name.to_string(),
             display_name: name.to_string(),
             family: "sdxl".into(),
+            base_model: "SDXL 1.0".into(),
             source: LoraSource::Url { url: "https://example.test/x.safetensors".into() },
             trigger_words: vec!["film grain".into()],
             size_bytes: 42,
@@ -683,6 +695,7 @@ mod tests {
             name: "my-lora".into(),
             display_name: "My LoRA".into(),
             family: "sdxl".into(),
+            base_model: String::new(),
             source: LoraSource::Local { original_path: src.to_string_lossy().into_owned() },
             trigger_words: Vec::new(),
             size_bytes: 7,
