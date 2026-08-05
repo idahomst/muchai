@@ -196,6 +196,10 @@ export type EngineSelection =
   | { type: "custom"; path: string };
 
 export interface AppConfig {
+  // Legacy override, superseded by `engine`. Retained on the Rust struct only
+  // so an existing config can be migrated once at load; the backend never
+  // writes it again and nothing consults it to decide which binary runs.
+  // Mirrors Rust AppConfig.sd_binary_path.
   sd_binary_path: string | null;
   default_model_path: string | null;
   gallery_dir: string;
