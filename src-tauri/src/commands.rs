@@ -164,6 +164,27 @@ pub(crate) fn is_valid_engine_tag(tag: &str) -> bool {
         && tag.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
 }
 
+/// Liveness test for a candidate engine binary.
+///
+/// `Path::exists()` is too weak here: it accepts a directory (the user picks
+/// the folder instead of the binary in the file dialog) and a file that lost
+/// its `+x` bit (zip extraction, or a store on a `noexec` mount). Both would
+/// be *returned* rather than falling back, and the user would get
+/// "Permission denied" from `Command::new` — a message that points at the
+/// wrong problem. Folding both into the fallback means the app self-heals
+/// instead.
+fn is_runnable(p: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+    }
+    #[cfg(not(unix))]
+    {
+        p.is_file()
+    }
+}
+
 /// Pure resolution of an `EngineSelection` to a binary path, given the built-in
 /// engine's directory and the writable engine store. Extracted from
 /// `resolve_binary` so every branch is testable without a Tauri handle.
@@ -180,7 +201,7 @@ fn resolve_engine_path(
     let builtin = || {
         builtin_dir
             .map(|d| d.join(engine_binary_name()))
-            .filter(|p| p.exists())
+            .filter(|p| is_runnable(p))
     };
     let target = match sel {
         EngineSelection::Builtin => None,
@@ -190,7 +211,7 @@ fn resolve_engine_path(
         EngineSelection::Downloaded { .. } => None,
         EngineSelection::Custom { path } => Some(PathBuf::from(path)),
     };
-    target.filter(|p| p.exists()).or_else(builtin)
+    target.filter(|p| is_runnable(p)).or_else(builtin)
 }
 
 /// Resolve the engine binary the app should spawn, honouring the configured
@@ -1694,8 +1715,19 @@ mod tests {
         assert!(p.starts_with(std::env::temp_dir()), "must live under the OS temp dir");
     }
 
+    /// Make an on-disk file pass [`is_runnable`]: `std::fs::write` does not set
+    /// the executable bit, and `is_runnable` requires it on unix.
+    #[cfg(unix)]
+    fn make_executable(p: &Path) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    #[cfg(not(unix))]
+    fn make_executable(_p: &Path) {}
+
     /// Build a temp tree with a fake built-in engine and one downloaded engine.
-    /// Returns (root, builtin_dir, engines_root).
+    /// Returns (root, builtin_dir, engines_root). Both binaries are executable
+    /// so they pass [`is_runnable`].
     fn engine_fixture(name: &str) -> (PathBuf, PathBuf, PathBuf) {
         let root = std::env::temp_dir().join(format!("muchai-resolve-{}-{}", name, std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
@@ -1703,8 +1735,12 @@ mod tests {
         let engines = root.join("engines");
         std::fs::create_dir_all(&builtin).unwrap();
         std::fs::create_dir_all(engines.join("master-797-5ef4a75")).unwrap();
-        std::fs::write(builtin.join(engine_binary_name()), b"builtin").unwrap();
-        std::fs::write(engines.join("master-797-5ef4a75").join(engine_binary_name()), b"dl").unwrap();
+        let builtin_bin = builtin.join(engine_binary_name());
+        let dl_bin = engines.join("master-797-5ef4a75").join(engine_binary_name());
+        std::fs::write(&builtin_bin, b"builtin").unwrap();
+        std::fs::write(&dl_bin, b"dl").unwrap();
+        make_executable(&builtin_bin);
+        make_executable(&dl_bin);
         (root, builtin, engines)
     }
 
@@ -1715,6 +1751,7 @@ mod tests {
         let custom = root.join("mine/sd-cli");
         std::fs::create_dir_all(custom.parent().unwrap()).unwrap();
         std::fs::write(&custom, b"mine").unwrap();
+        make_executable(&custom);
 
         assert_eq!(
             resolve_engine_path(&EngineSelection::Builtin, Some(&builtin), &engines),
@@ -1770,6 +1807,52 @@ mod tests {
     }
 
     #[test]
+    fn custom_path_pointing_at_a_directory_falls_back_to_builtin() {
+        use crate::types::EngineSelection;
+        let (root, builtin, engines) = engine_fixture("customdir");
+
+        // The user picked the containing folder instead of the binary inside
+        // it in the file dialog. `exists()` would accept this; `is_runnable`
+        // must not, since `Command::new` on a directory fails at spawn time.
+        let dir = root.join("mine");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let got = resolve_engine_path(
+            &EngineSelection::Custom { path: dir.to_string_lossy().into_owned() },
+            Some(&builtin),
+            &engines,
+        );
+
+        assert_eq!(got, Some(builtin.join(engine_binary_name())));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn downloaded_binary_without_exec_bit_falls_back_to_builtin() {
+        use crate::types::EngineSelection;
+        let (root, builtin, engines) = engine_fixture("noexec");
+
+        // A binary that exists but lost its `+x` bit (zip extraction dropping
+        // the mode bit, or a store mounted `noexec`) must fall back rather
+        // than being returned and failing at spawn time.
+        let tag = "master-noexec-0000000";
+        let dl_dir = engines.join(tag);
+        std::fs::create_dir_all(&dl_dir).unwrap();
+        std::fs::write(dl_dir.join(engine_binary_name()), b"dl").unwrap();
+        // Deliberately not made executable.
+
+        let got = resolve_engine_path(
+            &EngineSelection::Downloaded { tag: tag.into() },
+            Some(&builtin),
+            &engines,
+        );
+
+        assert_eq!(got, Some(builtin.join(engine_binary_name())));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn no_builtin_and_no_target_resolves_to_none() {
         use crate::types::EngineSelection;
         let engines = PathBuf::from("/nonexistent/engines");
@@ -1782,12 +1865,31 @@ mod tests {
             ),
             None
         );
+        assert_eq!(
+            resolve_engine_path(
+                &EngineSelection::Custom { path: "/nonexistent/sd-cli".into() },
+                None,
+                &engines
+            ),
+            None
+        );
     }
 
     #[test]
     fn invalid_engine_tag_falls_back_to_builtin_without_escaping_the_store() {
         use crate::types::EngineSelection;
         let (root, builtin, engines) = engine_fixture("tagvalidation");
+
+        // `<engines>/../models` resolves to `<root>/models` (the fixture's
+        // `engines` root is `<root>/engines`). Put a real, runnable binary
+        // there so this tag is a live escape target: only `is_valid_engine_tag`
+        // rejecting it — not the ordinary missing-target fallback — makes the
+        // assertion below hold. Without the guard, this tag would resolve to
+        // this binary instead of falling back.
+        let escape = root.join("models").join(engine_binary_name());
+        std::fs::create_dir_all(escape.parent().unwrap()).unwrap();
+        std::fs::write(&escape, b"evil").unwrap();
+        make_executable(&escape);
 
         for bad in ["../models", "/etc", ""] {
             let got = resolve_engine_path(
