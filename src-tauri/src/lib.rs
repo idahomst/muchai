@@ -7,6 +7,7 @@ mod devices;
 mod diskspace;
 mod downloader;
 mod engine;
+mod engine_flags;
 mod fit;
 mod gallery;
 mod hf;
