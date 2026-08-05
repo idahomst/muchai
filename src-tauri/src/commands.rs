@@ -1,9 +1,11 @@
 use crate::engine::{self, ChildSlot, GenError};
-use crate::types::{AppConfig, DownloadProgress, GalleryItem, GenerationRequest, GpuDevice};
+use crate::types::{
+    AppConfig, DownloadProgress, EngineSelection, GalleryItem, GenerationRequest, GpuDevice,
+};
 use crate::recipes::{self, ComponentRole};
 use crate::types::ModelRef;
 use crate::{catalog, config, downloader, fit, gallery, hf, library, loras, manifest, models, types};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -151,16 +153,51 @@ pub fn rate_library(state: State<AppState>, vram_total_mb: Option<u64>) -> Vec<L
         .collect()
 }
 
-/// Resolve the engine binary: explicit config override, else the bundled engine.
-fn resolve_binary(app: &AppHandle, cfg: &AppConfig) -> Option<PathBuf> {
-    if let Some(p) = &cfg.sd_binary_path {
-        let pb = PathBuf::from(p);
-        if pb.exists() {
-            return Some(pb);
+/// A tag is used directly as a directory name under the engine store, so it
+/// must be a single, ordinary path component. A hand-edited config could
+/// otherwise supply `../models` or `/etc` — `Path::join` discards the base
+/// entirely when handed an absolute path — and point the spawn at anything.
+pub(crate) fn is_valid_engine_tag(tag: &str) -> bool {
+    !tag.is_empty()
+        && tag != "."
+        && tag != ".."
+        && tag.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+}
+
+/// Pure resolution of an `EngineSelection` to a binary path, given the built-in
+/// engine's directory and the writable engine store. Extracted from
+/// `resolve_binary` so every branch is testable without a Tauri handle.
+///
+/// `Downloaded` and `Custom` deliberately fall back to the built-in engine when
+/// their target is gone. A user stuck on a bad build who cannot reach
+/// Preferences can delete one directory and the app returns to the shipped
+/// engine by itself, instead of refusing to start.
+fn resolve_engine_path(
+    sel: &EngineSelection,
+    builtin_dir: Option<&Path>,
+    engines_root: &Path,
+) -> Option<PathBuf> {
+    let builtin = || {
+        builtin_dir
+            .map(|d| d.join(engine_binary_name()))
+            .filter(|p| p.exists())
+    };
+    let target = match sel {
+        EngineSelection::Builtin => None,
+        EngineSelection::Downloaded { tag } if is_valid_engine_tag(tag) => {
+            Some(engines_root.join(tag).join(engine_binary_name()))
         }
-    }
-    let bin = engine_dir(app)?.join(engine_binary_name());
-    bin.exists().then_some(bin)
+        EngineSelection::Downloaded { .. } => None,
+        EngineSelection::Custom { path } => Some(PathBuf::from(path)),
+    };
+    target.filter(|p| p.exists()).or_else(builtin)
+}
+
+/// Resolve the engine binary the app should spawn, honouring the configured
+/// `EngineSelection`.
+fn resolve_binary(app: &AppHandle, cfg: &AppConfig) -> Option<PathBuf> {
+    let builtin = engine_dir(app);
+    resolve_engine_path(&cfg.engine, builtin.as_deref(), &config::engines_dir())
 }
 
 #[tauri::command]
@@ -219,11 +256,14 @@ pub fn set_settings(
     // all persist while still holding the lock.
     let gallery_dir = {
         let mut cfg = state.config.lock().unwrap();
-        // A changed engine path means a different binary that may enumerate devices
-        // in a different order — drop the cached list so the next probe re-reads it,
-        // preserving index parity with `--backend vulkanN`.
-        if cfg.sd_binary_path != config.sd_binary_path {
+        // A changed engine selection means a different binary that may enumerate
+        // devices in a different order — drop the cached list so the next probe
+        // re-reads it, preserving index parity with `--backend vulkanN`. Also
+        // drop the cached engine version so About cannot report the previous
+        // engine's commit after a switch.
+        if cfg.engine != config.engine {
             *state.gpu_devices.lock().unwrap() = None;
+            *state.engine_version.lock().unwrap() = None;
         }
         *cfg = merged_settings(&cfg, config);
         config::save_config_to(&config::config_file_path(), &cfg).map_err(|e| e.to_string())?;
@@ -1652,5 +1692,138 @@ mod tests {
         let p = super::preview_path();
         assert!(p.ends_with("muchai-preview/preview.png"), "got {p:?}");
         assert!(p.starts_with(std::env::temp_dir()), "must live under the OS temp dir");
+    }
+
+    /// Build a temp tree with a fake built-in engine and one downloaded engine.
+    /// Returns (root, builtin_dir, engines_root).
+    fn engine_fixture(name: &str) -> (PathBuf, PathBuf, PathBuf) {
+        let root = std::env::temp_dir().join(format!("muchai-resolve-{}-{}", name, std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let builtin = root.join("resources/engine");
+        let engines = root.join("engines");
+        std::fs::create_dir_all(&builtin).unwrap();
+        std::fs::create_dir_all(engines.join("master-797-5ef4a75")).unwrap();
+        std::fs::write(builtin.join(engine_binary_name()), b"builtin").unwrap();
+        std::fs::write(engines.join("master-797-5ef4a75").join(engine_binary_name()), b"dl").unwrap();
+        (root, builtin, engines)
+    }
+
+    #[test]
+    fn resolves_builtin_downloaded_and_custom() {
+        use crate::types::EngineSelection;
+        let (root, builtin, engines) = engine_fixture("ok");
+        let custom = root.join("mine/sd-cli");
+        std::fs::create_dir_all(custom.parent().unwrap()).unwrap();
+        std::fs::write(&custom, b"mine").unwrap();
+
+        assert_eq!(
+            resolve_engine_path(&EngineSelection::Builtin, Some(&builtin), &engines),
+            Some(builtin.join(engine_binary_name()))
+        );
+        assert_eq!(
+            resolve_engine_path(
+                &EngineSelection::Downloaded { tag: "master-797-5ef4a75".into() },
+                Some(&builtin),
+                &engines
+            ),
+            Some(engines.join("master-797-5ef4a75").join(engine_binary_name()))
+        );
+        assert_eq!(
+            resolve_engine_path(
+                &EngineSelection::Custom { path: custom.to_string_lossy().into_owned() },
+                Some(&builtin),
+                &engines
+            ),
+            Some(custom)
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn missing_downloaded_tag_falls_back_to_builtin() {
+        use crate::types::EngineSelection;
+        let (root, builtin, engines) = engine_fixture("gone");
+
+        let got = resolve_engine_path(
+            &EngineSelection::Downloaded { tag: "master-999-deadbee".into() },
+            Some(&builtin),
+            &engines,
+        );
+
+        assert_eq!(got, Some(builtin.join(engine_binary_name())));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn missing_custom_path_falls_back_to_builtin() {
+        use crate::types::EngineSelection;
+        let (root, builtin, engines) = engine_fixture("nocustom");
+
+        let got = resolve_engine_path(
+            &EngineSelection::Custom { path: "/nonexistent/sd-cli".into() },
+            Some(&builtin),
+            &engines,
+        );
+
+        assert_eq!(got, Some(builtin.join(engine_binary_name())));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn no_builtin_and_no_target_resolves_to_none() {
+        use crate::types::EngineSelection;
+        let engines = PathBuf::from("/nonexistent/engines");
+        assert_eq!(resolve_engine_path(&EngineSelection::Builtin, None, &engines), None);
+        assert_eq!(
+            resolve_engine_path(
+                &EngineSelection::Downloaded { tag: "master-797-5ef4a75".into() },
+                None,
+                &engines
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn invalid_engine_tag_falls_back_to_builtin_without_escaping_the_store() {
+        use crate::types::EngineSelection;
+        let (root, builtin, engines) = engine_fixture("tagvalidation");
+
+        for bad in ["../models", "/etc", ""] {
+            let got = resolve_engine_path(
+                &EngineSelection::Downloaded { tag: bad.into() },
+                Some(&builtin),
+                &engines,
+            );
+            assert_eq!(
+                got,
+                Some(builtin.join(engine_binary_name())),
+                "tag {bad:?} must fall back to builtin"
+            );
+        }
+
+        // A valid tag that simply doesn't exist still falls back cleanly, and a
+        // valid tag that does exist resolves inside engines_root.
+        let valid = resolve_engine_path(
+            &EngineSelection::Downloaded { tag: "master-797-5ef4a75".into() },
+            Some(&builtin),
+            &engines,
+        )
+        .unwrap();
+        assert!(valid.starts_with(&engines), "valid tag must resolve under engines_root");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn is_valid_engine_tag_rejects_path_traversal_and_absolute_paths() {
+        assert!(is_valid_engine_tag("master-797-5ef4a75"));
+        assert!(is_valid_engine_tag("v1.2.3"));
+        assert!(!is_valid_engine_tag(""));
+        assert!(!is_valid_engine_tag("."));
+        assert!(!is_valid_engine_tag(".."));
+        assert!(!is_valid_engine_tag("../models"));
+        assert!(!is_valid_engine_tag("/etc"));
+        assert!(!is_valid_engine_tag("release/1.2"));
     }
 }

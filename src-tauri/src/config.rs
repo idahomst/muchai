@@ -24,8 +24,6 @@ pub fn default_models_dir() -> PathBuf {
 /// Writable store for downloaded engine releases: `~/.local/share/muchai/engines/`.
 /// The bundled engine is *not* in here — it lives in the read-only Tauri
 /// resource dir — so nothing in this directory is load-bearing for startup.
-/// Not yet called: `resolve_binary` (Engine Task 2) is the first consumer.
-#[allow(dead_code)]
 pub fn engines_dir() -> PathBuf {
     project_dirs()
         .map(|d| d.data_dir().join("engines"))
