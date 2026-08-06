@@ -85,6 +85,59 @@ pub fn prune(root: &Path, keep: usize, protect: &str) {
     }
 }
 
+/// Message shown for any structurally bad or hostile archive. Deliberately one
+/// message for all of them: the user's action is identical (try again), and
+/// distinguishing "corrupt" from "malicious" tells an attacker more than it
+/// tells the user.
+const BAD_ARCHIVE: &str = "The downloaded archive was damaged. Try again.";
+
+/// Extract `zip_path` into `dest`, refusing any entry whose path is absolute or
+/// escapes the destination.
+///
+/// A zip is attacker-shaped input arriving over the network, and `../` in an
+/// entry name is precisely how an archive writes outside the directory you
+/// extracted it to. `enclosed_name()` returns `None` for exactly those entries;
+/// we abort the whole extraction rather than skipping them — an archive
+/// containing a traversal entry is not one to trust the rest of.
+// Not yet called outside this module or its tests — Task 11's `install_release`
+// calls it. This allow is also what keeps `BAD_ARCHIVE` (used below) alive.
+#[allow(dead_code)]
+pub fn extract_zip(zip_path: &Path, dest: &Path) -> Result<(), String> {
+    let file =
+        std::fs::File::open(zip_path).map_err(|e| format!("Couldn't open the download: {e}"))?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|_| BAD_ARCHIVE.to_string())?;
+    std::fs::create_dir_all(dest)
+        .map_err(|e| format!("Couldn't create {}: {e}", dest.display()))?;
+
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i).map_err(|_| BAD_ARCHIVE.to_string())?;
+        let rel = entry.enclosed_name().ok_or_else(|| BAD_ARCHIVE.to_string())?;
+        let out = dest.join(&rel);
+
+        if entry.is_dir() {
+            std::fs::create_dir_all(&out)
+                .map_err(|e| format!("Couldn't create {}: {e}", out.display()))?;
+            continue;
+        }
+        if let Some(parent) = out.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("Couldn't create {}: {e}", parent.display()))?;
+        }
+        let mut w = std::fs::File::create(&out)
+            .map_err(|e| format!("Couldn't write {}: {e}", out.display()))?;
+        std::io::copy(&mut entry, &mut w).map_err(|_| BAD_ARCHIVE.to_string())?;
+
+        // Engine archives carry the executable bit on sd-cli and the .so files;
+        // losing it would make the freshly installed engine unspawnable.
+        #[cfg(unix)]
+        if let Some(mode) = entry.unix_mode() {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&out, std::fs::Permissions::from_mode(mode));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -109,6 +162,172 @@ mod tests {
             .collect();
         v.sort();
         v
+    }
+
+    /// Build a zip from `(name, contents)` pairs using the `zip` CLI, run from a
+    /// scratch `src/` directory so entry names are exactly the names given.
+    fn make_zip(dir: &Path, entries: &[(&str, &str)]) -> PathBuf {
+        let src = dir.join("src");
+        for (name, body) in entries {
+            let p = src.join(name);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(&p, body).unwrap();
+        }
+        let zip_path = dir.join("a.zip");
+        let names: Vec<&str> = entries.iter().map(|(n, _)| *n).collect();
+        let status = std::process::Command::new("zip")
+            .arg("-q")
+            .arg(&zip_path)
+            .args(&names)
+            .current_dir(&src)
+            .status()
+            .expect("the `zip` CLI must be installed to run these tests");
+        assert!(status.success());
+        zip_path
+    }
+
+    #[test]
+    fn extracts_a_normal_archive() {
+        let root = tmp("unzip-ok");
+        let zip_path =
+            make_zip(&root, &[("sd-cli", "binary"), ("libggml.so", "lib"), ("nested/x.txt", "n")]);
+        let dest = root.join("out");
+
+        extract_zip(&zip_path, &dest).unwrap();
+
+        assert_eq!(std::fs::read_to_string(dest.join("sd-cli")).unwrap(), "binary");
+        assert_eq!(std::fs::read_to_string(dest.join("libggml.so")).unwrap(), "lib");
+        assert_eq!(std::fs::read_to_string(dest.join("nested/x.txt")).unwrap(), "n");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Real engine archives are built with `zip -r`, which emits an explicit
+    /// entry for every directory. Those entries must be created as directories:
+    /// treating one as a file both loses an empty directory outright and makes
+    /// the *next* entry under it unwritable, failing the whole extraction.
+    #[test]
+    fn extracts_directory_entries_including_empty_ones() {
+        let root = tmp("unzip-dirs");
+        let src = root.join("src");
+        std::fs::create_dir_all(src.join("nested")).unwrap();
+        std::fs::create_dir_all(src.join("emptydir")).unwrap();
+        std::fs::write(src.join("nested/x.txt"), "n").unwrap();
+        let zip_path = root.join("d.zip");
+        let status = std::process::Command::new("zip")
+            .args(["-q", "-r"])
+            .arg(&zip_path)
+            .args(["nested", "emptydir"])
+            .current_dir(&src)
+            .status()
+            .expect("the `zip` CLI must be installed to run these tests");
+        assert!(status.success());
+
+        let dest = root.join("out");
+        extract_zip(&zip_path, &dest).unwrap();
+
+        assert_eq!(std::fs::read_to_string(dest.join("nested/x.txt")).unwrap(), "n");
+        assert!(dest.join("emptydir").is_dir(), "an empty directory entry must survive");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// An archive with no entries still has to leave `dest` behind: the caller's
+    /// contract is "after this returns Ok, dest is a directory holding the
+    /// archive's contents", and zero contents is not an excuse to skip it.
+    #[test]
+    fn creates_the_destination_for_an_empty_archive() {
+        let root = tmp("unzip-empty");
+        // A bare end-of-central-directory record: the smallest valid zip.
+        let zip_path = root.join("empty.zip");
+        let mut bytes = b"PK\x05\x06".to_vec();
+        bytes.extend_from_slice(&[0u8; 18]);
+        std::fs::write(&zip_path, &bytes).unwrap();
+
+        let dest = root.join("out");
+        extract_zip(&zip_path, &dest).unwrap();
+
+        assert!(dest.is_dir(), "dest must exist even when the archive is empty");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn rejects_a_zip_slip_entry() {
+        let root = tmp("unzip-slip");
+        let src = root.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("ok.txt"), "fine").unwrap();
+        std::fs::write(root.join("evil.txt"), "pwned").unwrap();
+        let zip_path = root.join("evil.zip");
+        // `zip` normalises `../` away unless told not to; -y keeps the literal
+        // name. If this ever stops producing a traversal entry the assertion
+        // below will fail loudly rather than silently passing.
+        let status = std::process::Command::new("zip")
+            .args(["-q", "-y"])
+            .arg(&zip_path)
+            .args(["ok.txt", "../evil.txt"])
+            .current_dir(&src)
+            .status()
+            .expect("the `zip` CLI must be installed to run these tests");
+        assert!(status.success());
+
+        let dest = root.join("out");
+        let err = extract_zip(&zip_path, &dest).unwrap_err();
+
+        assert!(err.contains("archive"), "unexpected message: {err}");
+        // The traversal target must be untouched: still holding what the test
+        // wrote, not the "owned" the archive wanted to put there.
+        assert_eq!(std::fs::read_to_string(root.join("evil.txt")).unwrap(), "pwned");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A vanished or unreadable download is an error to report, not a panic:
+    /// this runs inside a Tauri command, where unwinding would take the whole
+    /// install with it instead of surfacing a message.
+    #[test]
+    fn reports_a_missing_archive_rather_than_panicking() {
+        let root = tmp("unzip-missing");
+        let err = extract_zip(&root.join("nope.zip"), &root.join("out")).unwrap_err();
+
+        assert!(err.contains("Couldn't open"), "unexpected message: {err}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn rejects_a_file_that_is_not_a_zip() {
+        let root = tmp("unzip-junk");
+        let not_zip = root.join("a.zip");
+        std::fs::write(&not_zip, b"this is not a zip archive").unwrap();
+
+        assert!(extract_zip(&not_zip, &root.join("out")).is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn extraction_preserves_the_executable_bit() {
+        let root = tmp("unzip-mode");
+        let src = root.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("sd-cli"), "binary").unwrap();
+        std::process::Command::new("chmod")
+            .args(["+x", "sd-cli"])
+            .current_dir(&src)
+            .status()
+            .unwrap();
+        let zip_path = root.join("m.zip");
+        std::process::Command::new("zip")
+            .arg("-q")
+            .arg(&zip_path)
+            .arg("sd-cli")
+            .current_dir(&src)
+            .status()
+            .unwrap();
+
+        let dest = root.join("out");
+        extract_zip(&zip_path, &dest).unwrap();
+
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(dest.join("sd-cli")).unwrap().permissions().mode();
+        assert_eq!(mode & 0o111, 0o111, "executable bits must survive extraction");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
