@@ -130,6 +130,11 @@ pub fn run() {
             commands::add_url_lora,
             commands::edit_lora,
             commands::delete_lora,
+            commands::engine_status,
+            commands::engine_check_update,
+            commands::engine_changelog,
+            commands::engine_apply_update,
+            commands::engine_select,
         ])
         .run(tauri::generate_context!())
         .expect("error while running MuchAI");

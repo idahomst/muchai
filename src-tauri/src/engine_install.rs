@@ -73,10 +73,6 @@ pub fn installed_tags(root: &Path) -> Vec<String> {
 /// argument is redundant, but a user who deliberately went back to an older
 /// build must not have it deleted out from under them. Directories that are not
 /// parseable tags are never touched — they are not ours.
-// Not yet called outside this module or its tests — Task 12's `engine_apply_update`
-// command calls it. This allow is also what keeps `installed_tags` (called
-// below) from being flagged as dead code.
-#[allow(dead_code)]
 pub fn prune(root: &Path, keep: usize, protect: &str) {
     for (i, tag) in installed_tags(root).into_iter().enumerate() {
         if i < keep || tag == protect {
@@ -435,11 +431,6 @@ fn check_space_for(asset_size: u64, free: u64) -> Result<(), String> {
 ///
 /// `on_progress` receives `(downloaded, total)` during the transfer only;
 /// extraction and validation are fast enough not to need their own reporting.
-// Not yet called outside this module — Task 12's `engine_apply_update` command
-// calls it. This one allow is what keeps the whole install path alive:
-// `check_space_for`, `staging_dir`, `verify_hash`, `extract_zip`,
-// `finish_install`, `validate_engine`, `probe` and everything they reach.
-#[allow(dead_code)]
 pub fn install_release(
     root: &Path,
     release: &crate::engine_release::EngineRelease,

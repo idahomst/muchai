@@ -4,7 +4,10 @@ use crate::types::{
 };
 use crate::recipes::{self, ComponentRole};
 use crate::types::ModelRef;
-use crate::{catalog, config, downloader, fit, gallery, hf, library, loras, manifest, models, types};
+use crate::{
+    catalog, config, downloader, engine_install, engine_release, fit, gallery, hf, library, loras,
+    manifest, models, types,
+};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -265,6 +268,25 @@ fn merged_settings(current: &AppConfig, incoming: AppConfig) -> AppConfig {
     }
 }
 
+/// Did the user point MuchAI at a different engine binary?
+///
+/// `EngineSelection` derives `PartialEq`; this exists to name the concept at
+/// both call sites (`set_settings` and `engine_select`) and to keep the reason
+/// documented where the caches are dropped.
+fn engine_changed(before: &EngineSelection, after: &EngineSelection) -> bool {
+    before != after
+}
+
+/// Drop everything cached *about the engine binary* after a switch.
+///
+/// A different build may enumerate devices in a different order — the cached
+/// list must go or `--backend vulkanN` would address the wrong GPU — and it
+/// certainly reports a different commit, which the About dialog shows.
+fn invalidate_engine_caches(state: &AppState) {
+    *state.gpu_devices.lock().unwrap() = None;
+    *state.engine_version.lock().unwrap() = None;
+}
+
 #[tauri::command]
 pub fn set_settings(
     app: AppHandle,
@@ -277,14 +299,8 @@ pub fn set_settings(
     // all persist while still holding the lock.
     let gallery_dir = {
         let mut cfg = state.config.lock().unwrap();
-        // A changed engine selection means a different binary that may enumerate
-        // devices in a different order — drop the cached list so the next probe
-        // re-reads it, preserving index parity with `--backend vulkanN`. Also
-        // drop the cached engine version so About cannot report the previous
-        // engine's commit after a switch.
-        if cfg.engine != config.engine {
-            *state.gpu_devices.lock().unwrap() = None;
-            *state.engine_version.lock().unwrap() = None;
+        if engine_changed(&cfg.engine, &config.engine) {
+            invalidate_engine_caches(&state);
         }
         *cfg = merged_settings(&cfg, config);
         config::save_config_to(&config::config_file_path(), &cfg).map_err(|e| e.to_string())?;
@@ -1488,9 +1504,626 @@ pub fn delete_lora(state: State<'_, AppState>, id: String) -> Result<(), String>
     loras::remove(&models_dir, &id)
 }
 
+/// True when the configured selection can't be honoured, so the built-in
+/// engine is running in its place.
+///
+/// Asks [`resolve_engine_path`] with no built-in directory: what comes back is
+/// then exactly "the selection on its own merits", which means this shares the
+/// spawn path's rules rather than restating them — including
+/// `is_valid_engine_tag`, which a hand-rolled `root.join(tag).exists()` here
+/// would have skipped, and the `+x` check that `exists()` cannot make.
+fn fell_back_to_builtin(sel: &EngineSelection, engines_root: &Path) -> bool {
+    !matches!(sel, EngineSelection::Builtin)
+        && resolve_engine_path(sel, None, engines_root).is_none()
+}
+
+/// The release tag of the engine that will actually run, after any fallback.
+///
+/// `None` only for a custom build, whose provenance we cannot know — and which
+/// is therefore never compared against upstream or offered an update.
+/// A free function over `&AppConfig` rather than something reached through
+/// `State`, so every caller shares it without cloning a state handle. Takes no
+/// `AppHandle`: whichever way a selection fails the fallback is the built-in
+/// engine, and the built-in engine's tag is a compile-time constant.
+pub(crate) fn current_tag(cfg: &AppConfig, engines_root: &Path) -> Option<String> {
+    let builtin = || Some(engine_release::BUILTIN_ENGINE_TAG.to_string());
+    if fell_back_to_builtin(&cfg.engine, engines_root) {
+        return builtin();
+    }
+    match &cfg.engine {
+        EngineSelection::Builtin => builtin(),
+        EngineSelection::Downloaded { tag } => Some(tag.clone()),
+        EngineSelection::Custom { .. } => None,
+    }
+}
+
+/// What the Engine preferences panel needs to render, in one round trip.
+#[derive(serde::Serialize)]
+pub struct EngineStatus {
+    /// The active selection, echoed so the UI never has to guess.
+    pub selection: EngineSelection,
+    /// Tag of the running engine: the built-in constant, the selected tag, or
+    /// `None` for a custom binary whose provenance we can't know.
+    pub tag: Option<String>,
+    /// Commit reported by `--version`, or `None` if the engine won't run.
+    pub commit: Option<String>,
+    /// Absolute path actually in use, after any fallback.
+    pub path: Option<String>,
+    /// True when the selection couldn't be honoured and we fell back to builtin.
+    pub fell_back: bool,
+    /// Installed downloaded engines, newest first, for the picker.
+    pub installed: Vec<String>,
+    /// False off Linux x86_64. Upstream publishes assets we don't select for,
+    /// and offering an unrunnable binary is worse than offering nothing. The
+    /// panel says so rather than showing a Check button that can't succeed.
+    pub supported: bool,
+}
+
+/// Can this build install an engine at all? MuchAI ships Linux x86_64 Vulkan;
+/// asset selection is written for exactly that and nothing else.
+pub const UPDATES_SUPPORTED: bool = cfg!(all(target_os = "linux", target_arch = "x86_64"));
+
+#[tauri::command]
+pub fn engine_status(app: AppHandle, state: State<AppState>) -> EngineStatus {
+    let cfg = state.config.lock().unwrap().clone();
+    let root = config::engines_dir();
+    let path = resolve_binary(&app, &cfg);
+
+    EngineStatus {
+        tag: current_tag(&cfg, &root),
+        commit: path.as_deref().and_then(crate::devices::engine_version),
+        path: path.map(|p| p.to_string_lossy().into_owned()),
+        fell_back: fell_back_to_builtin(&cfg.engine, &root),
+        selection: cfg.engine,
+        installed: engine_install::installed_tags(&root),
+        supported: UPDATES_SUPPORTED,
+    }
+}
+
+/// An available upgrade, or `None` when the newest release is not newer than
+/// what is running.
+#[derive(Debug, serde::Serialize)]
+pub struct EngineUpdate {
+    pub tag: String,
+    pub asset_size: u64,
+    /// Tag we compared against, so the UI can say "from X to Y".
+    pub current_tag: Option<String>,
+}
+
+/// Turn a fetched release into an answer for the update card, recording the
+/// attempt on the way.
+///
+/// Takes the fetch's *result* rather than performing it, so that every
+/// decision here — what counts as a check, what counts as an update, and what
+/// a custom engine is told — is testable without a network.
+fn record_check(
+    config: &Mutex<AppConfig>,
+    config_path: &Path,
+    engines_root: &Path,
+    fetched: Result<Option<engine_release::EngineRelease>, String>,
+) -> Result<Option<EngineUpdate>, String> {
+    // A check that never reached GitHub is not a check: report it, and leave
+    // `engine_last_check` alone so the next start tries again.
+    let Some(release) = fetched? else { return Ok(None) };
+
+    let current = {
+        let mut cfg = config.lock().unwrap();
+        // Recorded whether or not there turns out to be an update, so a daily
+        // check that finds nothing still counts as a check. Best-effort: a
+        // config that won't save is not a reason to withhold the answer.
+        cfg.engine_last_check = Some(now_unix());
+        let _ = config::save_config_to(config_path, &cfg);
+        current_tag(&cfg, engines_root)
+    };
+
+    let newer = match &current {
+        Some(cur) => engine_release::is_newer(&release.tag, cur),
+        // A custom binary has no tag to compare — never nag about it.
+        None => false,
+    };
+    Ok(newer.then_some(EngineUpdate {
+        tag: release.tag,
+        asset_size: release.asset.size,
+        current_tag: current,
+    }))
+}
+
+#[tauri::command]
+pub async fn engine_check_update(state: State<'_, AppState>) -> Result<Option<EngineUpdate>, String> {
+    if !UPDATES_SUPPORTED {
+        return Ok(None);
+    }
+    // Network I/O runs off the main thread (mirrors `list_hf_variants`): a
+    // sync command body executes on the thread that pumps the UI, so a GitHub
+    // request that hangs to its 30-second read timeout would freeze the app.
+    let fetched = tauri::async_runtime::spawn_blocking(engine_release::fetch_latest_release)
+        .await
+        .map_err(|e| e.to_string())?;
+    record_check(&state.config, &config::config_file_path(), &config::engines_dir(), fetched)
+}
+
+/// The two revisions the changelog spans: what is running, and what the update
+/// card is about.
+///
+/// Both are reduced to bare commit SHAs, because that is what upstream's
+/// `/compare` endpoint understands — handed a `master-797-…` tag it answers
+/// 404, and `fetch_changelog` cannot tell that 404 from "GitHub doesn't know
+/// this revision", so the card would quietly degrade to a single headline
+/// instead of showing the range. `None` on the left means exactly that second
+/// case: a custom build with no rev upstream has heard of.
+fn changelog_range(
+    cfg: &AppConfig,
+    engines_root: &Path,
+    to_tag: String,
+) -> (Option<String>, String) {
+    let from = current_tag(cfg, engines_root);
+    let from_sha = from.as_deref().and_then(engine_release::parse_tag).map(|t| t.sha);
+    // Anything that is not one of our tags is passed through as-is: it may
+    // already be a bare sha.
+    let to_sha = engine_release::parse_tag(&to_tag).map(|t| t.sha).unwrap_or(to_tag);
+    (from_sha, to_sha)
+}
+
+#[tauri::command]
+pub async fn engine_changelog(
+    state: State<'_, AppState>,
+    to_tag: String,
+) -> Result<Vec<engine_release::ChangeEntry>, String> {
+    let (from_sha, to_sha) = {
+        let cfg = state.config.lock().unwrap();
+        changelog_range(&cfg, &config::engines_dir(), to_tag)
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        engine_release::fetch_changelog(from_sha.as_deref(), &to_sha)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Refusal when an engine swap is asked for mid-generation.
+const ENGINE_BUSY: &str = "Can't update the engine while an image is generating.";
+
+/// Run `work` with the generation slot claimed for the whole of it.
+///
+/// Swapping the engine while a generation is running would pull the binary out
+/// from under a live child process, so the same guard the generate path uses
+/// turns this away instead. Extracted so that "the claim is *held across* the
+/// install" is a testable property: `let _ = RunGuard::claim(..)` reads almost
+/// identically and drops the guard immediately.
+fn while_not_generating<T>(
+    flag: &Arc<AtomicBool>,
+    work: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    let _guard = RunGuard::claim(flag).ok_or_else(|| ENGINE_BUSY.to_string())?;
+    work()
+}
+
+/// Adopt a freshly installed engine as the active selection, persisting it.
+///
+/// Takes the install's *result* rather than performing it, so the ordering it
+/// encodes — nothing is written until the install has returned `Ok` — is
+/// testable without a network. A config written before the install would name
+/// an engine that may never arrive, and the next start would fall back to the
+/// built-in one with no explanation.
+fn adopt_installed_engine(
+    config: &Mutex<AppConfig>,
+    config_path: &Path,
+    tag: &str,
+    installed: Result<String, String>,
+) -> Result<String, String> {
+    let commit = installed?;
+    let mut cfg = config.lock().unwrap();
+    cfg.engine = EngineSelection::Downloaded { tag: tag.to_string() };
+    // Installing a release is the strongest possible form of having seen it.
+    cfg.engine_seen_tag = Some(tag.to_string());
+    config::save_config_to(config_path, &cfg).map_err(|e| e.to_string())?;
+    Ok(commit)
+}
+
+#[tauri::command]
+pub async fn engine_apply_update(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    tag: String,
+) -> Result<String, String> {
+    let root = config::engines_dir();
+    let generating = state.generating.clone();
+    // The engine archive is a public GitHub asset — no token, unlike the
+    // HuggingFace and Civitai paths that share this downloader.
+    let cancel = state.download_cancel.clone();
+    cancel.store(false, Ordering::Release);
+    let (root2, tag2) = (root.clone(), tag.clone());
+
+    // ~45 MB of download plus a validation probe, off the main thread for the
+    // same reason `add_url_model` does it: a sync command body runs on the
+    // thread that pumps the UI, which would freeze the very progress bar these
+    // events feed. The guard is claimed inside, so it covers the whole install.
+    let installed = tauri::async_runtime::spawn_blocking(move || {
+        while_not_generating(&generating, || {
+            let release = engine_release::fetch_latest_release()?
+                .filter(|r| r.tag == tag2)
+                .ok_or_else(|| "That engine release is no longer available.".to_string())?;
+            std::fs::create_dir_all(&root2)
+                .map_err(|e| format!("Couldn't create {}: {e}", root2.display()))?;
+            let free = crate::diskspace::available_bytes(&root2).unwrap_or(u64::MAX);
+            let mut last_emit: u64 = 0;
+            engine_install::install_release(
+                &root2,
+                &release,
+                free,
+                move |downloaded, total| {
+                    // Same 4 MiB throttle as model downloads: ~45 MB at one
+                    // event per read would be thousands of IPC messages for a
+                    // progress bar.
+                    if downloaded.saturating_sub(last_emit) >= 4 << 20 || Some(downloaded) == total
+                    {
+                        last_emit = downloaded;
+                        let _ = app.emit(
+                            "engine:download:progress",
+                            DownloadProgress {
+                                downloaded,
+                                total,
+                                file_index: None,
+                                file_count: None,
+                                file_name: None,
+                            },
+                        );
+                    }
+                },
+                &cancel,
+            )
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let commit = adopt_installed_engine(&state.config, &config::config_file_path(), &tag, installed)?;
+    invalidate_engine_caches(&state);
+    // Keep the two newest, never touching whatever is now selected. Runs after
+    // the config was written, so a generation starting here already resolves to
+    // the new engine rather than one that is about to be deleted.
+    engine_install::prune(&root, 2, &tag);
+    Ok(commit)
+}
+
+#[tauri::command]
+pub fn engine_select(state: State<AppState>, selection: EngineSelection) -> Result<(), String> {
+    let mut cfg = state.config.lock().unwrap();
+    if engine_changed(&cfg.engine, &selection) {
+        cfg.engine = selection;
+        config::save_config_to(&config::config_file_path(), &cfg).map_err(|e| e.to_string())?;
+        drop(cfg);
+        invalidate_engine_caches(&state);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A scratch directory of this test's own.
+    fn scratch(name: &str) -> PathBuf {
+        let p = std::env::temp_dir().join(format!("muchai-cmd-{}-{}", name, std::process::id()));
+        let _ = std::fs::remove_dir_all(&p);
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    /// Put a runnable stand-in for `sd-cli` in `dir` and return its path.
+    /// Never executed — `is_runnable` only stats it — but it must carry the
+    /// `+x` bit, which is exactly what `is_runnable` checks for.
+    fn fake_engine_at(dir: &Path) -> PathBuf {
+        std::fs::create_dir_all(dir).unwrap();
+        let p = dir.join(engine_binary_name());
+        std::fs::write(&p, b"#!/bin/sh\nexit 0\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        p
+    }
+
+    fn test_state() -> AppState {
+        AppState {
+            config: Mutex::new(crate::config::default_config()),
+            child: Arc::new(Mutex::new(None)),
+            download_cancel: Arc::new(AtomicBool::new(false)),
+            gpu_devices: Arc::new(Mutex::new(None)),
+            engine_version: Arc::new(Mutex::new(None)),
+            generating: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    fn a_release(tag: &str, size: u64) -> engine_release::EngineRelease {
+        engine_release::EngineRelease {
+            tag: tag.to_string(),
+            asset: engine_release::ReleaseAsset {
+                name: "sd-bin-Linux-Ubuntu-24.04-x86_64-vulkan.zip".into(),
+                url: "https://example.invalid/a.zip".into(),
+                size,
+                sha256: None,
+            },
+        }
+    }
+
+    #[test]
+    fn switching_engines_drops_both_engine_caches() {
+        let state = test_state();
+        *state.gpu_devices.lock().unwrap() = Some(Vec::new());
+        *state.engine_version.lock().unwrap() = Some(Some("b290693".into()));
+
+        invalidate_engine_caches(&state);
+
+        assert!(
+            state.gpu_devices.lock().unwrap().is_none(),
+            "another build may enumerate GPUs in another order — `--backend vulkanN` would address the wrong one"
+        );
+        assert!(
+            state.engine_version.lock().unwrap().is_none(),
+            "About must not keep reporting the previous engine's commit"
+        );
+    }
+
+    #[test]
+    fn a_selection_that_cannot_be_honoured_reports_falling_back() {
+        let base = scratch("fellback");
+        let root = base.join("engines");
+        fake_engine_at(&root.join("master-797-5ef4a75"));
+        // A perfectly runnable engine that lives *outside* the store — what a
+        // hand-edited config would aim a traversing tag at.
+        let custom = fake_engine_at(&base.join("outside"));
+        let custom = custom.to_string_lossy().into_owned();
+
+        assert!(!fell_back_to_builtin(&EngineSelection::Builtin, &root));
+        assert!(!fell_back_to_builtin(
+            &EngineSelection::Downloaded { tag: "master-797-5ef4a75".into() },
+            &root
+        ));
+        assert!(!fell_back_to_builtin(&EngineSelection::Custom { path: custom }, &root));
+
+        // Pruned, and moved: both fall back, and the panel must say so.
+        assert!(fell_back_to_builtin(
+            &EngineSelection::Downloaded { tag: "master-791-b8bf676".into() },
+            &root
+        ));
+        assert!(fell_back_to_builtin(
+            &EngineSelection::Custom { path: "/nowhere/sd-cli".into() },
+            &root
+        ));
+
+        // The tag guard has to apply here too. `../outside/sd-cli` exists and
+        // is runnable, but `resolve_binary` refuses the tag and runs the
+        // built-in engine — so an unguarded `root.join(tag).exists()` here
+        // would report a selection as honoured that isn't.
+        assert!(
+            fell_back_to_builtin(&EngineSelection::Downloaded { tag: "../outside".into() }, &root),
+            "a traversing tag must be refused here exactly as the spawn path refuses it"
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn current_tag_names_the_engine_that_will_actually_run() {
+        let base = scratch("curtag");
+        let root = base.join("engines");
+        fake_engine_at(&root.join("master-797-5ef4a75"));
+        let custom = fake_engine_at(&base.join("mine")).to_string_lossy().into_owned();
+        let mut cfg = crate::config::default_config();
+
+        cfg.engine = EngineSelection::Builtin;
+        assert_eq!(
+            current_tag(&cfg, &root).as_deref(),
+            Some(engine_release::BUILTIN_ENGINE_TAG)
+        );
+
+        cfg.engine = EngineSelection::Downloaded { tag: "master-797-5ef4a75".into() };
+        assert_eq!(current_tag(&cfg, &root).as_deref(), Some("master-797-5ef4a75"));
+
+        // Selected but pruned: the built-in engine is what runs, so it is what
+        // upstream gets compared against. Reporting the missing tag would hide
+        // an update the user can and should take.
+        cfg.engine = EngineSelection::Downloaded { tag: "master-791-b8bf676".into() };
+        assert_eq!(
+            current_tag(&cfg, &root).as_deref(),
+            Some(engine_release::BUILTIN_ENGINE_TAG)
+        );
+
+        // A custom build's provenance is unknowable, so it is never compared.
+        cfg.engine = EngineSelection::Custom { path: custom };
+        assert_eq!(current_tag(&cfg, &root), None);
+
+        // …unless it has gone, in which case the built-in engine is running.
+        cfg.engine = EngineSelection::Custom { path: "/nowhere/sd-cli".into() };
+        assert_eq!(
+            current_tag(&cfg, &root).as_deref(),
+            Some(engine_release::BUILTIN_ENGINE_TAG)
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn the_changelog_is_asked_for_in_commit_shas_not_tags() {
+        let base = scratch("chlog");
+        let root = base.join("engines");
+        std::fs::create_dir_all(&root).unwrap();
+        let mut cfg = crate::config::default_config(); // Builtin → master-782-b290693
+
+        let (from, to) = changelog_range(&cfg, &root, "master-797-5ef4a75".into());
+        assert_eq!(
+            from.as_deref(),
+            Some("b290693"),
+            "the range starts at the running engine's commit, not its tag"
+        );
+        assert_eq!(to, "5ef4a75", "a tag has to be reduced too — /compare 404s on a tag name");
+
+        // Not one of our tags: passed through, because it may already be a sha.
+        let (_, to) = changelog_range(&cfg, &root, "deadbee".into());
+        assert_eq!(to, "deadbee");
+
+        // A self-compiled engine: upstream has no revision to compare from, so
+        // the card shows the headline rather than a made-up range.
+        let custom = fake_engine_at(&base.join("mine")).to_string_lossy().into_owned();
+        cfg.engine = EngineSelection::Custom { path: custom };
+        let (from, _) = changelog_range(&cfg, &root, "master-797-5ef4a75".into());
+        assert_eq!(from, None);
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn the_generation_slot_is_held_for_the_whole_install() {
+        let flag = Arc::new(AtomicBool::new(false));
+
+        // The point of the guard is that it is *held across* the work. A
+        // `let _ = RunGuard::claim(..)` reads almost identically and drops it
+        // at the end of the statement; this is what tells them apart.
+        let held = while_not_generating(&flag, || Ok(flag.load(Ordering::Acquire))).unwrap();
+        assert!(held, "the generation slot must stay claimed while the install runs");
+        assert!(!flag.load(Ordering::Acquire), "and be released once it returns");
+
+        // Released on the failure path too, or one bad download would refuse
+        // every generation for the rest of the session.
+        let _ = while_not_generating(&flag, || Err::<(), String>("boom".into()));
+        assert!(!flag.load(Ordering::Acquire), "a failed install must not leak the claim");
+
+        // A generation already in flight turns the install away rather than
+        // pulling the binary out from under a live child process.
+        flag.store(true, Ordering::Release);
+        let refused = while_not_generating(&flag, || -> Result<(), String> {
+            panic!("the install must not start while a generation is running")
+        });
+        assert!(refused.is_err(), "a busy engine must be reported, not silently skipped");
+        assert!(
+            flag.load(Ordering::Acquire),
+            "the refusal must leave the other run's claim standing"
+        );
+    }
+
+    #[test]
+    fn the_engine_selection_is_persisted_only_after_the_install_succeeded() {
+        let base = scratch("adopt");
+        let cfg_path = base.join("config.json");
+        let config = Mutex::new(crate::config::default_config());
+        let tag = "master-797-5ef4a75";
+
+        let err = adopt_installed_engine(&config, &cfg_path, tag, Err("download failed".into()))
+            .unwrap_err();
+        assert_eq!(err, "download failed", "the install's own error has to reach the user");
+        assert_eq!(
+            config.lock().unwrap().engine,
+            EngineSelection::Builtin,
+            "a failed install must not switch the engine"
+        );
+        assert!(!cfg_path.exists(), "…nor write anything to the config at all");
+
+        let commit =
+            adopt_installed_engine(&config, &cfg_path, tag, Ok("5ef4a75".into())).unwrap();
+        assert_eq!(commit, "5ef4a75", "the installed engine's commit is the command's answer");
+        let saved = crate::config::load_config_from(&cfg_path);
+        assert_eq!(
+            saved.engine,
+            EngineSelection::Downloaded { tag: tag.into() },
+            "the switch must survive a restart"
+        );
+        assert_eq!(
+            saved.engine_seen_tag.as_deref(),
+            Some(tag),
+            "installing a release also marks it seen, so the update badge clears"
+        );
+        assert_eq!(
+            config.lock().unwrap().engine,
+            saved.engine,
+            "in-memory and on-disk selections must agree"
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn an_update_is_offered_only_when_it_is_newer_than_what_runs() {
+        let base = scratch("check");
+        let root = base.join("engines");
+        std::fs::create_dir_all(&root).unwrap();
+        let cfg_path = base.join("config.json");
+        let config = Mutex::new(crate::config::default_config()); // Builtin → master-782
+
+        // A release with nothing we can run is "no update", not an error.
+        assert!(record_check(&config, &cfg_path, &root, Ok(None)).unwrap().is_none());
+
+        let up = record_check(&config, &cfg_path, &root, Ok(Some(a_release("master-797-5ef4a75", 45020326))))
+            .unwrap()
+            .expect("build 797 is newer than the built-in 782");
+        assert_eq!(up.tag, "master-797-5ef4a75");
+        assert_eq!(up.asset_size, 45020326, "the card sizes the download from this");
+        assert_eq!(
+            up.current_tag.as_deref(),
+            Some(engine_release::BUILTIN_ENGINE_TAG),
+            "the card says \"from X to Y\", so X has to come back too"
+        );
+
+        // The build we already run is not an update…
+        config.lock().unwrap().engine_last_check = None;
+        let _ = std::fs::remove_file(&cfg_path);
+        let same = record_check(
+            &config,
+            &cfg_path,
+            &root,
+            Ok(Some(a_release(engine_release::BUILTIN_ENGINE_TAG, 1))),
+        )
+        .unwrap();
+        assert!(same.is_none(), "the running build must never be offered as an update");
+        // …but looking is still looking. Without this the daily check would run
+        // again on every start until upstream happened to publish something.
+        assert!(
+            config.lock().unwrap().engine_last_check.is_some(),
+            "a check that finds nothing is still a check"
+        );
+        assert!(
+            crate::config::load_config_from(&cfg_path).engine_last_check.is_some(),
+            "and it has to be persisted, or a restart forgets it"
+        );
+
+        // A self-compiled engine has no tag to compare — never nagged, however
+        // new upstream gets.
+        let custom = fake_engine_at(&base.join("mine")).to_string_lossy().into_owned();
+        config.lock().unwrap().engine = EngineSelection::Custom { path: custom };
+        let none =
+            record_check(&config, &cfg_path, &root, Ok(Some(a_release("master-999-fffffff", 1))))
+                .unwrap();
+        assert!(none.is_none(), "a custom build must never be told it is out of date");
+
+        // A failed fetch is not a check: it surfaces, and it does not stamp.
+        config.lock().unwrap().engine_last_check = None;
+        let err = record_check(&config, &cfg_path, &root, Err("GitHub returned HTTP 500.".into()))
+            .unwrap_err();
+        assert_eq!(err, "GitHub returned HTTP 500.", "a failed check must be reported, not swallowed");
+        assert!(
+            config.lock().unwrap().engine_last_check.is_none(),
+            "a check that never reached GitHub must not count as one"
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn engine_change_is_detected_across_all_selection_variants() {
+        use crate::types::EngineSelection::*;
+        assert!(engine_changed(&Builtin, &Downloaded { tag: "master-797-5ef4a75".into() }));
+        assert!(engine_changed(
+            &Downloaded { tag: "master-791-b8bf676".into() },
+            &Downloaded { tag: "master-797-5ef4a75".into() }
+        ));
+        assert!(engine_changed(&Custom { path: "/a".into() }, &Custom { path: "/b".into() }));
+        assert!(!engine_changed(&Builtin, &Builtin));
+        assert!(!engine_changed(
+            &Downloaded { tag: "master-797-5ef4a75".into() },
+            &Downloaded { tag: "master-797-5ef4a75".into() }
+        ));
+    }
 
     #[test]
     fn run_guard_claims_a_free_slot() {

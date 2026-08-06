@@ -15,9 +15,6 @@ use serde::{Deserialize, Serialize};
 /// number, so "is the release newer than what I am running?" cannot be answered
 /// from the binary alone. Without this constant the app would believe the
 /// built-in engine is build 0 and offer an update it already has.
-// Not yet read outside this module or its tests — later tasks (release
-// comparison wiring, Tauri commands) consume it.
-#[allow(dead_code)]
 pub const BUILTIN_ENGINE_TAG: &str = "master-782-b290693";
 
 /// A parsed `master-<build>-<sha>` release tag.
@@ -51,9 +48,6 @@ pub fn parse_tag(tag: &str) -> Option<EngineTag> {
 
 /// True only when `candidate` is a strictly greater build than `running`.
 /// Either tag failing to parse yields false — the safe direction.
-// Not yet called outside this module or its tests — later tasks (background
-// update check, Tauri commands) call it.
-#[allow(dead_code)]
 pub fn is_newer(candidate: &str, running: &str) -> bool {
     match (parse_tag(candidate), parse_tag(running)) {
         (Some(c), Some(r)) => c.build > r.build,
@@ -100,6 +94,24 @@ struct RawRelease {
     assets: Vec<RawAsset>,
 }
 
+/// GitHub's per-asset `digest`, reduced to the lowercase hex SHA-256 that
+/// `verify_hash` compares against — or `None` when nothing usable was
+/// published.
+///
+/// The shape is checked *here*, at the parse boundary, and deliberately not in
+/// `verify_hash`: a string that is not exactly 64 hex characters cannot be any
+/// file's SHA-256, so passing it through would make every download of that
+/// release fail forever with "the download didn't match its published
+/// checksum. Try again." — advice the user can never act on. An unpublished
+/// digest already degrades gracefully to "nothing to check"; a malformed one
+/// belongs in the same category, alongside an algorithm we don't recognise.
+/// Do not relax the comparison in `verify_hash` to compensate.
+fn parse_sha256_digest(digest: &str) -> Option<String> {
+    let hex = digest.strip_prefix("sha256:")?;
+    (hex.len() == 64 && hex.chars().all(|c| c.is_ascii_hexdigit()))
+        .then(|| hex.to_ascii_lowercase())
+}
+
 /// Parse a GitHub release object into its tag and assets.
 pub fn parse_release_json(body: &str) -> Result<(String, Vec<ReleaseAsset>), String> {
     let raw: RawRelease = serde_json::from_str(body)
@@ -111,11 +123,7 @@ pub fn parse_release_json(body: &str) -> Result<(String, Vec<ReleaseAsset>), Str
             name: a.name,
             url: a.browser_download_url,
             size: a.size,
-            sha256: a
-                .digest
-                .as_deref()
-                .and_then(|d| d.strip_prefix("sha256:"))
-                .map(str::to_ascii_lowercase),
+            sha256: a.digest.as_deref().and_then(parse_sha256_digest),
         })
         .collect();
     Ok((raw.tag_name, assets))
@@ -274,10 +282,6 @@ fn get(url: &str) -> Result<String, String> {
 /// The newest upstream release, reduced to its tag and the one asset we can
 /// run. `Ok(None)` means "a release exists but nothing in it is for us" — a
 /// normal outcome, not an error.
-// Not yet called outside this module or its tests — Task 12's Tauri command
-// calls it. Keeps `latest_release_url`, `to_engine_release`, `get`, and `REPO`
-// reachable too.
-#[allow(dead_code)]
 pub fn fetch_latest_release() -> Result<Option<EngineRelease>, String> {
     let body = get(&latest_release_url())?;
     let (tag, assets) = parse_release_json(&body)?;
@@ -294,9 +298,6 @@ pub fn fetch_latest_release() -> Result<Option<EngineRelease>, String> {
 /// A `/compare` that answers 200 with a body we cannot parse is *not* covered
 /// by that fallback: it means GitHub changed its schema, which should surface
 /// rather than quietly degrade to a headline.
-// Not yet called outside this module or its tests — Task 12's Tauri command
-// calls it. Keeps `compare_url` and `commit_url` reachable too.
-#[allow(dead_code)]
 pub fn fetch_changelog(from_sha: Option<&str>, to_sha: &str) -> Result<Vec<ChangeEntry>, String> {
     if let Some(from) = from_sha {
         if let Ok(body) = get(&compare_url(from, to_sha)) {
@@ -462,14 +463,44 @@ mod tests {
         assert_eq!(assets[0].sha256, None);
     }
 
+    /// Parse a one-asset release carrying `digest`, returning that asset's
+    /// `sha256`.
+    fn digest_of(digest: &str) -> Option<String> {
+        let json = format!(
+            r#"{{"tag_name":"master-1-aaaaaaa","assets":[{{"name":"x.zip","size":2,"browser_download_url":"https://e.invalid/x.zip","digest":"{digest}"}}]}}"#
+        );
+        parse_release_json(&json).unwrap().1[0].sha256.clone()
+    }
+
     #[test]
     fn an_uppercase_digest_is_lowercased() {
         // GitHub does not guarantee casing; the release fixture happens to be
         // lowercase already, so this is the only test that would catch a
         // dropped `to_ascii_lowercase`.
-        let json = r#"{"tag_name":"master-1-aaaaaaa","assets":[{"name":"x.zip","size":2,"browser_download_url":"https://e.invalid/x.zip","digest":"sha256:D365B1FF"}]}"#;
-        let (_, assets) = parse_release_json(json).unwrap();
-        assert_eq!(assets[0].sha256.as_deref(), Some("d365b1ff"));
+        let upper = "D365B1FFE73D6A4ECE7367E6D7E0368FDE53B8B18D508E3100BB5141C0CF26DE";
+        assert_eq!(digest_of(&format!("sha256:{upper}")), Some(upper.to_ascii_lowercase()));
+    }
+
+    #[test]
+    fn a_digest_that_could_never_match_is_treated_as_none() {
+        // A digest that is not exactly 64 hex characters cannot equal any
+        // file's SHA-256, so leaving it in place would make `verify_hash`
+        // reject every download of this release forever while telling the user
+        // to try again. `None` is the graceful path — the same one an absent
+        // digest already takes.
+        for bad in [
+            "sha256:".to_string(),                  // published, but empty
+            format!("sha256:{}", "a".repeat(63)),   // one hex digit short
+            format!("sha256:{}", "a".repeat(65)),   // one too many
+            format!("sha256:{}", "z".repeat(64)),   // right length, not hex
+            format!("sha256: {}", "a".repeat(63)),  // 64 chars, one is a space
+            format!("sha512:{}", "a".repeat(128)),  // a different algorithm
+        ] {
+            assert_eq!(digest_of(&bad), None, "`{bad}` can never match a file");
+        }
+        // …and a well-formed one still survives.
+        let good = "a".repeat(64);
+        assert_eq!(digest_of(&format!("sha256:{good}")), Some(good));
     }
 
     #[test]
