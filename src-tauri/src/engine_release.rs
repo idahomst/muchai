@@ -78,9 +78,6 @@ pub struct ReleaseAsset {
 }
 
 /// A release reduced to what the updater needs: its tag and its one asset.
-// Not yet constructed outside its own tests — Task 7's HTTP wrapper builds
-// one from `parse_release_json` + `select_asset`.
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct EngineRelease {
     pub tag: String,
@@ -104,9 +101,6 @@ struct RawRelease {
 }
 
 /// Parse a GitHub release object into its tag and assets.
-// Not yet called outside this module or its tests — Task 7's HTTP wrapper
-// calls it. Keeps `RawRelease`/`RawAsset` reachable too.
-#[allow(dead_code)]
 pub fn parse_release_json(body: &str) -> Result<(String, Vec<ReleaseAsset>), String> {
     let raw: RawRelease = serde_json::from_str(body)
         .map_err(|_| "Couldn't read the latest release from GitHub (unexpected response).".to_string())?;
@@ -133,9 +127,6 @@ pub fn parse_release_json(body: &str) -> Result<(String, Vec<ReleaseAsset>), Str
 /// CI runner's distro version (`…-Ubuntu-24.04-…`) and will change without
 /// warning. Zero matches or more than one returns `None` and is reported as
 /// "no update" — installing a guessed archive is worse than doing nothing.
-// Not yet called outside this module or its tests — Task 7's HTTP wrapper
-// calls it. Keeps `BACKEND_TOKEN` reachable too.
-#[allow(dead_code)]
 pub fn select_asset(assets: &[ReleaseAsset]) -> Option<&ReleaseAsset> {
     let mut it = assets.iter().filter(|a| {
         a.name.contains("Linux")
@@ -195,10 +186,6 @@ struct RawCompare {
 /// GitHub returns `commits` oldest-first, so the headline the release page
 /// shows is the last element; reversing here means the card can just take
 /// element 0 and every consumer agrees on the order.
-// Not yet called outside this module or its tests — Task 7's HTTP wrapper
-// calls it. Keeps `ChangeEntry`, `is_noteworthy`, `entry`, and the `Raw*`
-// compare types reachable too.
-#[allow(dead_code)]
 pub fn parse_compare_json(body: &str) -> Result<Vec<ChangeEntry>, String> {
     let raw: RawCompare = serde_json::from_str(body)
         .map_err(|_| "Couldn't read the change list from GitHub (unexpected response).".to_string())?;
@@ -216,13 +203,91 @@ pub fn parse_compare_json(body: &str) -> Result<Vec<ChangeEntry>, String> {
 /// GitHub does not know the revision the user is running (a self-compiled
 /// `Custom` engine). Yields the headline alone; showing no list is better than
 /// showing a wrong one.
-// Not yet called outside this module or its tests — Task 7's HTTP wrapper
-// calls it.
-#[allow(dead_code)]
 pub fn parse_commit_json(body: &str) -> Result<ChangeEntry, String> {
     let raw: RawCommit = serde_json::from_str(body)
         .map_err(|_| "Couldn't read the change list from GitHub (unexpected response).".to_string())?;
     Ok(entry(&raw.commit.message))
+}
+
+/// The upstream repo the engine comes from.
+const REPO: &str = "leejet/stable-diffusion.cpp";
+
+fn latest_release_url() -> String {
+    format!("https://api.github.com/repos/{REPO}/releases/latest")
+}
+
+fn compare_url(base: &str, head: &str) -> String {
+    format!("https://api.github.com/repos/{REPO}/compare/{base}...{head}")
+}
+
+fn commit_url(sha: &str) -> String {
+    format!("https://api.github.com/repos/{REPO}/commits/{sha}")
+}
+
+/// Combine a parsed release with its one usable asset. `None` when the release
+/// carries no asset MuchAI can run, which the caller reports as "no update".
+fn to_engine_release(tag: String, assets: &[ReleaseAsset]) -> Option<EngineRelease> {
+    select_asset(assets).map(|a| EngineRelease { tag, asset: a.clone() })
+}
+
+/// GET a GitHub API endpoint. Bounded timeouts so a hung connection cannot
+/// stall the background thread; unauthenticated, because 60 requests/hour is
+/// far more than one check a day needs and a token would be one more secret to
+/// store for no benefit.
+fn get(url: &str) -> Result<String, String> {
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(std::time::Duration::from_secs(10))
+        .timeout_read(std::time::Duration::from_secs(30))
+        .build();
+    match agent
+        .get(url)
+        // GitHub rejects requests without a User-Agent.
+        .set("User-Agent", concat!("MuchAI/", env!("CARGO_PKG_VERSION")))
+        .set("Accept", "application/vnd.github+json")
+        .call()
+    {
+        Ok(resp) => resp
+            .into_string()
+            .map_err(|_| "Couldn't read the response from GitHub.".to_string()),
+        Err(ureq::Error::Status(403, _)) | Err(ureq::Error::Status(429, _)) => {
+            Err("GitHub is rate-limiting this machine. Try again later.".into())
+        }
+        Err(ureq::Error::Status(404, _)) => Err("Not found on GitHub.".into()),
+        Err(ureq::Error::Status(code, _)) => Err(format!("GitHub returned HTTP {code}.")),
+        Err(ureq::Error::Transport(t)) => Err(format!("Network error reaching GitHub: {t}")),
+    }
+}
+
+/// The newest upstream release, reduced to its tag and the one asset we can
+/// run. `Ok(None)` means "a release exists but nothing in it is for us" — a
+/// normal outcome, not an error.
+// Not yet called outside this module or its tests — Task 12's Tauri command
+// calls it. Keeps `latest_release_url`, `to_engine_release`, `get`, and `REPO`
+// reachable too.
+#[allow(dead_code)]
+pub fn fetch_latest_release() -> Result<Option<EngineRelease>, String> {
+    let body = get(&latest_release_url())?;
+    let (tag, assets) = parse_release_json(&body)?;
+    Ok(to_engine_release(tag, &assets))
+}
+
+/// Commit subjects between the running engine and `to_sha`, newest first.
+///
+/// `from_sha` is `None` when the running engine is a self-compiled `Custom`
+/// build with no known rev. Falls back to the single-commit endpoint both then
+/// and when `/compare` fails — GitHub 404s that endpoint for a rev it does not
+/// have. A one-line headline is better than a wrong list.
+// Not yet called outside this module or its tests — Task 12's Tauri command
+// calls it. Keeps `compare_url` and `commit_url` reachable too.
+#[allow(dead_code)]
+pub fn fetch_changelog(from_sha: Option<&str>, to_sha: &str) -> Result<Vec<ChangeEntry>, String> {
+    if let Some(from) = from_sha {
+        if let Ok(body) = get(&compare_url(from, to_sha)) {
+            return parse_compare_json(&body);
+        }
+    }
+    let body = get(&commit_url(to_sha))?;
+    Ok(vec![parse_commit_json(&body)?])
 }
 
 #[cfg(test)]
@@ -495,5 +560,35 @@ mod tests {
         // on a 404 status before this function ever sees the body, and an
         // empty list only ever renders as no bullets, never a wrong one.
         assert!(parse_compare_json(r#"{"commits":{}}"#).is_err(), "a wrong-typed commits field is an error");
+    }
+
+    #[test]
+    fn builds_the_api_urls() {
+        assert_eq!(
+            latest_release_url(),
+            "https://api.github.com/repos/leejet/stable-diffusion.cpp/releases/latest"
+        );
+        assert_eq!(
+            compare_url("b290693", "5ef4a75"),
+            "https://api.github.com/repos/leejet/stable-diffusion.cpp/compare/b290693...5ef4a75"
+        );
+        assert_eq!(
+            commit_url("5ef4a75"),
+            "https://api.github.com/repos/leejet/stable-diffusion.cpp/commits/5ef4a75"
+        );
+    }
+
+    #[test]
+    fn release_to_engine_release_picks_the_asset() {
+        let (tag, assets) = parse_release_json(release_fixture()).unwrap();
+        let r = to_engine_release(tag, &assets).expect("the vulkan asset is present");
+        assert_eq!(r.tag, "master-797-5ef4a75");
+        assert_eq!(r.asset.size, 45020326);
+    }
+
+    #[test]
+    fn release_with_no_matching_asset_is_not_offered() {
+        let (tag, _) = parse_release_json(release_fixture()).unwrap();
+        assert!(to_engine_release(tag, &[]).is_none());
     }
 }
