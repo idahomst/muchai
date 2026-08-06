@@ -19,28 +19,27 @@
 pub const BUILTIN_ENGINE_TAG: &str = "master-782-b290693";
 
 /// A parsed `master-<build>-<sha>` release tag.
-// Not yet constructed outside this module or its tests — later tasks
-// (release JSON parsing, asset selection) build these from upstream data.
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EngineTag {
     /// Monotonic upstream build number — the only reliable ordering key.
     pub build: u32,
     /// Short commit hash, as the `--version` banner reports it.
-    // Not yet read outside this module or its tests — later tasks (changelog,
-    // identity probe cross-check) consume it.
-    #[allow(dead_code)]
     pub sha: String,
 }
 
 /// Parse `master-782-b290693`. `None` on anything else: an unrecognised tag
 /// must mean "no update offered", never "assume newer".
-// Not yet called outside this module or its tests — `is_newer` and later
-// release-JSON parsing (task 5) call it.
-#[allow(dead_code)]
 pub fn parse_tag(tag: &str) -> Option<EngineTag> {
     let rest = tag.strip_prefix("master-")?;
     let (build, sha) = rest.split_once('-')?;
+    // `u32::from_str` accepts a leading `+` (e.g. "+782"), but the tag string
+    // becomes a directory name under the engines root, and the directory-name
+    // guard there rejects `+`. Accepting it here would let a tag parse,
+    // compare as newer, and download successfully, only to be refused at
+    // selection time and silently fall back to the built-in engine.
+    if build.is_empty() || !build.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
     let build: u32 = build.parse().ok()?;
     if sha.is_empty() || !sha.chars().all(|c| c.is_ascii_hexdigit()) {
         return None;
@@ -73,7 +72,17 @@ mod tests {
 
     #[test]
     fn rejects_malformed_tags() {
-        for bad in ["", "master", "master-", "master-782", "master-782-", "v1.2.3", "master-abc-b290693", "master-782-zzz!"] {
+        for bad in [
+            "",
+            "master",
+            "master-",
+            "master-782",
+            "master-782-",
+            "v1.2.3",
+            "master-abc-b290693",
+            "master-782-zzz!",
+            "master-+782-b290693",
+        ] {
             assert!(parse_tag(bad).is_none(), "{bad} should not parse");
         }
     }
@@ -98,12 +107,16 @@ mod tests {
     #[test]
     fn builtin_tag_matches_fetch_script() {
         let script = include_str!("../../scripts/fetch-engine.sh");
-        let want = script
-            .lines()
-            .find_map(|l| l.trim().strip_prefix("ENGINE_TAG="))
-            .expect("scripts/fetch-engine.sh declares ENGINE_TAG")
-            .trim()
-            .trim_matches('"');
+        let assignments: Vec<&str> =
+            script.lines().filter_map(|l| l.trim().strip_prefix("ENGINE_TAG=")).collect();
+        assert_eq!(
+            assignments.len(),
+            1,
+            "expected exactly one ENGINE_TAG= assignment in scripts/fetch-engine.sh — \
+             with more than one, bash's last-assignment-wins semantics make it ambiguous \
+             which value is actually effective, found {assignments:?}"
+        );
+        let want = assignments[0].trim().trim_matches('"');
         assert_eq!(
             BUILTIN_ENGINE_TAG, want,
             "BUILTIN_ENGINE_TAG is stale — bump it whenever ENGINE_TAG in scripts/fetch-engine.sh changes"

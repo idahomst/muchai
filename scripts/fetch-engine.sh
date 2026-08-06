@@ -8,8 +8,10 @@
 # produced a constant, input-independent image (a flat "yellow square") on both
 # Vulkan and CPU regardless of prompt/steps/CFG. Commit b290693 fixes it. Pin
 # the known-good revision here so a fresh checkout / CI / release build can never
-# silently regress to a broken engine again. Bump ENGINE_REV + ENGINE_SHA256
-# together when intentionally upgrading, and re-verify a real generation.
+# silently regress to a broken engine again. Bump ENGINE_REV + ENGINE_TAG +
+# ENGINE_SHA256 together when intentionally upgrading (also bump
+# BUILTIN_ENGINE_TAG in src-tauri/src/engine_release.rs), and re-verify a real
+# generation.
 set -euo pipefail
 
 # --- Pinned engine release (leejet/stable-diffusion.cpp GitHub Releases) --------
