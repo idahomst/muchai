@@ -91,14 +91,23 @@ pub fn prune(root: &Path, keep: usize, protect: &str) {
 /// tells the user.
 const BAD_ARCHIVE: &str = "The downloaded archive was damaged. Try again.";
 
-/// Extract `zip_path` into `dest`, refusing any entry whose path is absolute or
-/// escapes the destination.
+/// Extract `zip_path` into `dest`. Every entry lands inside `dest` or the whole
+/// extraction fails.
 ///
 /// A zip is attacker-shaped input arriving over the network, and `../` in an
 /// entry name is precisely how an archive writes outside the directory you
-/// extracted it to. `enclosed_name()` returns `None` for exactly those entries;
-/// we abort the whole extraction rather than skipping them — an archive
-/// containing a traversal entry is not one to trust the rest of.
+/// extracted it to. `enclosed_name()` is what guarantees containment, but note
+/// what it actually does: it returns `None` for a name that climbs out via
+/// `..`, and *strips* a leading `/` or drive prefix rather than rejecting it —
+/// so `/etc/passwd` extracts to `dest/etc/passwd`. Either way the result is
+/// always contained, which is the property this function needs. (`zip` changed
+/// the absolute-path behaviour deliberately, to match other zip tools; do not
+/// re-read this as "absolute paths are refused" on the next major bump.)
+///
+/// A refusal aborts the whole extraction rather than skipping the offending
+/// entry — an archive containing a traversal entry is not one to trust the rest
+/// of. It also aborts *before* writing anything from that entry, so a refused
+/// archive leaves nothing behind.
 // Not yet called outside this module or its tests — Task 11's `install_release`
 // calls it. This allow is also what keeps `BAD_ARCHIVE` (used below) alive.
 #[allow(dead_code)]
@@ -112,6 +121,14 @@ pub fn extract_zip(zip_path: &Path, dest: &Path) -> Result<(), String> {
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i).map_err(|_| BAD_ARCHIVE.to_string())?;
         let rel = entry.enclosed_name().ok_or_else(|| BAD_ARCHIVE.to_string())?;
+        // A name that resolves to nothing at all — a bare UNC prefix like
+        // `//srv/share` parses entirely as a Windows prefix — would make `out`
+        // equal `dest`, and the file branch below would then try to `File::create`
+        // a directory. Refuse it as the malformed entry it is, so the user sees
+        // BAD_ARCHIVE rather than a raw EISDIR quoting the staging path.
+        if rel.as_os_str().is_empty() {
+            return Err(BAD_ARCHIVE.to_string());
+        }
         let out = dest.join(&rel);
 
         if entry.is_dir() {
@@ -128,10 +145,17 @@ pub fn extract_zip(zip_path: &Path, dest: &Path) -> Result<(), String> {
         std::io::copy(&mut entry, &mut w).map_err(|_| BAD_ARCHIVE.to_string())?;
 
         // Engine archives carry the executable bit on sd-cli and the .so files;
-        // losing it would make the freshly installed engine unspawnable.
+        // losing it would make the freshly installed engine unspawnable. That
+        // one bit is all we take: `unix_mode` returns the archive's mode
+        // verbatim, file-type and setuid bits included, and this updater exists
+        // to adopt whatever a third party's CI emits, unreviewed, forever. An
+        // upstream umask slip shipping 0o777 would otherwise leave sd-cli
+        // world-writable in the user's data directory — and MuchAI executes it
+        // on every generation.
         #[cfg(unix)]
         if let Some(mode) = entry.unix_mode() {
             use std::os::unix::fs::PermissionsExt;
+            let mode = if mode & 0o111 != 0 { 0o755 } else { 0o644 };
             let _ = std::fs::set_permissions(&out, std::fs::Permissions::from_mode(mode));
         }
     }
@@ -201,10 +225,12 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    /// Real engine archives are built with `zip -r`, which emits an explicit
-    /// entry for every directory. Those entries must be created as directories:
-    /// treating one as a file both loses an empty directory outright and makes
-    /// the *next* entry under it unwritable, failing the whole extraction.
+    /// Defensive, not a live fix: the currently pinned asset is flat — 36 plain
+    /// file entries, no directory entries at all — but nothing upstream pins
+    /// that. An archive built with `zip -r` emits an explicit entry per
+    /// directory, and treating one as a file both loses an empty directory
+    /// outright and makes the *next* entry under it unwritable, failing the
+    /// whole extraction.
     #[test]
     fn extracts_directory_entries_including_empty_ones() {
         let root = tmp("unzip-dirs");
@@ -257,6 +283,10 @@ mod tests {
         std::fs::write(src.join("ok.txt"), "fine").unwrap();
         std::fs::write(root.join("evil.txt"), "pwned").unwrap();
         let zip_path = root.join("evil.zip");
+        // The decoy is re-stamped *after* zipping, below, so that its content
+        // differs from the payload the archive carries. Zipping the decoy itself
+        // and then asserting it still says "pwned" would pass whether the file
+        // was left alone or overwritten with those same bytes.
         // `zip` normalises `../` away unless told not to; -y keeps the literal
         // name. If this ever stops producing a traversal entry the assertion
         // below will fail loudly rather than silently passing.
@@ -268,14 +298,18 @@ mod tests {
             .status()
             .expect("the `zip` CLI must be installed to run these tests");
         assert!(status.success());
+        // Now the archive says "pwned" and the file on disk says "untouched".
+        std::fs::write(root.join("evil.txt"), "untouched").unwrap();
 
         let dest = root.join("out");
         let err = extract_zip(&zip_path, &dest).unwrap_err();
 
         assert!(err.contains("archive"), "unexpected message: {err}");
-        // The traversal target must be untouched: still holding what the test
-        // wrote, not the "owned" the archive wanted to put there.
-        assert_eq!(std::fs::read_to_string(root.join("evil.txt")).unwrap(), "pwned");
+        // Refusing has to mean *nothing was written*, not "written, then an
+        // error returned". A validate-as-you-go implementation still reports the
+        // violation but leaves the escape behind; only comparing against content
+        // the archive does not carry can tell the two apart.
+        assert_eq!(std::fs::read_to_string(root.join("evil.txt")).unwrap(), "untouched");
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -288,6 +322,77 @@ mod tests {
         let err = extract_zip(&root.join("nope.zip"), &root.join("out")).unwrap_err();
 
         assert!(err.contains("Couldn't open"), "unexpected message: {err}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// An entry name that resolves to nothing must be refused, not carried into
+    /// `dest.join()` where it would name `dest` itself. The `zip` CLI cannot
+    /// produce such a name, so this one is built with Python — the same escape
+    /// hatch the plan documents for hand-shaped archives.
+    #[test]
+    fn rejects_an_entry_whose_name_resolves_to_nothing() {
+        let root = tmp("unzip-empty-name");
+        std::fs::create_dir_all(&root).unwrap();
+        let zip_path = root.join("unc.zip");
+        // `//srv/share` parses entirely as a Windows UNC prefix, so
+        // `enclosed_name()` returns Some(""), not None.
+        let script = format!(
+            "import zipfile; z=zipfile.ZipFile(r'{}','w'); z.writestr('//srv/share','x'); z.close()",
+            zip_path.display()
+        );
+        let status = std::process::Command::new("python3")
+            .args(["-c", &script])
+            .status()
+            .expect("python3 is needed to build this archive");
+        assert!(status.success());
+
+        let err = extract_zip(&zip_path, &root.join("out")).unwrap_err();
+
+        assert!(err.contains("archive"), "unexpected message: {err}");
+        // Specifically not a raw EISDIR quoting the staging path at the user.
+        assert!(!err.contains("os error"), "internal error leaked: {err}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The likeliest real failure this function has to report: the central
+    /// directory is intact so the archive opens and entries enumerate, but a
+    /// payload is corrupt. That surfaces from `io::copy`, not from `by_index`,
+    /// and it must be an error rather than a panic inside a Tauri command.
+    #[test]
+    fn reports_a_corrupt_payload_rather_than_panicking() {
+        let root = tmp("unzip-corrupt");
+        // Poorly-compressible content, so the deflate stream stays long enough
+        // to damage in place. A highly repetitive body would compress to a few
+        // bytes and leave no room between the local header and the central
+        // directory, so the corruption would land in the latter and be caught
+        // by a different clause than the one under test.
+        let mut seed: u32 = 0x1234_5678;
+        let body: String = (0..8000)
+            .map(|_| {
+                seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+                char::from(b'a' + (seed >> 16) as u8 % 26)
+            })
+            .collect();
+        let zip_path = make_zip(&root, &[("sd-cli", body.as_str())]);
+
+        let mut bytes = std::fs::read(&zip_path).unwrap();
+        // Damage the tail of the compressed stream: the bytes immediately before
+        // the central directory. That leaves every header intact, so the archive
+        // opens and the entry enumerates — the failure can only surface while
+        // reading the payload.
+        let cd = bytes
+            .windows(4)
+            .position(|w| w == b"PK\x01\x02")
+            .expect("the central directory must be present");
+        assert!(cd > 60, "the compressed stream is too short to damage in place");
+        for b in bytes[cd - 16..cd].iter_mut() {
+            *b ^= 0xff;
+        }
+        std::fs::write(&zip_path, &bytes).unwrap();
+
+        let err = extract_zip(&zip_path, &root.join("out")).unwrap_err();
+
+        assert!(err.contains("damaged"), "unexpected message: {err}");
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -327,6 +432,50 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let mode = std::fs::metadata(dest.join("sd-cli")).unwrap().permissions().mode();
         assert_eq!(mode & 0o111, 0o111, "executable bits must survive extraction");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The archive's mode is a suggestion, not an instruction. Only "is it
+    /// executable" is carried across; a world-writable or setuid mode out of
+    /// upstream's CI must not reach a binary MuchAI then runs on every
+    /// generation.
+    #[test]
+    fn extraction_normalises_hostile_modes() {
+        let root = tmp("unzip-mode-hostile");
+        let src = root.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("sd-cli"), "binary").unwrap();
+        std::fs::write(src.join("model.txt"), "data").unwrap();
+        // 4777: setuid and world-writable, on a file that is also executable.
+        // 0666: world-writable, not executable.
+        std::process::Command::new("chmod")
+            .args(["4777", "sd-cli"])
+            .current_dir(&src)
+            .status()
+            .unwrap();
+        std::process::Command::new("chmod")
+            .args(["0666", "model.txt"])
+            .current_dir(&src)
+            .status()
+            .unwrap();
+        let zip_path = root.join("h.zip");
+        std::process::Command::new("zip")
+            .arg("-q")
+            .arg(&zip_path)
+            .args(["sd-cli", "model.txt"])
+            .current_dir(&src)
+            .status()
+            .unwrap();
+
+        let dest = root.join("out");
+        extract_zip(&zip_path, &dest).unwrap();
+
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |p: &str| {
+            std::fs::metadata(dest.join(p)).unwrap().permissions().mode() & 0o7777
+        };
+        assert_eq!(mode("sd-cli"), 0o755, "executable entry must land as 0755, setuid dropped");
+        assert_eq!(mode("model.txt"), 0o644, "non-executable entry must land as 0644");
         let _ = std::fs::remove_dir_all(&root);
     }
 
