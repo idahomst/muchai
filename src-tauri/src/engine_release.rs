@@ -147,8 +147,11 @@ pub fn select_asset(assets: &[ReleaseAsset]) -> Option<&ReleaseAsset> {
     it.next().is_none().then_some(first)
 }
 
-/// Conventional-commit prefixes the update card collapses behind "Show all".
-/// Anything else — including an unprefixed subject — is shown up front.
+/// Conventional-commit prefixes the update card summarises as a count rather
+/// than listing (Task 14 filters on `noteworthy`, then reports the remainder as
+/// "plus N documentation and maintenance commits" — the "Show all" button
+/// toggles truncation of the *noteworthy* list, not these).
+/// Anything else — including an unprefixed subject — is listed.
 const NOISE_PREFIXES: [&str; 6] = ["docs:", "ci:", "chore:", "style:", "test:", "refactor:"];
 
 /// One upstream commit, as shown in the update card.
@@ -199,7 +202,14 @@ struct RawCompare {
 pub fn parse_compare_json(body: &str) -> Result<Vec<ChangeEntry>, String> {
     let raw: RawCompare = serde_json::from_str(body)
         .map_err(|_| "Couldn't read the change list from GitHub (unexpected response).".to_string())?;
-    Ok(raw.commits.iter().rev().map(|c| entry(&c.commit.message)).collect())
+    Ok(raw
+        .commits
+        .iter()
+        .rev()
+        .map(|c| entry(&c.commit.message))
+        // An empty subject carries no information and would render as a blank bullet.
+        .filter(|e| !e.subject.is_empty())
+        .collect())
 }
 
 /// Parse `GET /commits/<sha>` — the fallback when `/compare` 404s because
@@ -420,6 +430,8 @@ mod tests {
         assert!(!is_noteworthy("refactor: split the sampler table"));
         assert!(!is_noteworthy("test: cover the Qwen3-VL path"));
         assert!(!is_noteworthy("style: clang-format the tree"));
+        assert!(!is_noteworthy("DOCS: shout"), "casing must not defeat the noise filter");
+        assert!(!is_noteworthy("  docs: leading whitespace"), "leading space must not defeat it either");
     }
 
     #[test]
@@ -438,8 +450,29 @@ mod tests {
     }
 
     #[test]
+    fn trailing_whitespace_on_the_first_line_is_trimmed() {
+        // `str::lines()` already strips a `\r` that precedes a `\n`, so a
+        // `\r\n`-terminated first line does not exercise `entry`'s `.trim()`.
+        // Plain trailing spaces before the newline do: without `.trim()` this
+        // would carry a trailing `"   "` into the card.
+        let json = r#"{"commits":[{"commit":{"message":"fix: one thing   \n\nbody"}}]}"#;
+        let log = parse_compare_json(json).unwrap();
+        assert_eq!(log[0].subject, "fix: one thing");
+    }
+
+    #[test]
     fn an_empty_compare_yields_an_empty_log() {
-        assert_eq!(parse_compare_json(r#"{"commits":[]}"#).unwrap(), Vec::<ChangeEntry>::new());
+        assert_eq!(parse_compare_json(r#"{"commits":[]}"#).unwrap(), vec![]);
+    }
+
+    #[test]
+    fn a_commit_with_an_empty_subject_is_dropped() {
+        // An empty subject carries no information and would render as a blank
+        // bullet in the update card; it must not survive the parse.
+        let json = r#"{"commits":[{"commit":{"message":""}},{"commit":{"message":"fix: real change"}}]}"#;
+        let log = parse_compare_json(json).unwrap();
+        assert_eq!(log.len(), 1);
+        assert_eq!(log[0].subject, "fix: real change");
     }
 
     #[test]
@@ -457,5 +490,10 @@ mod tests {
     fn malformed_compare_json_is_an_error() {
         assert!(parse_compare_json("nope").is_err());
         assert!(parse_commit_json("nope").is_err());
+        // A body with no `commits` key at all (e.g. `{"message":"Not Found"}`)
+        // deliberately parses to `Ok([])`: Task 7's HTTP wrapper returns `Err`
+        // on a 404 status before this function ever sees the body, and an
+        // empty list only ever renders as no bullets, never a wrong one.
+        assert!(parse_compare_json(r#"{"commits":{}}"#).is_err(), "a wrong-typed commits field is an error");
     }
 }
