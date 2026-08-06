@@ -23,9 +23,6 @@ use std::collections::BTreeSet;
 ///
 /// `--version` is intentionally absent: the engine does not advertise it in
 /// `--help`, and it is checked separately by the identity probe.
-// Not yet called outside this module or its tests — later tasks (validation
-// during install, Tauri commands) wire `missing_flags` in.
-#[allow(dead_code)]
 pub const REQUIRED_FLAGS: [&str; 22] = [
     "--backend",
     "--cfg-scale",
@@ -59,7 +56,6 @@ pub const REQUIRED_FLAGS: [&str; 22] = [
 /// starts at the first run of two or more spaces, so flags named only inside
 /// a description are excluded too — otherwise removing a real flag that some
 /// other flag's help text still mentions would slip past the gate.
-#[allow(dead_code)]
 pub fn parse_help_flags(help: &str) -> BTreeSet<String> {
     let candidates: Vec<&str> = help
         .lines()
@@ -108,7 +104,6 @@ const PLAUSIBLE_FLAG_FLOOR: usize = 10;
 /// whose help we could not read at all would otherwise be reported as
 /// missing every flag at once — twenty-two dead ends instead of the one true
 /// problem.
-#[allow(dead_code)]
 #[derive(Debug, PartialEq, Eq)]
 pub enum FlagCheck {
     Compatible,
@@ -121,7 +116,6 @@ pub enum FlagCheck {
 /// Checks a candidate engine build's `--help` output against every flag
 /// MuchAI can emit. See `FlagCheck` for how the result distinguishes a
 /// dropped flag from help text this module could not make sense of.
-#[allow(dead_code)]
 pub fn missing_flags(help: &str) -> FlagCheck {
     let have = parse_help_flags(help);
     if have.len() < PLAUSIBLE_FLAG_FLOOR {

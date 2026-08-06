@@ -233,24 +233,89 @@ pub fn required_space(asset_size: u64) -> u64 {
 /// the one fact that matters is "this build is not compatible".
 const MAX_REPORTED_FLAGS: usize = 3;
 
+/// How long to wait for a probe before giving up on it. This runs a binary that
+/// was downloaded from the internet minutes ago, and `install_release` holds the
+/// generation lock while it does — an unbounded wait here wedges the app with no
+/// cancel path. Ten seconds mirrors `devices::engine_version`, probing the same
+/// binary for the same kind of answer.
+#[cfg(not(test))]
+const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+/// Shortened under test so the give-up path can actually be exercised; a
+/// ten-second test would simply be deleted by the next person who saw it.
+#[cfg(test)]
+const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(300);
 
 /// Run a probe subcommand against the engine in `dir`, returning its combined
-/// output. `LD_LIBRARY_PATH` points at `dir` because the engine's `.so` files
-/// sit beside the binary and are not on the system path.
+/// output.
+///
+/// The environment is deliberately left alone. The engine's `.so` files sit
+/// beside the binary rather than on the system path, and `sd-cli` finds them
+/// through its own `RUNPATH` of `$ORIGIN` — which is also how `run_generation`
+/// and `devices::engine_version` run it, neither of which sets
+/// `LD_LIBRARY_PATH`. Setting it here would make validation strictly more
+/// permissive than production: the loader searches `LD_LIBRARY_PATH` before
+/// `RUNPATH`, so a build that lost its `$ORIGIN` would probe clean, install,
+/// and then fail every generation with "error while loading shared libraries".
+/// Validation is only worth anything if it runs the binary the way we will.
 ///
 /// The exit status is deliberately not consulted: what a probe *printed* is the
 /// evidence, and a build that exits non-zero from `--help` (a common argument
 /// parser habit) is not thereby a bad build. Same reasoning as the merge of
-/// stderr into stdout below.
+/// stderr into stdout below — `-h`/`--help` lands on one or the other depending
+/// on the build, and reading only one is a live way to end up with a help
+/// string `engine_flags` cannot parse.
 fn probe(dir: &Path, arg: &str) -> Result<String, String> {
+    use std::io::Read;
     let bin = dir.join(crate::commands::engine_binary_name());
-    let out = crate::engine::retrying_while_busy(|| {
-        std::process::Command::new(&bin).arg(arg).env("LD_LIBRARY_PATH", dir).output()
+    let mut child = crate::engine::retrying_while_busy(|| {
+        std::process::Command::new(&bin)
+            .arg(arg)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
     })
     .map_err(|e| format!("The downloaded engine didn't start: {e}"))?;
-    let mut s = String::from_utf8_lossy(&out.stdout).into_owned();
-    s.push_str(&String::from_utf8_lossy(&out.stderr));
-    Ok(s)
+
+    // Both pipes are drained on their own threads: a probe that fills one while
+    // we blocked on the other would deadlock, and that is a wedge no timeout on
+    // a single stream would clear. Slot 0 is stdout, so the halves always
+    // recombine in the same order however they arrive.
+    let mut out = child.stdout.take().expect("stdout piped");
+    let mut err = child.stderr.take().expect("stderr piped");
+    let (tx, rx) = std::sync::mpsc::channel();
+    let tx_err = tx.clone();
+    std::thread::spawn(move || {
+        let mut s = String::new();
+        let _ = out.read_to_string(&mut s);
+        let _ = tx.send((0, s));
+    });
+    std::thread::spawn(move || {
+        let mut s = String::new();
+        let _ = err.read_to_string(&mut s);
+        let _ = tx_err.send((1, s));
+    });
+
+    let deadline = std::time::Instant::now() + PROBE_TIMEOUT;
+    let mut parts = [String::new(), String::new()];
+    let mut timed_out = false;
+    for _ in 0..parts.len() {
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        match rx.recv_timeout(left) {
+            Ok((slot, s)) => parts[slot] = s,
+            Err(_) => {
+                timed_out = true;
+                break;
+            }
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+
+    if timed_out {
+        return Err(format!("The downloaded engine didn't answer `{arg}` in time."));
+    }
+    Ok(format!("{}{}", parts[0], parts[1]))
 }
 
 /// Check that a freshly extracted engine can run and still speaks our dialect.
@@ -484,6 +549,24 @@ mod tests {
              esac\n\
              exit {exit_code}\n"
         );
+        let p = dir.join(crate::commands::engine_binary_name());
+        std::fs::write(&p, script).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    /// As `fake_engine`, but the build prints its help to stderr — which real
+    /// argument parsers commonly do, and which is the whole reason `probe`
+    /// merges the two streams.
+    fn fake_engine_talking_to_stderr(dir: &Path, version_out: &str, help_out: &str) {
+        fake_engine(dir, version_out, help_out, 0);
+        let script = "#!/bin/sh\n\
+                      d=$(dirname \"$0\")\n\
+                      case \"$1\" in\n\
+                      --version) cat \"$d/version-out.txt\" ;;\n\
+                      --help) cat \"$d/help-out.txt\" >&2 ;;\n\
+                      esac\n\
+                      exit 0\n";
         let p = dir.join(crate::commands::engine_binary_name());
         std::fs::write(&p, script).unwrap();
         use std::os::unix::fs::PermissionsExt;
@@ -997,16 +1080,53 @@ mod tests {
     /// fails on a perfectly good build — see the libcuda note in the project's
     /// memory. The stand-in refuses to identify itself unless the variable is
     /// set, exactly as the real loader would.
+    /// `engine_flags` states the merge as a caller contract, and reading only
+    /// stdout is the documented way to end up rejecting a perfectly good build
+    /// as unparseable. Without this, deleting the merge changes no test.
     #[test]
-    fn validation_points_the_loader_at_the_engines_own_directory() {
+    fn validation_reads_help_printed_to_stderr() {
+        let root = tmp("val-stderr");
+        fake_engine_talking_to_stderr(&root, GOOD_VERSION, &full_help());
+
+        assert_eq!(validate_engine(&root).unwrap(), "5ef4a75");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A downloaded binary that never answers must not wedge the app: this runs
+    /// under `install_release`'s generation lock, with no cancel path.
+    #[test]
+    fn validation_gives_up_on_an_engine_that_never_answers() {
+        let root = tmp("val-hang");
+        std::fs::create_dir_all(&root).unwrap();
+        let p = root.join(crate::commands::engine_binary_name());
+        std::fs::write(&p, "#!/bin/sh\nsleep 30\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let started = std::time::Instant::now();
+        let err = validate_engine(&root).unwrap_err();
+        assert!(err.contains("in time"), "unexpected message: {err}");
+        // The point is the bound, not the message: assert we returned on the
+        // timeout rather than on the sleep finishing.
+        assert!(started.elapsed() < std::time::Duration::from_secs(5), "probe was not bounded");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn validation_runs_the_engine_the_way_generation_will() {
         let root = tmp("val-ldpath");
         std::fs::create_dir_all(&root).unwrap();
         let p = root.join(crate::commands::engine_binary_name());
+        // Refuses to answer if `LD_LIBRARY_PATH` has been aimed at its own
+        // directory, which is what a probe more permissive than production
+        // would do. Comparing against `$d` rather than requiring the variable
+        // to be unset keeps this honest when the developer's own environment
+        // sets it for unrelated reasons.
         std::fs::write(
             &p,
             "#!/bin/sh\n\
              d=$(dirname \"$0\")\n\
-             [ \"$LD_LIBRARY_PATH\" = \"$d\" ] || { echo 'error while loading shared libraries'; exit 127; }\n\
+             [ \"$LD_LIBRARY_PATH\" = \"$d\" ] && { echo 'loader was given a leg up'; exit 127; }\n\
              case \"$1\" in\n\
              --version) cat \"$d/version-out.txt\" ;;\n\
              --help) cat \"$d/help-out.txt\" ;;\n\
