@@ -27,9 +27,6 @@ pub fn install_dir(root: &Path, tag: &str) -> PathBuf {
 }
 
 /// Where an install is assembled before the atomic rename.
-// Not yet called outside this module or its tests — Task 11's `finish_install`
-// and `install_release` call it.
-#[allow(dead_code)]
 pub fn staging_dir(root: &Path, tag: &str) -> PathBuf {
     root.join(format!("{STAGING_PREFIX}{tag}"))
 }
@@ -77,8 +74,8 @@ pub fn installed_tags(root: &Path) -> Vec<String> {
 /// build must not have it deleted out from under them. Directories that are not
 /// parseable tags are never touched — they are not ours.
 // Not yet called outside this module or its tests — Task 12's `engine_apply_update`
-// command calls it. This allow is also what keeps `install_dir` and
-// `installed_tags` (both called below) from being flagged as dead code.
+// command calls it. This allow is also what keeps `installed_tags` (called
+// below) from being flagged as dead code.
 #[allow(dead_code)]
 pub fn prune(root: &Path, keep: usize, protect: &str) {
     for (i, tag) in installed_tags(root).into_iter().enumerate() {
@@ -112,9 +109,6 @@ const BAD_ARCHIVE: &str = "The downloaded archive was damaged. Try again.";
 /// entry — an archive containing a traversal entry is not one to trust the rest
 /// of. It also aborts *before* writing anything from that entry, so a refused
 /// archive leaves nothing behind.
-// Not yet called outside this module or its tests — Task 11's `install_release`
-// calls it. This allow is also what keeps `BAD_ARCHIVE` (used below) alive.
-#[allow(dead_code)]
 pub fn extract_zip(zip_path: &Path, dest: &Path) -> Result<(), String> {
     let file =
         std::fs::File::open(zip_path).map_err(|e| format!("Couldn't open the download: {e}"))?;
@@ -195,9 +189,6 @@ pub fn sha256_file(path: &Path) -> Result<String, String> {
 /// extractor with that argument quietly gone. It is an accepted risk, not an
 /// oversight: an upstream that can forge the digest can simply ship a malicious
 /// `sd-cli` instead, which is strictly worse and no cap would help.
-// Not yet called outside this module or its tests — Task 11's `install_release`
-// calls it. This allow is also what keeps `sha256_file` (called above) alive.
-#[allow(dead_code)]
 pub fn verify_hash(path: &Path, expected: Option<&str>) -> Result<(), String> {
     let Some(expected) = expected else { return Ok(()) };
     let actual = sha256_file(path)?;
@@ -233,11 +224,221 @@ pub fn verify_hash(path: &Path, expected: Option<&str>) -> Result<(), String> {
 /// Saturating, for the same reason `diskspace::fits` uses `checked_sub`: an
 /// absurd declared size must report "does not fit", not wrap into a false pass
 /// (or panic in a debug build, inside a Tauri command).
-// Not yet called outside this module or its tests — Task 11's `install_release`
-// calls it.
-#[allow(dead_code)]
 pub fn required_space(asset_size: u64) -> u64 {
     asset_size.saturating_mul(5)
+}
+
+/// The most missing flags to name in an error message. Beyond a handful the
+/// list stops informing and starts overwhelming — and if this many are gone,
+/// the one fact that matters is "this build is not compatible".
+const MAX_REPORTED_FLAGS: usize = 3;
+
+/// How many times to wait out an "executable file busy" before reporting it,
+/// and how long to wait each time. A sixth of a second in the worst case, on a
+/// path that has just spent a minute downloading.
+const PROBE_RETRIES: u32 = 8;
+const PROBE_RETRY_PAUSE: std::time::Duration = std::time::Duration::from_millis(20);
+
+/// Run a probe subcommand against the engine in `dir`, returning its combined
+/// output. `LD_LIBRARY_PATH` points at `dir` because the engine's `.so` files
+/// sit beside the binary and are not on the system path.
+///
+/// The exit status is deliberately not consulted: what a probe *printed* is the
+/// evidence, and a build that exits non-zero from `--help` (a common argument
+/// parser habit) is not thereby a bad build. Same reasoning as the merge of
+/// stderr into stdout below.
+fn probe(dir: &Path, arg: &str) -> Result<String, String> {
+    let bin = dir.join(crate::commands::engine_binary_name());
+    let mut attempts = 0;
+    let out = loop {
+        let spawned = std::process::Command::new(&bin)
+            .arg(arg)
+            .env("LD_LIBRARY_PATH", dir)
+            .output();
+        match spawned {
+            Ok(out) => break out,
+            // Linux refuses to `exec` a file that is open for writing anywhere
+            // in the system. This process wrote that binary seconds ago, and a
+            // `fork` on any other thread during extraction inherits the writable
+            // descriptor and keeps the engine "busy" until that child execs.
+            // Milliseconds wide, and it costs milliseconds to wait out; not
+            // waiting throws away a verified 45 MB download and tells the user
+            // their engine won't start.
+            Err(e)
+                if e.kind() == std::io::ErrorKind::ExecutableFileBusy
+                    && attempts < PROBE_RETRIES =>
+            {
+                attempts += 1;
+                std::thread::sleep(PROBE_RETRY_PAUSE);
+            }
+            Err(e) => return Err(format!("The downloaded engine didn't start: {e}")),
+        }
+    };
+    let mut s = String::from_utf8_lossy(&out.stdout).into_owned();
+    s.push_str(&String::from_utf8_lossy(&out.stderr));
+    Ok(s)
+}
+
+/// Check that a freshly extracted engine can run and still speaks our dialect.
+/// Returns its commit on success.
+///
+/// Milliseconds, no model load. This catches a build that won't start and a
+/// build that dropped a flag MuchAI emits. It cannot catch a build that accepts
+/// every flag and produces garbage output — the yellow-square failure that
+/// motivated pinning the engine in the first place. There is no cheap probe for
+/// that; the mitigation is the inline revert offered on first-run failure.
+///
+/// One more blind spot, for the next reader asking "why did validation pass?":
+/// `extract_zip` writes a symlink entry as an ordinary file holding its target
+/// as text. The pinned asset dereferences its sonames, so this is latent, but
+/// were upstream to start packaging symlinks, a mangled `libstable-diffusion.so`
+/// would fail to link and the identity probe would catch it — while a mangled
+/// `libggml-cpu-*.so` is `dlopen`ed lazily, passes cleanly here, and would
+/// surface only at generation time.
+fn validate_engine(dir: &Path) -> Result<String, String> {
+    let version_out = probe(dir, "--version")?;
+    let commit = crate::devices::parse_engine_version(&version_out)
+        .ok_or_else(|| "The downloaded engine didn't start properly.".to_string())?;
+
+    // `probe` merges stdout and stderr deliberately — `engine_flags` documents
+    // that contract, because a build that prints help to stderr would otherwise
+    // parse as empty and come back `Unparseable`.
+    let help = probe(dir, "--help")?;
+    match crate::engine_flags::missing_flags(&help) {
+        crate::engine_flags::FlagCheck::Compatible => {}
+        crate::engine_flags::FlagCheck::Missing(missing) => {
+            let shown: Vec<&str> = missing.iter().take(MAX_REPORTED_FLAGS).copied().collect();
+            let more = missing.len().saturating_sub(shown.len());
+            let tail = if more > 0 { format!(" and {more} more") } else { String::new() };
+            return Err(format!(
+                "This engine build isn't compatible with MuchAI — it no longer supports {}{}. Keeping your current engine.",
+                shown.join(", "),
+                tail
+            ));
+        }
+        // Distinct wording on purpose: reporting all 22 flags as "missing" would
+        // be false and would point the user at twenty-two dead ends instead of
+        // the one real problem.
+        crate::engine_flags::FlagCheck::Unparseable { .. } => {
+            return Err(
+                "MuchAI couldn't read this engine build's --help output, so it can't confirm the build is compatible. Keeping your current engine."
+                    .to_string(),
+            );
+        }
+    }
+    Ok(commit)
+}
+
+/// Validate the staging tree, then move it into place atomically.
+///
+/// Everything destructive happens *after* validation passes, and the final move
+/// is a single `rename()`. On any failure the staging tree is removed and the
+/// previously installed engine is untouched.
+fn finish_install(root: &Path, tag: &str) -> Result<String, String> {
+    let staging = staging_dir(root, tag);
+    let dest = install_dir(root, tag);
+
+    let finish = || -> Result<String, String> {
+        // sd-server ships in the archive and MuchAI never spawns it; ~1.4 MB of
+        // dead weight per install. fetch-engine.sh drops it for the same reason.
+        let _ = std::fs::remove_file(staging.join("sd-server"));
+
+        // Belt and braces on the executable bit. Extraction preserves the mode
+        // recorded in the archive, but an archive built on a filesystem that
+        // does not carry the bit would produce an engine that cannot be
+        // spawned — and validation below is the first thing that would try.
+        // fetch-engine.sh chmods for the same reason.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let bin = staging.join(crate::commands::engine_binary_name());
+            if let Ok(meta) = std::fs::metadata(&bin) {
+                let mode = meta.permissions().mode() | 0o111;
+                let _ = std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(mode));
+            }
+        }
+
+        let commit = validate_engine(&staging)?;
+
+        // Reinstalling the same tag must replace, not merge — a leftover file
+        // from a previous attempt could shadow a renamed one.
+        if dest.exists() {
+            std::fs::remove_dir_all(&dest)
+                .map_err(|e| format!("Couldn't replace the existing engine: {e}"))?;
+        }
+        std::fs::rename(&staging, &dest).map_err(|e| format!("Couldn't install the engine: {e}"))?;
+        Ok(commit)
+    };
+
+    let result = finish();
+    if result.is_err() {
+        let _ = std::fs::remove_dir_all(&staging);
+    }
+    result
+}
+
+/// Pure space predicate, split out so it is testable without a real disk.
+fn check_space_for(asset_size: u64, free: u64) -> Result<(), String> {
+    let need = required_space(asset_size);
+    if crate::diskspace::fits(free, need) {
+        return Ok(());
+    }
+    Err(format!(
+        "{}: installing this engine needs about {} free, but only {} is available.",
+        crate::downloader::INSUFFICIENT_SPACE_PREFIX,
+        crate::diskspace::fmt_bytes(need),
+        crate::diskspace::fmt_bytes(free),
+    ))
+}
+
+/// Download, verify, extract, validate and install a release. Returns the
+/// engine's commit on success.
+///
+/// `on_progress` receives `(downloaded, total)` during the transfer only;
+/// extraction and validation are fast enough not to need their own reporting.
+// Not yet called outside this module — Task 12's `engine_apply_update` command
+// calls it. This one allow is what keeps the whole install path alive:
+// `check_space_for`, `staging_dir`, `verify_hash`, `extract_zip`,
+// `finish_install`, `validate_engine`, `probe` and everything they reach.
+#[allow(dead_code)]
+pub fn install_release(
+    root: &Path,
+    release: &crate::engine_release::EngineRelease,
+    free_bytes: u64,
+    on_progress: impl FnMut(u64, Option<u64>),
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<String, String> {
+    // The tag names a directory under the engines root, so it must never be able
+    // to climb out of it. `to_engine_release` is where that is enforced — it
+    // refuses any tag `parse_tag` rejects — but `EngineRelease`'s fields are
+    // `pub`, so a struct literal written elsewhere in the crate (a test fixture,
+    // most plausibly) could still carry `../../evil` here. This documents the
+    // invariant at the boundary that depends on it, and costs nothing in release.
+    debug_assert!(crate::engine_release::parse_tag(&release.tag).is_some());
+
+    check_space_for(release.asset.size, free_bytes)?;
+
+    let staging = staging_dir(root, &release.tag);
+    let _ = std::fs::remove_dir_all(&staging); // a previous attempt, swept early
+    std::fs::create_dir_all(&staging)
+        .map_err(|e| format!("Couldn't create {}: {e}", staging.display()))?;
+
+    let cleanup = |e: String| {
+        let _ = std::fs::remove_dir_all(&staging);
+        e
+    };
+
+    let archive = staging.join("engine.zip");
+    // Empty token: the engine archive is a public GitHub asset, unlike the
+    // HuggingFace and Civitai paths that share this downloader.
+    crate::downloader::download_to(&release.asset.url, "", &archive, on_progress, cancel)
+        .map_err(|e| cleanup(e.message()))?;
+
+    verify_hash(&archive, release.asset.sha256.as_deref()).map_err(cleanup)?;
+    extract_zip(&archive, &staging).map_err(cleanup)?;
+    std::fs::remove_file(&archive).map_err(|e| cleanup(format!("Couldn't tidy up: {e}")))?;
+
+    finish_install(root, &release.tag)
 }
 
 #[cfg(test)]
@@ -287,6 +488,40 @@ mod tests {
         assert!(status.success());
         zip_path
     }
+
+    /// Write an executable stand-in for `sd-cli` that echoes canned output.
+    ///
+    /// The canned text lands in sidecar files the script `cat`s, rather than
+    /// inline in the script itself: the real help fixture is 252 lines
+    /// containing backticks and `%`, and any attempt to embed it in a shell
+    /// string has the shell re-read them. `cat` reproduces the bytes exactly,
+    /// which is the whole point — the parser under test must see what the real
+    /// engine prints.
+    fn fake_engine(dir: &Path, version_out: &str, help_out: &str, exit_code: i32) {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(dir.join("version-out.txt"), version_out).unwrap();
+        std::fs::write(dir.join("help-out.txt"), help_out).unwrap();
+        let script = format!(
+            "#!/bin/sh\n\
+             d=$(dirname \"$0\")\n\
+             case \"$1\" in\n\
+             --version) cat \"$d/version-out.txt\" ;;\n\
+             --help) cat \"$d/help-out.txt\" ;;\n\
+             esac\n\
+             exit {exit_code}\n"
+        );
+        let p = dir.join(crate::commands::engine_binary_name());
+        std::fs::write(&p, script).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    /// The pinned engine's real `--help`, byte for byte.
+    fn full_help() -> String {
+        include_str!("../fixtures/sd-help.txt").to_string()
+    }
+
+    const GOOD_VERSION: &str = "stable-diffusion.cpp version unknown, commit 5ef4a75\n";
 
     #[test]
     fn extracts_a_normal_archive() {
@@ -758,5 +993,303 @@ mod tests {
 
         assert_eq!(need, u64::MAX);
         assert!(!crate::diskspace::fits(u64::MAX, need), "an absurd size must never fit");
+    }
+
+    #[test]
+    fn validation_accepts_a_good_engine() {
+        let root = tmp("val-ok");
+        fake_engine(&root, GOOD_VERSION, &full_help(), 0);
+
+        assert_eq!(validate_engine(&root).unwrap(), "5ef4a75");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn validation_rejects_an_engine_that_will_not_run() {
+        let root = tmp("val-norun");
+        // No binary at all.
+        std::fs::create_dir_all(&root).unwrap();
+
+        let err = validate_engine(&root).unwrap_err();
+        // The colon is what makes this the *spawn* failure and not the "ran but
+        // printed no commit" one below; without it, a `probe` that swallowed
+        // spawn errors and returned empty output would still pass this test.
+        assert!(err.contains("didn't start:"), "unexpected message: {err}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The engine's `.so` files sit beside the binary and are not on the system
+    /// path, so a probe that does not point the loader at the staging directory
+    /// fails on a perfectly good build — see the libcuda note in the project's
+    /// memory. The stand-in refuses to identify itself unless the variable is
+    /// set, exactly as the real loader would.
+    #[test]
+    fn validation_points_the_loader_at_the_engines_own_directory() {
+        let root = tmp("val-ldpath");
+        std::fs::create_dir_all(&root).unwrap();
+        let p = root.join(crate::commands::engine_binary_name());
+        std::fs::write(
+            &p,
+            "#!/bin/sh\n\
+             d=$(dirname \"$0\")\n\
+             [ \"$LD_LIBRARY_PATH\" = \"$d\" ] || { echo 'error while loading shared libraries'; exit 127; }\n\
+             case \"$1\" in\n\
+             --version) cat \"$d/version-out.txt\" ;;\n\
+             --help) cat \"$d/help-out.txt\" ;;\n\
+             esac\n",
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::write(root.join("version-out.txt"), GOOD_VERSION).unwrap();
+        std::fs::write(root.join("help-out.txt"), full_help()).unwrap();
+
+        assert_eq!(validate_engine(&root).unwrap(), "5ef4a75");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The live shape of "won't run": the binary spawns fine, the dynamic
+    /// loader then fails to resolve a sibling `.so` and the process dies
+    /// printing a linker error instead of a commit. This is the branch that
+    /// catches a symlink entry extracted as an 11-byte text file — see
+    /// `extract_zip` — and it is a *different* branch from the one above,
+    /// where the spawn itself fails.
+    #[test]
+    fn validation_rejects_a_build_that_runs_but_prints_no_commit() {
+        let root = tmp("val-noload");
+        fake_engine(
+            &root,
+            "sd-cli: error while loading shared libraries: libstable-diffusion.so: \
+             cannot open shared object file: No such file or directory\n",
+            &full_help(),
+            127,
+        );
+
+        let err = validate_engine(&root).unwrap_err();
+        assert!(err.contains("didn't start properly"), "unexpected message: {err}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A probe is judged by what it printed, never by its exit status. Plenty
+    /// of argument parsers exit non-zero from `--help`, and refusing a build
+    /// over that would reject a perfectly good engine — the same reasoning that
+    /// makes `probe` merge stderr into stdout.
+    #[test]
+    fn validation_judges_the_output_not_the_exit_status() {
+        let root = tmp("val-exit");
+        fake_engine(&root, GOOD_VERSION, &full_help(), 1);
+
+        assert_eq!(validate_engine(&root).unwrap(), "5ef4a75");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The engine is exec'd seconds after this process wrote it, and Linux
+    /// refuses to exec a file that is open for writing anywhere — a fork on
+    /// another thread mid-extraction is enough. Holding a writable descriptor
+    /// here reproduces that exactly, and it must be waited out rather than
+    /// reported as a broken build: this is the one failure mode where a
+    /// perfectly good, hash-verified download would otherwise be discarded.
+    /// (It is not hypothetical — `engine.rs`'s tests carry a mutex for the same
+    /// race, and a parallel `cargo test` hits it several times an hour.)
+    #[test]
+    fn validation_waits_out_a_busy_executable() {
+        let root = tmp("val-busy");
+        fake_engine(&root, GOOD_VERSION, &full_help(), 0);
+
+        let held = std::fs::OpenOptions::new()
+            .write(true)
+            .open(root.join(crate::commands::engine_binary_name()))
+            .unwrap();
+        // The hold has to sit strictly between "one attempt" and "the whole
+        // budget": short enough that the retries outlast it, long enough that
+        // the first attempt still lands inside it when this thread is competing
+        // with four hundred others for a core. 80 ms against a 160 ms budget.
+        let releaser = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(80));
+            drop(held);
+        });
+
+        assert_eq!(validate_engine(&root).unwrap(), "5ef4a75");
+        releaser.join().unwrap();
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn validation_rejects_a_build_missing_a_flag_muchai_uses() {
+        let root = tmp("val-flags");
+        let doctored = full_help().replace("--tensor-type-rules", "--type-rules");
+        fake_engine(&root, GOOD_VERSION, &doctored, 0);
+
+        let err = validate_engine(&root).unwrap_err();
+        assert!(err.contains("--tensor-type-rules"), "the message must name the flag: {err}");
+        assert!(err.contains("isn't compatible"), "unexpected message: {err}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn validation_reports_at_most_a_few_missing_flags() {
+        let root = tmp("val-many");
+        // A readable help that simply shares none of our flags. It must clear
+        // `engine_flags`' plausibility floor, or this exercises the
+        // `Unparseable` branch instead of the "missing" one it is testing.
+        let help: String =
+            (0..40).map(|i| format!("  --unrelated-{i} <string>    something else\n")).collect();
+        fake_engine(&root, GOOD_VERSION, &help, 0);
+
+        let err = validate_engine(&root).unwrap_err();
+        assert!(err.contains("isn't compatible"), "unexpected message: {err}");
+        // Naming the first few and counting the rest, not listing all 22. The
+        // length bound alone would also pass on a message that named every
+        // flag but abbreviated each one, so pin a specific flag that must not
+        // appear: `--vae-tiling` is last in `REQUIRED_FLAGS`, so it is only
+        // ever reached by an implementation that skipped the cap.
+        assert!(!err.contains("--vae-tiling"), "the list must be truncated: {err}");
+        assert!(err.contains("19 more"), "the message must account for the rest: {err}");
+        assert!(err.len() < 300, "the message must stay readable, got {} chars", err.len());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn validation_says_it_could_not_read_the_help_rather_than_naming_every_flag() {
+        let root = tmp("val-unreadable");
+        // Help we cannot parse at all — reporting all 22 flags as missing would
+        // be false and would send the user chasing twenty-two dead ends.
+        fake_engine(&root, GOOD_VERSION, "usage: sd [options]\n", 0);
+
+        let err = validate_engine(&root).unwrap_err();
+        assert!(err.contains("couldn't read"), "unexpected message: {err}");
+        assert!(!err.contains("--backend"), "must not name flags it cannot vouch for: {err}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn install_renames_staging_into_place() {
+        let root = tmp("install-rename");
+        let engines = root.join("engines");
+        let staging = staging_dir(&engines, "master-797-5ef4a75");
+        fake_engine(&staging, GOOD_VERSION, &full_help(), 0);
+        std::fs::write(staging.join("sd-server"), b"unused").unwrap();
+
+        assert_eq!(finish_install(&engines, "master-797-5ef4a75").unwrap(), "5ef4a75");
+
+        let dest = install_dir(&engines, "master-797-5ef4a75");
+        assert!(dest.join(crate::commands::engine_binary_name()).exists());
+        assert!(!dest.join("sd-server").exists(), "sd-server is dead weight and must be dropped");
+        assert!(!staging.exists(), "staging must be gone after the rename");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Extraction carries the archive's executable bit across, but an archive
+    /// built where that bit does not exist would produce an engine that cannot
+    /// be spawned — and validation is the first thing that would try to spawn
+    /// it, so the repair has to happen before then, not at first generation.
+    #[test]
+    fn install_restores_a_missing_executable_bit_before_validating() {
+        let root = tmp("install-chmod");
+        let engines = root.join("engines");
+        let staging = staging_dir(&engines, "master-797-5ef4a75");
+        fake_engine(&staging, GOOD_VERSION, &full_help(), 0);
+        use std::os::unix::fs::PermissionsExt;
+        let bin = staging.join(crate::commands::engine_binary_name());
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        finish_install(&engines, "master-797-5ef4a75").unwrap();
+
+        let dest = install_dir(&engines, "master-797-5ef4a75");
+        let mode = std::fs::metadata(dest.join(crate::commands::engine_binary_name()))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o111, 0o111, "the engine must be executable after install");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn install_replaces_an_existing_directory_for_the_same_tag() {
+        let root = tmp("install-replace");
+        let engines = root.join("engines");
+        let dest = install_dir(&engines, "master-797-5ef4a75");
+        std::fs::create_dir_all(&dest).unwrap();
+        std::fs::write(dest.join("stale.txt"), b"old").unwrap();
+        let staging = staging_dir(&engines, "master-797-5ef4a75");
+        fake_engine(&staging, GOOD_VERSION, &full_help(), 0);
+
+        finish_install(&engines, "master-797-5ef4a75").unwrap();
+
+        assert!(!dest.join("stale.txt").exists(), "a reinstall must not merge with the old tree");
+        assert!(dest.join(crate::commands::engine_binary_name()).exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_failed_validation_leaves_nothing_installed() {
+        let root = tmp("install-badval");
+        let engines = root.join("engines");
+        let staging = staging_dir(&engines, "master-799-bad");
+        fake_engine(&staging, GOOD_VERSION, "usage: sd [--foo]\n", 0);
+
+        assert!(finish_install(&engines, "master-799-bad").is_err());
+
+        assert!(!install_dir(&engines, "master-799-bad").exists(), "nothing may be installed");
+        assert!(!staging.exists(), "the failed staging tree must be cleaned up");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The rename is the only destructive step and it happens *after*
+    /// validation passes. An implementation that cleared the destination first,
+    /// or that renamed and then rolled back, would still satisfy "nothing may
+    /// be installed" above — while having destroyed the engine the user was
+    /// running in between. That is the whole atomicity claim in the module
+    /// header, and only an existing install can witness it.
+    #[test]
+    fn a_failed_validation_leaves_the_previous_install_untouched() {
+        let root = tmp("install-badval-keep");
+        let engines = root.join("engines");
+        let dest = install_dir(&engines, "master-797-5ef4a75");
+        fake_engine(&dest, GOOD_VERSION, &full_help(), 0);
+        std::fs::write(dest.join("marker.txt"), b"the engine the user is running").unwrap();
+
+        let staging = staging_dir(&engines, "master-797-5ef4a75");
+        fake_engine(&staging, GOOD_VERSION, "usage: sd [--foo]\n", 0);
+
+        assert!(finish_install(&engines, "master-797-5ef4a75").is_err());
+
+        assert_eq!(
+            std::fs::read_to_string(dest.join("marker.txt")).unwrap(),
+            "the engine the user is running",
+            "a failed install must not disturb the engine already installed"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn install_refuses_when_the_disk_is_too_full() {
+        // 45 MB asset needs 225 MB. (The plan said "~1.2 GB"; that was written
+        // when `required_space` folded the headroom in, which it no longer
+        // does — `fits` owns that.)
+        let err = check_space_for(45_000_000, 100_000_000).unwrap_err();
+        assert!(err.starts_with(crate::downloader::INSUFFICIENT_SPACE_PREFIX), "unexpected: {err}");
+        // Human units, and the right way round — the two figures are quoted
+        // with their surrounding words so that swapping them is caught.
+        assert!(err.contains("needs about 225 MB"), "must state what is needed: {err}");
+        assert!(err.contains("only 100 MB"), "must state what is free: {err}");
+        assert!(!err.contains("225000000"), "raw byte counts are not for users: {err}");
+    }
+
+    /// Room for the install alone is not room enough: `fits` reserves a
+    /// gigabyte behind every download, and this check has to defer to it rather
+    /// than compare against the bare requirement.
+    #[test]
+    fn install_refuses_when_it_would_eat_the_reserve() {
+        let need = required_space(45_000_000);
+        let free = need + crate::diskspace::HEADROOM_BYTES / 2;
+
+        assert!(free > need, "the install fits on its own; only the reserve is short");
+        assert!(check_space_for(45_000_000, free).is_err());
+    }
+
+    #[test]
+    fn install_proceeds_when_there_is_room() {
+        assert!(check_space_for(45_000_000, 50_000_000_000).is_ok());
     }
 }
