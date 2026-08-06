@@ -30,7 +30,7 @@ pub fn staging_dir(root: &Path, tag: &str) -> PathBuf {
     root.join(format!("{STAGING_PREFIX}{tag}"))
 }
 
-/// Delete every `.staging-*` directory under `root`. Called once at startup: a
+/// Delete every entry named `.staging-*` under `root`. Called once at startup: a
 /// crash or kill mid-install can only leave one of these behind, and a staging
 /// directory is by definition incomplete. Best-effort — a failure here just
 /// wastes disk, it cannot break anything.
@@ -121,12 +121,17 @@ mod tests {
     #[test]
     fn sweep_removes_only_staging_directories() {
         let root = tmp("sweep");
-        mkdirs(&root, &["master-797-5ef4a75", ".staging-master-799-abc1234", ".staging-junk"]);
+        // `.gitkeep` is dot-prefixed but not staging: it pins that the guard is
+        // the `.staging-` prefix and not merely "starts with a dot".
+        mkdirs(
+            &root,
+            &[".gitkeep", "master-797-5ef4a75", ".staging-master-799-abc1234", ".staging-junk"],
+        );
         std::fs::write(root.join("a-file.txt"), b"x").unwrap();
 
         sweep_staging(&root);
 
-        assert_eq!(entries(&root), vec!["a-file.txt", "master-797-5ef4a75"]);
+        assert_eq!(entries(&root), vec![".gitkeep", "a-file.txt", "master-797-5ef4a75"]);
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -180,6 +185,10 @@ mod tests {
     fn lists_installed_tags_newest_first() {
         let root = tmp("list");
         mkdirs(&root, &["master-780-aaaaaaa", "master-797-5ef4a75", ".staging-master-799-abc1234", "junk"]);
+        // A *file* named like a tag is not an installed engine. Listing it would
+        // burn a retention slot in `prune` and offer a selection that resolves to
+        // nothing; `remove_dir_all` on it fails, so it would never self-heal.
+        std::fs::write(root.join("master-999-fffffff"), b"x").unwrap();
 
         assert_eq!(installed_tags(&root), vec!["master-797-5ef4a75", "master-780-aaaaaaa"]);
         let _ = std::fs::remove_dir_all(&root);

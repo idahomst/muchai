@@ -226,7 +226,16 @@ fn commit_url(sha: &str) -> String {
 
 /// Combine a parsed release with its one usable asset. `None` when the release
 /// carries no asset MuchAI can run, which the caller reports as "no update".
+///
+/// The tag is re-parsed here, and an unparseable one is refused, so that every
+/// `EngineRelease` in existence carries a tag of the form `master-<n>-<sha>`.
+/// This is the only constructor, and the install path joins that tag onto the
+/// engines root to name a directory — `tag` arrives verbatim from GitHub's
+/// `tag_name`, so without this guard a `../..` in it would escape the store.
+/// Nothing is lost by refusing: `is_newer` cannot compare an unparseable tag
+/// either, so such a release could never have been offered as an update.
 fn to_engine_release(tag: String, assets: &[ReleaseAsset]) -> Option<EngineRelease> {
+    parse_tag(&tag)?;
     select_asset(assets).map(|a| EngineRelease { tag, asset: a.clone() })
 }
 
@@ -602,5 +611,21 @@ mod tests {
         // failed in CI: assets are present, none of them ours. An empty slice
         // alone cannot tell "rejected everything" from "nothing to reject".
         assert!(to_engine_release(tag, &[asset("sd-master-x-bin-win-vulkan-x64.zip")]).is_none());
+    }
+
+    #[test]
+    fn release_whose_tag_is_not_a_tag_is_not_offered() {
+        let (_, assets) = parse_release_json(release_fixture()).unwrap();
+        // The install path names a directory after this string, so a tag that is
+        // not a tag must never reach it. GitHub could rename its scheme; a
+        // compromised or spoofed response could aim at the traversal directly.
+        for tag in ["../../evil", "master-797-5ef4a75/..", "v1.2.3", ""] {
+            assert!(
+                to_engine_release(tag.to_string(), &assets).is_none(),
+                "{tag:?} must not become an EngineRelease"
+            );
+        }
+        // The real tag, same assets, still resolves.
+        assert!(to_engine_release("master-797-5ef4a75".to_string(), &assets).is_some());
     }
 }
