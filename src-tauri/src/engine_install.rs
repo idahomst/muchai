@@ -1,10 +1,14 @@
 //! Downloading, verifying and installing an engine release.
 //!
 //! The store is `~/.local/share/muchai/engines/<tag>/`, holding the extracted
-//! archive exactly as `scripts/fetch-engine.sh` lays it out: `sd-cli` plus its
-//! sibling `.so` files, ~113 MB.
+//! archive much as `scripts/fetch-engine.sh` lays it out: `sd-cli` plus its
+//! sibling `.so` files, ~118 MB. (The script additionally deletes `sd-server`;
+//! extraction here keeps it, so the store is slightly larger than `binaries/`.)
 //!
-//! Install is *extract to `.staging-<tag>/` → verify → validate → `rename()`*.
+//! Install is *download → verify → extract to `.staging-<tag>/` → validate →
+//! `rename()`*. Verification precedes extraction deliberately, and that
+//! ordering is load-bearing: it is the whole reason `extract_zip` decompresses
+//! without a size cap. Do not reorder these.
 //! Rename is atomic within a filesystem, so a directory named `<tag>` existing
 //! is itself proof that a fully-downloaded, hash-verified, flag-checked engine
 //! is inside. A crash or kill mid-install can only leave a `.staging-*`
@@ -208,9 +212,12 @@ pub fn verify_hash(path: &Path, expected: Option<&str>) -> Result<(), String> {
 ///
 /// At the peak the archive and its extraction sit side by side in the staging
 /// directory — the `.part` file is *renamed* into the archive rather than
-/// copied, so those two are one file, and extraction is ~2.5× the compressed
-/// size for this archive. That is ~3.5×, so 4× the asset is a comfortable,
-/// cheap over-estimate (~180 MB for a 45 MB asset).
+/// copied, so those two are one file. Measured against the pinned asset: 45.0 MB
+/// compressed, 117.8 MB extracted (`src-tauri/binaries/engine`, plus ~1.4 MB for
+/// the `sd-server` that `fetch-engine.sh` deletes and extraction here keeps), so
+/// extraction is ~2.6× and the peak is ~3.7×. 5× leaves real slack for an asset
+/// that compresses better or ships more files; 4× left only ~9%, which is not
+/// enough margin to be worth the ~45 MB saved on a guard this coarse.
 ///
 /// The shared headroom is deliberately *not* added here. `diskspace::fits` is
 /// the one place that reserves it — it requires `free - required >= HEADROOM` —
@@ -230,7 +237,7 @@ pub fn verify_hash(path: &Path, expected: Option<&str>) -> Result<(), String> {
 // calls it.
 #[allow(dead_code)]
 pub fn required_space(asset_size: u64) -> u64 {
-    asset_size.saturating_mul(4)
+    asset_size.saturating_mul(5)
 }
 
 #[cfg(test)]
@@ -647,6 +654,32 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// The archive this hashes is 45 MB, but every other test here uses a
+    /// three-byte file — so nothing pinned that the *whole* file is read. A
+    /// hand-rolled read loop missing its `loop`, added later to report hashing
+    /// progress, would digest only the first buffer and quietly accept any
+    /// download truncated past it: exactly the failure this task exists to
+    /// catch, reported to the user as a damaged archive instead.
+    #[test]
+    fn hashes_the_whole_file_not_just_the_first_buffer() {
+        let root = tmp("hash-big");
+        let f = root.join("big.bin");
+        // Comfortably more than io::copy's 8 KiB buffer, and non-constant so a
+        // partial read cannot coincidentally produce the same digest.
+        let bytes: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
+        std::fs::write(&f, &bytes).unwrap();
+
+        use sha2::{Digest, Sha256};
+        let expected = format!("{:x}", Sha256::digest(&bytes));
+        assert_eq!(sha256_file(&f).unwrap(), expected);
+
+        // And it is genuinely distinguishable from hashing only the first
+        // buffer, or this test would pass on a truncating implementation.
+        let first_buffer = format!("{:x}", Sha256::digest(&bytes[..8192]));
+        assert_ne!(expected, first_buffer);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn hashing_a_missing_file_is_an_error() {
         assert!(sha256_file(Path::new("/nonexistent/x.bin")).is_err());
@@ -673,18 +706,29 @@ mod tests {
 
     #[test]
     fn required_space_covers_archive_plus_extraction() {
-        // 45 MB asset: the finished zip and its ~113 MB extraction coexist in
-        // the staging directory for a moment. Asserted as a bound the estimate
-        // has to clear, not just as the formula restated — the formula could be
-        // "right" and still not cover what the install actually puts on disk.
-        let asset = 45_000_000u64;
-        let peak = asset + asset * 5 / 2;
+        // Measured bytes, not a ratio: deriving `peak` from the same multiple
+        // the implementation uses would let the bound ratify whatever the
+        // implementation happens to say. These are the real numbers for the
+        // pinned asset — its size from fixtures/gh-release-latest.json, its
+        // extraction measured with `du -sb src-tauri/binaries/engine`, plus
+        // sd-server, which that directory has had deleted but a staging
+        // extraction keeps.
+        let asset = 45_020_326u64;
+        let extracted = 117_795_060u64 + 1_400_000;
+        let peak = asset + extracted;
         let need = required_space(asset);
+
         assert!(
             need >= peak,
             "the estimate must cover archive + extraction, got {need} for a peak of {peak}"
         );
-        assert_eq!(need, asset * 4);
+        // And with room to spare, not by a hair: an engine that compresses a
+        // little better than this one must not tip the guard into failing.
+        assert!(
+            need >= peak + peak / 10,
+            "the estimate must leave slack, got {need} for a peak of {peak}"
+        );
+        assert_eq!(need, asset * 5);
     }
 
     /// The shared 1 GiB headroom belongs to `fits`, which subtracts it from
@@ -697,7 +741,7 @@ mod tests {
         // Stated in absolute bytes, deliberately: phrasing it relative to
         // `required_space(asset)` would hold whatever that function returns,
         // since it would only be re-checking `fits`'s own contract.
-        let enough = crate::diskspace::HEADROOM_BYTES + asset * 4;
+        let enough = crate::diskspace::HEADROOM_BYTES + asset * 5;
 
         assert!(
             crate::diskspace::fits(enough, required_space(asset)),
