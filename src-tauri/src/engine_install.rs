@@ -233,11 +233,6 @@ pub fn required_space(asset_size: u64) -> u64 {
 /// the one fact that matters is "this build is not compatible".
 const MAX_REPORTED_FLAGS: usize = 3;
 
-/// How many times to wait out an "executable file busy" before reporting it,
-/// and how long to wait each time. A sixth of a second in the worst case, on a
-/// path that has just spent a minute downloading.
-const PROBE_RETRIES: u32 = 8;
-const PROBE_RETRY_PAUSE: std::time::Duration = std::time::Duration::from_millis(20);
 
 /// Run a probe subcommand against the engine in `dir`, returning its combined
 /// output. `LD_LIBRARY_PATH` points at `dir` because the engine's `.so` files
@@ -249,31 +244,10 @@ const PROBE_RETRY_PAUSE: std::time::Duration = std::time::Duration::from_millis(
 /// stderr into stdout below.
 fn probe(dir: &Path, arg: &str) -> Result<String, String> {
     let bin = dir.join(crate::commands::engine_binary_name());
-    let mut attempts = 0;
-    let out = loop {
-        let spawned = std::process::Command::new(&bin)
-            .arg(arg)
-            .env("LD_LIBRARY_PATH", dir)
-            .output();
-        match spawned {
-            Ok(out) => break out,
-            // Linux refuses to `exec` a file that is open for writing anywhere
-            // in the system. This process wrote that binary seconds ago, and a
-            // `fork` on any other thread during extraction inherits the writable
-            // descriptor and keeps the engine "busy" until that child execs.
-            // Milliseconds wide, and it costs milliseconds to wait out; not
-            // waiting throws away a verified 45 MB download and tells the user
-            // their engine won't start.
-            Err(e)
-                if e.kind() == std::io::ErrorKind::ExecutableFileBusy
-                    && attempts < PROBE_RETRIES =>
-            {
-                attempts += 1;
-                std::thread::sleep(PROBE_RETRY_PAUSE);
-            }
-            Err(e) => return Err(format!("The downloaded engine didn't start: {e}")),
-        }
-    };
+    let out = crate::engine::retrying_while_busy(|| {
+        std::process::Command::new(&bin).arg(arg).env("LD_LIBRARY_PATH", dir).output()
+    })
+    .map_err(|e| format!("The downloaded engine didn't start: {e}"))?;
     let mut s = String::from_utf8_lossy(&out.stdout).into_owned();
     s.push_str(&String::from_utf8_lossy(&out.stderr));
     Ok(s)
