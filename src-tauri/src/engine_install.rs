@@ -209,8 +209,14 @@ pub fn verify_hash(path: &Path, expected: Option<&str>) -> Result<(), String> {
 /// At the peak the archive and its extraction sit side by side in the staging
 /// directory — the `.part` file is *renamed* into the archive rather than
 /// copied, so those two are one file, and extraction is ~2.5× the compressed
-/// size for this archive. That is ~3.5×; 4× the asset plus the shared headroom
-/// is a comfortable, cheap over-estimate (~1.2 GB for a 45 MB asset).
+/// size for this archive. That is ~3.5×, so 4× the asset is a comfortable,
+/// cheap over-estimate (~180 MB for a 45 MB asset).
+///
+/// The shared headroom is deliberately *not* added here. `diskspace::fits` is
+/// the one place that reserves it — it requires `free - required >= HEADROOM` —
+/// and both existing callers (`downloader.rs`, `commands.rs`) pass their raw
+/// need and let `fits` apply the policy. Folding a second `HEADROOM_BYTES` in
+/// here would demand ~2.2 GB free for a 45 MB engine instead of ~1.2 GB.
 ///
 /// This is a UX guard, not a security guard. `asset_size` is whatever the API
 /// declared, and the estimate bounds the *expected* download; it bounds nothing
@@ -224,7 +230,7 @@ pub fn verify_hash(path: &Path, expected: Option<&str>) -> Result<(), String> {
 // calls it.
 #[allow(dead_code)]
 pub fn required_space(asset_size: u64) -> u64 {
-    asset_size.saturating_mul(4).saturating_add(crate::diskspace::HEADROOM_BYTES)
+    asset_size.saturating_mul(4)
 }
 
 #[cfg(test)]
@@ -666,21 +672,37 @@ mod tests {
     }
 
     #[test]
-    fn required_space_covers_archive_plus_extraction_plus_headroom() {
+    fn required_space_covers_archive_plus_extraction() {
         // 45 MB asset: the finished zip and its ~113 MB extraction coexist in
         // the staging directory for a moment. Asserted as a bound the estimate
         // has to clear, not just as the formula restated — the formula could be
         // "right" and still not cover what the install actually puts on disk.
         let asset = 45_000_000u64;
         let peak = asset + asset * 5 / 2;
-        // Net of the headroom, or the assertion proves nothing: 1 GiB dwarfs a
-        // 157 MB peak, so it would hold even for a multiplier of zero.
-        let for_the_install = required_space(asset) - crate::diskspace::HEADROOM_BYTES;
+        let need = required_space(asset);
         assert!(
-            for_the_install >= peak,
-            "the estimate must cover archive + extraction, got {for_the_install} for a peak of {peak}"
+            need >= peak,
+            "the estimate must cover archive + extraction, got {need} for a peak of {peak}"
         );
-        assert_eq!(required_space(asset), asset * 4 + crate::diskspace::HEADROOM_BYTES);
+        assert_eq!(need, asset * 4);
+    }
+
+    /// The shared 1 GiB headroom belongs to `fits`, which subtracts it from
+    /// what is free. Adding it here as well would silently double it, so this
+    /// pins that a machine with exactly headroom-plus-the-install free accepts
+    /// the install rather than refusing it for want of a second gigabyte.
+    #[test]
+    fn required_space_does_not_double_count_the_headroom() {
+        let asset = 45_000_000u64;
+        // Stated in absolute bytes, deliberately: phrasing it relative to
+        // `required_space(asset)` would hold whatever that function returns,
+        // since it would only be re-checking `fits`'s own contract.
+        let enough = crate::diskspace::HEADROOM_BYTES + asset * 4;
+
+        assert!(
+            crate::diskspace::fits(enough, required_space(asset)),
+            "headroom plus the install's own bytes must be enough"
+        );
     }
 
     /// An absurd declared size must come out as "does not fit" — `fits` refuses
