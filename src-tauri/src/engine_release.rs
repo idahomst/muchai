@@ -6,7 +6,7 @@
 //! at the bottom of the file. Every parsing decision is therefore testable
 //! without a network.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// Tag of the engine bundled in this MuchAI build. Kept in sync with
 /// `ENGINE_TAG` in `scripts/fetch-engine.sh` by `builtin_tag_matches_fetch_script`.
@@ -145,6 +145,74 @@ pub fn select_asset(assets: &[ReleaseAsset]) -> Option<&ReleaseAsset> {
     });
     let first = it.next()?;
     it.next().is_none().then_some(first)
+}
+
+/// Conventional-commit prefixes the update card collapses behind "Show all".
+/// Anything else — including an unprefixed subject — is shown up front.
+const NOISE_PREFIXES: [&str; 6] = ["docs:", "ci:", "chore:", "style:", "test:", "refactor:"];
+
+/// One upstream commit, as shown in the update card.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ChangeEntry {
+    pub subject: String,
+    /// False only for a recognised noise prefix. An unprefixed subject counts
+    /// as noteworthy: hiding a real fix because someone forgot the prefix is
+    /// worse than showing one line too many.
+    pub noteworthy: bool,
+}
+
+/// Whether a commit subject belongs above the fold.
+pub fn is_noteworthy(subject: &str) -> bool {
+    let lower = subject.trim_start().to_ascii_lowercase();
+    !NOISE_PREFIXES.iter().any(|p| lower.starts_with(p))
+}
+
+fn entry(message: &str) -> ChangeEntry {
+    let subject = message.lines().next().unwrap_or("").trim().to_string();
+    ChangeEntry { noteworthy: is_noteworthy(&subject), subject }
+}
+
+#[derive(Deserialize)]
+struct RawCommitBody {
+    message: String,
+}
+
+#[derive(Deserialize)]
+struct RawCommit {
+    commit: RawCommitBody,
+}
+
+#[derive(Deserialize)]
+struct RawCompare {
+    #[serde(default)]
+    commits: Vec<RawCommit>,
+}
+
+/// Parse `GET /compare/<base>...<head>` into a **newest-first** changelog.
+/// GitHub returns `commits` oldest-first, so the headline the release page
+/// shows is the last element; reversing here means the card can just take
+/// element 0 and every consumer agrees on the order.
+// Not yet called outside this module or its tests — Task 7's HTTP wrapper
+// calls it. Keeps `ChangeEntry`, `is_noteworthy`, `entry`, and the `Raw*`
+// compare types reachable too.
+#[allow(dead_code)]
+pub fn parse_compare_json(body: &str) -> Result<Vec<ChangeEntry>, String> {
+    let raw: RawCompare = serde_json::from_str(body)
+        .map_err(|_| "Couldn't read the change list from GitHub (unexpected response).".to_string())?;
+    Ok(raw.commits.iter().rev().map(|c| entry(&c.commit.message)).collect())
+}
+
+/// Parse `GET /commits/<sha>` — the fallback when `/compare` 404s because
+/// GitHub does not know the revision the user is running (a self-compiled
+/// `Custom` engine). Yields the headline alone; showing no list is better than
+/// showing a wrong one.
+// Not yet called outside this module or its tests — Task 7's HTTP wrapper
+// calls it.
+#[allow(dead_code)]
+pub fn parse_commit_json(body: &str) -> Result<ChangeEntry, String> {
+    let raw: RawCommit = serde_json::from_str(body)
+        .map_err(|_| "Couldn't read the change list from GitHub (unexpected response).".to_string())?;
+    Ok(entry(&raw.commit.message))
 }
 
 #[cfg(test)]
@@ -315,5 +383,79 @@ mod tests {
     #[test]
     fn malformed_json_is_an_error_not_a_panic() {
         assert!(parse_release_json("{ nope ]").is_err());
+    }
+
+    fn compare_fixture() -> &'static str {
+        include_str!("../fixtures/gh-compare.json")
+    }
+
+    #[test]
+    fn parses_the_compare_fixture_newest_first() {
+        let log = parse_compare_json(compare_fixture()).unwrap();
+        assert_eq!(log.len(), 15);
+        assert_eq!(
+            log[0].subject,
+            "feat: expose IP-Adapter in server request schema and capabilities (#1824)",
+            "GitHub returns oldest-first; the headline is the last element"
+        );
+        assert_eq!(log[14].subject, "feat: add hunyuan video 1.5 support (#1795)");
+    }
+
+    #[test]
+    fn counts_noteworthy_and_noise_in_the_real_range() {
+        let log = parse_compare_json(compare_fixture()).unwrap();
+        let noteworthy = log.iter().filter(|c| c.noteworthy).count();
+        assert_eq!(noteworthy, 11, "7 fix: + 4 feat:");
+        assert_eq!(log.len() - noteworthy, 4, "2 docs: + 1 ci: + 1 chore:");
+    }
+
+    #[test]
+    fn classifies_conventional_prefixes() {
+        assert!(is_noteworthy("fix: correct dangling pointer (#1813)"));
+        assert!(is_noteworthy("feat: add Mage-Flow support (#1808)"));
+        assert!(is_noteworthy("perf: halve VAE decode time"));
+        assert!(!is_noteworthy("docs: fix links to sd 1.5 (#1798)"));
+        assert!(!is_noteworthy("ci: update ROCm releases to 7.14.0 (#1802)"));
+        assert!(!is_noteworthy("chore: add missing override declarations (#1800)"));
+        assert!(!is_noteworthy("refactor: split the sampler table"));
+        assert!(!is_noteworthy("test: cover the Qwen3-VL path"));
+        assert!(!is_noteworthy("style: clang-format the tree"));
+    }
+
+    #[test]
+    fn an_unprefixed_subject_is_noteworthy() {
+        // Showing too much is the safe direction; silently hiding a real fix
+        // because someone forgot the prefix is not.
+        assert!(is_noteworthy("Fix the thing that was broken"));
+        assert!(is_noteworthy("Merge pull request #1830 from foo/bar"));
+    }
+
+    #[test]
+    fn only_the_first_line_of_a_message_is_used() {
+        let json = r#"{"commits":[{"commit":{"message":"fix: one thing\n\nA long body that must not appear in the card."}}]}"#;
+        let log = parse_compare_json(json).unwrap();
+        assert_eq!(log[0].subject, "fix: one thing");
+    }
+
+    #[test]
+    fn an_empty_compare_yields_an_empty_log() {
+        assert_eq!(parse_compare_json(r#"{"commits":[]}"#).unwrap(), Vec::<ChangeEntry>::new());
+    }
+
+    #[test]
+    fn parses_a_single_commit_object() {
+        // The /commits/<sha> fallback, used when /compare 404s on a rev GitHub
+        // does not know (a self-compiled Custom engine).
+        let json = r#"{"commit":{"message":"feat: expose IP-Adapter (#1824)\n\nbody"}}"#;
+        assert_eq!(
+            parse_commit_json(json).unwrap().subject,
+            "feat: expose IP-Adapter (#1824)"
+        );
+    }
+
+    #[test]
+    fn malformed_compare_json_is_an_error() {
+        assert!(parse_compare_json("nope").is_err());
+        assert!(parse_commit_json("nope").is_err());
     }
 }
