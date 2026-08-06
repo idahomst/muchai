@@ -6,6 +6,8 @@
 //! at the bottom of the file. Every parsing decision is therefore testable
 //! without a network.
 
+use serde::Deserialize;
+
 /// Tag of the engine bundled in this MuchAI build. Kept in sync with
 /// `ENGINE_TAG` in `scripts/fetch-engine.sh` by `builtin_tag_matches_fetch_script`.
 ///
@@ -57,6 +59,92 @@ pub fn is_newer(candidate: &str, running: &str) -> bool {
         (Some(c), Some(r)) => c.build > r.build,
         _ => false,
     }
+}
+
+/// Token identifying the backend build MuchAI ships. The one thing to change
+/// if MuchAI ever ships ROCm instead of Vulkan.
+pub const BACKEND_TOKEN: &str = "vulkan";
+
+/// One downloadable file attached to a release.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReleaseAsset {
+    pub name: String,
+    pub url: String,
+    pub size: u64,
+    /// Lowercase hex SHA-256 from GitHub's per-asset `digest` field, with the
+    /// `sha256:` prefix stripped. GitHub publishing this is why the updater
+    /// needs no hardcoded hash, unlike `scripts/fetch-engine.sh`.
+    pub sha256: Option<String>,
+}
+
+/// A release reduced to what the updater needs: its tag and its one asset.
+// Not yet constructed outside its own tests — Task 7's HTTP wrapper builds
+// one from `parse_release_json` + `select_asset`.
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct EngineRelease {
+    pub tag: String,
+    pub asset: ReleaseAsset,
+}
+
+#[derive(Deserialize)]
+struct RawAsset {
+    name: String,
+    size: u64,
+    browser_download_url: String,
+    #[serde(default)]
+    digest: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct RawRelease {
+    tag_name: String,
+    #[serde(default)]
+    assets: Vec<RawAsset>,
+}
+
+/// Parse a GitHub release object into its tag and assets.
+// Not yet called outside this module or its tests — Task 7's HTTP wrapper
+// calls it. Keeps `RawRelease`/`RawAsset` reachable too.
+#[allow(dead_code)]
+pub fn parse_release_json(body: &str) -> Result<(String, Vec<ReleaseAsset>), String> {
+    let raw: RawRelease = serde_json::from_str(body)
+        .map_err(|_| "Couldn't read the release list from GitHub (unexpected response).".to_string())?;
+    let assets = raw
+        .assets
+        .into_iter()
+        .map(|a| ReleaseAsset {
+            name: a.name,
+            url: a.browser_download_url,
+            size: a.size,
+            sha256: a
+                .digest
+                .as_deref()
+                .and_then(|d| d.strip_prefix("sha256:"))
+                .map(str::to_ascii_lowercase),
+        })
+        .collect();
+    Ok((raw.tag_name, assets))
+}
+
+/// The single Linux/x86_64/<backend> zip in a release.
+///
+/// Matched by tokens, never by the literal filename: the real name embeds the
+/// CI runner's distro version (`…-Ubuntu-24.04-…`) and will change without
+/// warning. Zero matches or more than one returns `None` and is reported as
+/// "no update" — installing a guessed archive is worse than doing nothing.
+// Not yet called outside this module or its tests — Task 7's HTTP wrapper
+// calls it. Keeps `BACKEND_TOKEN` reachable too.
+#[allow(dead_code)]
+pub fn select_asset(assets: &[ReleaseAsset]) -> Option<&ReleaseAsset> {
+    let mut it = assets.iter().filter(|a| {
+        a.name.contains("Linux")
+            && a.name.contains("x86_64")
+            && a.name.contains(BACKEND_TOKEN)
+            && a.name.ends_with(".zip")
+    });
+    let first = it.next()?;
+    it.next().is_none().then_some(first)
 }
 
 #[cfg(test)]
@@ -126,5 +214,79 @@ mod tests {
     #[test]
     fn the_builtin_tag_itself_parses() {
         assert!(parse_tag(BUILTIN_ENGINE_TAG).is_some());
+    }
+
+    fn release_fixture() -> &'static str {
+        include_str!("../fixtures/gh-release-latest.json")
+    }
+
+    fn asset(name: &str) -> ReleaseAsset {
+        ReleaseAsset {
+            name: name.to_string(),
+            url: format!("https://example.invalid/{name}"),
+            size: 1,
+            sha256: None,
+        }
+    }
+
+    #[test]
+    fn parses_the_release_fixture() {
+        let (tag, assets) = parse_release_json(release_fixture()).unwrap();
+        assert_eq!(tag, "master-797-5ef4a75");
+        assert_eq!(assets.len(), 9);
+    }
+
+    #[test]
+    fn selects_the_linux_vulkan_asset_and_its_digest() {
+        let (_, assets) = parse_release_json(release_fixture()).unwrap();
+        let a = select_asset(&assets).expect("one Linux/x86_64/vulkan zip");
+        assert_eq!(a.name, "sd-master-5ef4a75-bin-Linux-Ubuntu-24.04-x86_64-vulkan.zip");
+        assert_eq!(a.size, 45020326);
+        assert_eq!(
+            a.sha256.as_deref(),
+            Some("d365b1ffe73d6a4ece7367e6d7e0368fde53b8b18d508e3100bb5141c0cf26de"),
+            "the sha256: prefix must be stripped"
+        );
+        assert!(a.url.ends_with("-x86_64-vulkan.zip"));
+    }
+
+    #[test]
+    fn windows_vulkan_asset_is_not_mistaken_for_the_linux_one() {
+        // `sd-…-bin-win-vulkan-x64.zip` contains "vulkan" but not "Linux".
+        let assets = vec![asset("sd-master-5ef4a75-bin-win-vulkan-x64.zip")];
+        assert!(select_asset(&assets).is_none());
+    }
+
+    #[test]
+    fn zero_matches_is_no_update() {
+        assert!(select_asset(&[]).is_none());
+        assert!(select_asset(&[asset("sd-bin-Linux-x86_64-rocm-7.14.0.zip")]).is_none());
+    }
+
+    #[test]
+    fn two_matches_is_no_update_rather_than_a_guess() {
+        let assets = vec![
+            asset("sd-master-x-bin-Linux-Ubuntu-24.04-x86_64-vulkan.zip"),
+            asset("sd-master-x-bin-Linux-Ubuntu-26.04-x86_64-vulkan.zip"),
+        ];
+        assert!(select_asset(&assets).is_none(), "ambiguity must not be resolved by guessing");
+    }
+
+    #[test]
+    fn a_future_ubuntu_bump_still_matches() {
+        let assets = vec![asset("sd-master-x-bin-Linux-Ubuntu-26.04-x86_64-vulkan.zip")];
+        assert!(select_asset(&assets).is_some(), "selection must not depend on the distro version");
+    }
+
+    #[test]
+    fn an_asset_without_a_digest_parses_with_none() {
+        let json = r#"{"tag_name":"master-1-aaaaaaa","assets":[{"name":"x.zip","size":2,"browser_download_url":"https://e.invalid/x.zip"}]}"#;
+        let (_, assets) = parse_release_json(json).unwrap();
+        assert_eq!(assets[0].sha256, None);
+    }
+
+    #[test]
+    fn malformed_json_is_an_error_not_a_panic() {
+        assert!(parse_release_json("{ nope ]").is_err());
     }
 }

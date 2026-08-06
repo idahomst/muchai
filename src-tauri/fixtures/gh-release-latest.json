@@ -1,0 +1,61 @@
+{
+  "tag_name": "master-797-5ef4a75",
+  "name": "master-797-5ef4a75",
+  "body": "",
+  "assets": [
+    {
+      "name": "cudart-sd-bin-win-cu12-x64.zip",
+      "size": 563452046,
+      "digest": "sha256:fe20366827d357c00797eebb58244dddab7fd9a348d70090c3871004c320f38d",
+      "browser_download_url": "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-797-5ef4a75/cudart-sd-bin-win-cu12-x64.zip"
+    },
+    {
+      "name": "sd-master-5ef4a75-bin-Darwin-macOS-26.4-arm64.zip",
+      "size": 49568654,
+      "digest": "sha256:b465d3e84b5ca92f775986c213fa11eae08aa6eb3467a8a055b8ded85be6f7ea",
+      "browser_download_url": "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-797-5ef4a75/sd-master-5ef4a75-bin-Darwin-macOS-26.4-arm64.zip"
+    },
+    {
+      "name": "sd-master-5ef4a75-bin-Linux-Ubuntu-24.04-x86_64-rocm-7.14.0.zip",
+      "size": 281059499,
+      "digest": "sha256:07337792291df6f8597f72cd5282896b4c34de56647855dd8d868197917c9d65",
+      "browser_download_url": "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-797-5ef4a75/sd-master-5ef4a75-bin-Linux-Ubuntu-24.04-x86_64-rocm-7.14.0.zip"
+    },
+    {
+      "name": "sd-master-5ef4a75-bin-Linux-Ubuntu-24.04-x86_64-vulkan.zip",
+      "size": 45020326,
+      "digest": "sha256:d365b1ffe73d6a4ece7367e6d7e0368fde53b8b18d508e3100bb5141c0cf26de",
+      "browser_download_url": "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-797-5ef4a75/sd-master-5ef4a75-bin-Linux-Ubuntu-24.04-x86_64-vulkan.zip"
+    },
+    {
+      "name": "sd-master-5ef4a75-bin-Linux-Ubuntu-24.04-x86_64.zip",
+      "size": 32462175,
+      "digest": "sha256:a5542ba90efc1b2d9fa47cbffef7588eed149748a29411633e2777198a441834",
+      "browser_download_url": "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-797-5ef4a75/sd-master-5ef4a75-bin-Linux-Ubuntu-24.04-x86_64.zip"
+    },
+    {
+      "name": "sd-master-5ef4a75-bin-win-cpu-x64.zip",
+      "size": 23825715,
+      "digest": "sha256:45da74601e97dbf7ee4cdd96fad40b10b59662948f66e94f12061828cc0bd05e",
+      "browser_download_url": "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-797-5ef4a75/sd-master-5ef4a75-bin-win-cpu-x64.zip"
+    },
+    {
+      "name": "sd-master-5ef4a75-bin-win-cuda12-x64.zip",
+      "size": 361994363,
+      "digest": "sha256:08316cda54ce3c6a5a5a9f073248685f51f9a87359614a05520a3a91f650cc20",
+      "browser_download_url": "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-797-5ef4a75/sd-master-5ef4a75-bin-win-cuda12-x64.zip"
+    },
+    {
+      "name": "sd-master-5ef4a75-bin-win-rocm-7.14.0-x64.zip",
+      "size": 200221159,
+      "digest": "sha256:59598b096faa3bb884337e32465adc576a9b17104caffbd3607ac596df5bb042",
+      "browser_download_url": "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-797-5ef4a75/sd-master-5ef4a75-bin-win-rocm-7.14.0-x64.zip"
+    },
+    {
+      "name": "sd-master-5ef4a75-bin-win-vulkan-x64.zip",
+      "size": 37820609,
+      "digest": "sha256:91da68e160f8ecebbcbd1fbbd4bffe3595726aff53588174bf7046af46e04cdd",
+      "browser_download_url": "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-797-5ef4a75/sd-master-5ef4a75-bin-win-vulkan-x64.zip"
+    }
+  ]
+}
