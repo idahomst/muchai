@@ -109,7 +109,7 @@ struct RawRelease {
 #[allow(dead_code)]
 pub fn parse_release_json(body: &str) -> Result<(String, Vec<ReleaseAsset>), String> {
     let raw: RawRelease = serde_json::from_str(body)
-        .map_err(|_| "Couldn't read the release list from GitHub (unexpected response).".to_string())?;
+        .map_err(|_| "Couldn't read the latest release from GitHub (unexpected response).".to_string())?;
     let assets = raw
         .assets
         .into_iter()
@@ -251,8 +251,25 @@ mod tests {
     }
 
     #[test]
+    fn each_selection_clause_rejects_a_near_miss() {
+        // One name per clause: matches every clause but the one named. Without
+        // these, `Linux` and `x86_64` mask each other in the real-Windows-asset
+        // test below and neither is exercised.
+        for (why, name) in [
+            ("not Linux", "sd-master-x-bin-win-vulkan-x86_64.zip"),
+            ("not x86_64", "sd-master-x-bin-Linux-Ubuntu-24.04-aarch64-vulkan.zip"),
+            ("not vulkan", "sd-master-x-bin-Linux-Ubuntu-24.04-x86_64-rocm-7.14.0.zip"),
+            ("not a zip", "sd-master-x-bin-Linux-Ubuntu-24.04-x86_64-vulkan.tar.gz"),
+        ] {
+            assert!(select_asset(&[asset(name)]).is_none(), "{why}: {name}");
+        }
+    }
+
+    #[test]
     fn windows_vulkan_asset_is_not_mistaken_for_the_linux_one() {
-        // `sd-…-bin-win-vulkan-x64.zip` contains "vulkan" but not "Linux".
+        // `sd-…-bin-win-vulkan-x64.zip` contains "vulkan" but lacks both
+        // "Linux" and "x86_64" ("x64", not "x86_64"); the per-clause cases
+        // live in `each_selection_clause_rejects_a_near_miss` above.
         let assets = vec![asset("sd-master-5ef4a75-bin-win-vulkan-x64.zip")];
         assert!(select_asset(&assets).is_none());
     }
@@ -283,6 +300,16 @@ mod tests {
         let json = r#"{"tag_name":"master-1-aaaaaaa","assets":[{"name":"x.zip","size":2,"browser_download_url":"https://e.invalid/x.zip"}]}"#;
         let (_, assets) = parse_release_json(json).unwrap();
         assert_eq!(assets[0].sha256, None);
+    }
+
+    #[test]
+    fn an_uppercase_digest_is_lowercased() {
+        // GitHub does not guarantee casing; the release fixture happens to be
+        // lowercase already, so this is the only test that would catch a
+        // dropped `to_ascii_lowercase`.
+        let json = r#"{"tag_name":"master-1-aaaaaaa","assets":[{"name":"x.zip","size":2,"browser_download_url":"https://e.invalid/x.zip","digest":"sha256:D365B1FF"}]}"#;
+        let (_, assets) = parse_release_json(json).unwrap();
+        assert_eq!(assets[0].sha256.as_deref(), Some("d365b1ff"));
     }
 
     #[test]
