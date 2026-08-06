@@ -162,6 +162,71 @@ pub fn extract_zip(zip_path: &Path, dest: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// SHA-256 of a file, lowercase hex. Streamed through `io::copy` rather than
+/// read into a buffer — the archive is ~45 MB and there is no reason to hold it
+/// in memory on top of the copy already on disk.
+pub fn sha256_file(path: &Path) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    let mut f =
+        std::fs::File::open(path).map_err(|e| format!("Couldn't read the download: {e}"))?;
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut f, &mut hasher).map_err(|e| format!("Couldn't read the download: {e}"))?;
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+/// Compare a downloaded file against the digest the API published next to its
+/// URL.
+///
+/// `None` means nothing usable was published — an absent `digest`, or one in an
+/// algorithm `parse_release_json` doesn't recognise — which is not a failure.
+/// Skipping the check beats comparing a sha512 against a sha256 and rejecting
+/// every good download if GitHub ever switches.
+///
+/// Be aware of what that costs, because more rests on this check than integrity
+/// alone: `install_release` verifies *before* extracting, and that ordering is
+/// why `extract_zip` decompresses without a size cap — a zip bomb would first
+/// have to match a digest GitHub itself published. If GitHub ever stops
+/// emitting `digest`, or emits it as `SHA256:` (the prefix strip is
+/// case-sensitive), this returns `Ok(())` and unverified bytes reach the
+/// extractor with that argument quietly gone. It is an accepted risk, not an
+/// oversight: an upstream that can forge the digest can simply ship a malicious
+/// `sd-cli` instead, which is strictly worse and no cap would help.
+// Not yet called outside this module or its tests — Task 11's `install_release`
+// calls it. This allow is also what keeps `sha256_file` (called above) alive.
+#[allow(dead_code)]
+pub fn verify_hash(path: &Path, expected: Option<&str>) -> Result<(), String> {
+    let Some(expected) = expected else { return Ok(()) };
+    let actual = sha256_file(path)?;
+    if actual == expected {
+        Ok(())
+    } else {
+        Err("The download didn't match its published checksum. Try again.".to_string())
+    }
+}
+
+/// Bytes that must be free before starting an install.
+///
+/// At the peak the archive and its extraction sit side by side in the staging
+/// directory — the `.part` file is *renamed* into the archive rather than
+/// copied, so those two are one file, and extraction is ~2.5× the compressed
+/// size for this archive. That is ~3.5×; 4× the asset plus the shared headroom
+/// is a comfortable, cheap over-estimate (~1.2 GB for a 45 MB asset).
+///
+/// This is a UX guard, not a security guard. `asset_size` is whatever the API
+/// declared, and the estimate bounds the *expected* download; it bounds nothing
+/// about what extraction actually writes to disk. Its job is to say "not enough
+/// room" up front instead of failing halfway through a 45 MB download.
+///
+/// Saturating, for the same reason `diskspace::fits` uses `checked_sub`: an
+/// absurd declared size must report "does not fit", not wrap into a false pass
+/// (or panic in a debug build, inside a Tauri command).
+// Not yet called outside this module or its tests — Task 11's `install_release`
+// calls it.
+#[allow(dead_code)]
+pub fn required_space(asset_size: u64) -> u64 {
+    asset_size.saturating_mul(4).saturating_add(crate::diskspace::HEADROOM_BYTES)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -560,5 +625,72 @@ mod tests {
 
         assert_eq!(installed_tags(&root), vec!["master-797-5ef4a75", "master-780-aaaaaaa"]);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn hashes_a_file() {
+        let root = tmp("hash");
+        let f = root.join("x.bin");
+        std::fs::write(&f, b"abc").unwrap();
+
+        // Well-known SHA-256 of "abc".
+        assert_eq!(
+            sha256_file(&f).unwrap(),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn hashing_a_missing_file_is_an_error() {
+        assert!(sha256_file(Path::new("/nonexistent/x.bin")).is_err());
+    }
+
+    #[test]
+    fn verify_accepts_a_matching_hash_and_rejects_a_mismatch() {
+        let root = tmp("verify");
+        let f = root.join("x.bin");
+        std::fs::write(&f, b"abc").unwrap();
+        let good = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+
+        assert!(verify_hash(&f, Some(good)).is_ok());
+        assert!(verify_hash(&f, None).is_ok(), "no digest published means nothing to check");
+
+        let err = verify_hash(
+            &f,
+            Some("0000000000000000000000000000000000000000000000000000000000000000"),
+        )
+        .unwrap_err();
+        assert!(err.contains("didn't match"), "unexpected message: {err}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn required_space_covers_archive_plus_extraction_plus_headroom() {
+        // 45 MB asset: the finished zip and its ~113 MB extraction coexist in
+        // the staging directory for a moment. Asserted as a bound the estimate
+        // has to clear, not just as the formula restated — the formula could be
+        // "right" and still not cover what the install actually puts on disk.
+        let asset = 45_000_000u64;
+        let peak = asset + asset * 5 / 2;
+        // Net of the headroom, or the assertion proves nothing: 1 GiB dwarfs a
+        // 157 MB peak, so it would hold even for a multiplier of zero.
+        let for_the_install = required_space(asset) - crate::diskspace::HEADROOM_BYTES;
+        assert!(
+            for_the_install >= peak,
+            "the estimate must cover archive + extraction, got {for_the_install} for a peak of {peak}"
+        );
+        assert_eq!(required_space(asset), asset * 4 + crate::diskspace::HEADROOM_BYTES);
+    }
+
+    /// An absurd declared size must come out as "does not fit" — `fits` refuses
+    /// anything it cannot subtract — rather than wrapping into a false pass or
+    /// panicking on overflow inside a Tauri command.
+    #[test]
+    fn required_space_saturates_instead_of_overflowing() {
+        let need = required_space(u64::MAX);
+
+        assert_eq!(need, u64::MAX);
+        assert!(!crate::diskspace::fits(u64::MAX, need), "an absurd size must never fit");
     }
 }

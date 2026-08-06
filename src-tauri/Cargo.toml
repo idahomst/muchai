@@ -33,4 +33,5 @@ ureq = "2"
 tauri-plugin-dialog = "2"
 trash = "5"
 zip = { version = "8", default-features = false, features = ["deflate"] }
+sha2 = "0.10"
 
