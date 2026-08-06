@@ -250,7 +250,11 @@ fn get(url: &str) -> Result<String, String> {
             .into_string()
             .map_err(|_| "Couldn't read the response from GitHub.".to_string()),
         Err(ureq::Error::Status(403, _)) | Err(ureq::Error::Status(429, _)) => {
-            Err("GitHub is rate-limiting this machine. Try again later.".into())
+            // 403 is GitHub's own code for the primary unauthenticated rate
+            // limit, so that is the likely cause — but it also covers abuse
+            // detection and IP blocks, and there is no token the user could
+            // add to fix those. Hedge rather than assert a wrong cause.
+            Err("GitHub refused the request — it may be rate-limiting this machine. Try again later.".into())
         }
         Err(ureq::Error::Status(404, _)) => Err("Not found on GitHub.".into()),
         Err(ureq::Error::Status(code, _)) => Err(format!("GitHub returned HTTP {code}.")),
@@ -275,8 +279,12 @@ pub fn fetch_latest_release() -> Result<Option<EngineRelease>, String> {
 ///
 /// `from_sha` is `None` when the running engine is a self-compiled `Custom`
 /// build with no known rev. Falls back to the single-commit endpoint both then
-/// and when `/compare` fails — GitHub 404s that endpoint for a rev it does not
-/// have. A one-line headline is better than a wrong list.
+/// and when `/compare` cannot be fetched — GitHub 404s that endpoint for a rev
+/// it does not have. A one-line headline is better than a wrong list.
+///
+/// A `/compare` that answers 200 with a body we cannot parse is *not* covered
+/// by that fallback: it means GitHub changed its schema, which should surface
+/// rather than quietly degrade to a headline.
 // Not yet called outside this module or its tests — Task 12's Tauri command
 // calls it. Keeps `compare_url` and `commit_url` reachable too.
 #[allow(dead_code)]
@@ -589,6 +597,10 @@ mod tests {
     #[test]
     fn release_with_no_matching_asset_is_not_offered() {
         let (tag, _) = parse_release_json(release_fixture()).unwrap();
-        assert!(to_engine_release(tag, &[]).is_none());
+        assert!(to_engine_release(tag.clone(), &[]).is_none());
+        // The realistic case is not an empty release but one whose vulkan job
+        // failed in CI: assets are present, none of them ours. An empty slice
+        // alone cannot tell "rejected everything" from "nothing to reject".
+        assert!(to_engine_release(tag, &[asset("sd-master-x-bin-win-vulkan-x64.zip")]).is_none());
     }
 }
