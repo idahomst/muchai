@@ -1603,8 +1603,12 @@ fn record_check(
     fetched: Result<Option<engine_release::EngineRelease>, String>,
 ) -> Result<Option<EngineUpdate>, String> {
     // A check that never reached GitHub is not a check: report it, and leave
-    // `engine_last_check` alone so the next start tries again.
-    let Some(release) = fetched? else { return Ok(None) };
+    // `engine_last_check` alone so the next start tries again. Reaching GitHub
+    // and finding nothing we can run *is* a check, though — the round trip
+    // happened — so the stamp goes in before that case is split off. Otherwise
+    // an upstream that renamed the Linux asset would make every launch wait out
+    // the check and spend an API call, for as long as that lasted.
+    let fetched = fetched?;
 
     let current = {
         let mut cfg = config.lock().unwrap();
@@ -1615,6 +1619,8 @@ fn record_check(
         let _ = config::save_config_to(config_path, &cfg);
         current_tag(&cfg, engines_root)
     };
+
+    let Some(release) = fetched else { return Ok(None) };
 
     let newer = match &current {
         Some(cur) => engine_release::is_newer(&release.tag, cur),
@@ -1720,6 +1726,43 @@ fn adopt_installed_engine(
     Ok(commit)
 }
 
+/// Install an engine and make it the selection: the whole of `engine_apply_update`
+/// except marshalling, with the download injected so the composition is testable.
+///
+/// The composition is the point, and it is why this is one function rather than
+/// three calls in the command body. Install, config write and prune all sit
+/// inside a single claim of the generation slot, because each of the tempting
+/// arrangements is broken in a way that reads fine:
+///
+/// * claiming the slot only around the install lets `prune` delete the engine a
+///   generation started moments ago — it would have resolved the *old* tag from
+///   the not-yet-written config;
+/// * claiming it as a pre-flight check and releasing it (`while_not_generating(f,
+///   || Ok(()))?`) leaves the entire 45 MB download and validation probe
+///   unguarded while looking like it guards them;
+/// * writing the config before the install names an engine that may never
+///   arrive, so the next start falls back with no explanation.
+///
+/// All three pass every test that only exercises the pieces separately, so this
+/// function is the unit the tests must name.
+fn install_and_adopt(
+    flag: &Arc<AtomicBool>,
+    config: &Mutex<AppConfig>,
+    config_path: &Path,
+    engines_root: &Path,
+    tag: &str,
+    install: impl FnOnce() -> Result<String, String>,
+) -> Result<String, String> {
+    while_not_generating(flag, || {
+        let commit = adopt_installed_engine(config, config_path, tag, install())?;
+        // Keep the two newest, never touching whatever is now selected. Inside
+        // the guard and after the config write, so there is no instant at which
+        // a generation could start against a tag this is about to delete.
+        engine_install::prune(engines_root, 2, tag);
+        Ok(commit)
+    })
+}
+
 #[tauri::command]
 pub async fn engine_apply_update(
     app: AppHandle,
@@ -1727,19 +1770,31 @@ pub async fn engine_apply_update(
     tag: String,
 ) -> Result<String, String> {
     let root = config::engines_dir();
-    let generating = state.generating.clone();
+    // `State` cannot cross into the blocking thread, but `AppHandle` can, and it
+    // can look the same state back up there. That matters: the config write has
+    // to happen under the guard, so it cannot be left behind on this thread.
+    let app_state = app.clone();
     // The engine archive is a public GitHub asset — no token, unlike the
-    // HuggingFace and Civitai paths that share this downloader.
+    // HuggingFace and Civitai paths that share this downloader. Resetting the
+    // shared cancel flag assumes the same single-flight invariant `add_url_model`
+    // documents, and stretches it: this is the first sharer reachable from
+    // Preferences, which the model-download panel knows nothing about. Starting
+    // a model download and an engine update together would have each cancel the
+    // other.
     let cancel = state.download_cancel.clone();
-    cancel.store(false, Ordering::Release);
+    cancel.store(false, Ordering::SeqCst);
     let (root2, tag2) = (root.clone(), tag.clone());
+    let config_path = config::config_file_path();
 
     // ~45 MB of download plus a validation probe, off the main thread for the
     // same reason `add_url_model` does it: a sync command body runs on the
     // thread that pumps the UI, which would freeze the very progress bar these
-    // events feed. The guard is claimed inside, so it covers the whole install.
-    let installed = tauri::async_runtime::spawn_blocking(move || {
-        while_not_generating(&generating, || {
+    // events feed. Everything that must not race a generation goes inside, under
+    // one claim of the slot — see `install_and_adopt`.
+    let commit = tauri::async_runtime::spawn_blocking(move || {
+        let state = app_state.state::<AppState>();
+        let (root3, tag3) = (root2.clone(), tag2.clone());
+        install_and_adopt(&state.generating, &state.config, &config_path, &root3, &tag3, || {
             let release = engine_release::fetch_latest_release()?
                 .filter(|r| r.tag == tag2)
                 .ok_or_else(|| "That engine release is no longer available.".to_string())?;
@@ -1775,14 +1830,9 @@ pub async fn engine_apply_update(
         })
     })
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| e.to_string())??;
 
-    let commit = adopt_installed_engine(&state.config, &config::config_file_path(), &tag, installed)?;
     invalidate_engine_caches(&state);
-    // Keep the two newest, never touching whatever is now selected. Runs after
-    // the config was written, so a generation starting here already resolves to
-    // the new engine rather than one that is about to be deleted.
-    engine_install::prune(&root, 2, &tag);
     Ok(commit)
 }
 
@@ -2043,6 +2093,62 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
+    /// The pieces above each hold up alone, and that is not enough: an
+    /// `engine_apply_update` that claims the slot as a pre-flight check and
+    /// releases it, or writes the config before installing, passes every one of
+    /// them. This test names the composition, so those two arrangements fail.
+    #[test]
+    fn the_install_runs_guarded_and_nothing_is_committed_until_it_returns() {
+        let base = scratch("install-adopt");
+        let engines = base.join("engines");
+        let cfg_path = base.join("config.json");
+        let config = Mutex::new(crate::config::default_config());
+        let flag = Arc::new(AtomicBool::new(false));
+        let tag = "master-797-5ef4a75";
+
+        // Two older installs, one of which is the tag being installed now.
+        for t in ["master-100-aaaaaaa", "master-200-bbbbbbb", tag] {
+            std::fs::create_dir_all(engines.join(t)).unwrap();
+        }
+
+        let observed = Arc::new(Mutex::new(None));
+        let seen = observed.clone();
+        let commit = install_and_adopt(&flag, &config, &cfg_path, &engines, tag, || {
+            // Observed from *inside* the download: this is the window that a
+            // pre-flight-only claim leaves open, and the window in which a
+            // config written too early would already name the new engine.
+            *seen.lock().unwrap() =
+                Some((flag.load(Ordering::SeqCst), cfg_path.exists(), config.lock().unwrap().engine.clone()));
+            Ok("5ef4a75".to_string())
+        })
+        .unwrap();
+
+        let (held, wrote_config, selection) = observed.lock().unwrap().take().unwrap();
+        assert!(held, "the generation slot must be claimed for the whole install, not just checked");
+        assert!(!wrote_config, "nothing may be written to disk until the install has returned Ok");
+        assert_eq!(selection, EngineSelection::Builtin, "…nor may the in-memory selection move early");
+
+        assert_eq!(commit, "5ef4a75");
+        assert_eq!(
+            crate::config::load_config_from(&cfg_path).engine,
+            EngineSelection::Downloaded { tag: tag.into() },
+            "the new engine is the selection once the install succeeded"
+        );
+        assert!(
+            !flag.load(Ordering::SeqCst),
+            "and the slot is released again, or every later generation is refused"
+        );
+        // Pruning is inside the same claim, so it cannot delete an engine a
+        // generation resolved from the config a moment before it was rewritten.
+        assert!(engines.join(tag).exists(), "the engine just installed must survive its own prune");
+        assert!(
+            !engines.join("master-100-aaaaaaa").exists(),
+            "the oldest engine should have been pruned as part of the install"
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     #[test]
     fn an_update_is_offered_only_when_it_is_newer_than_what_runs() {
         let base = scratch("check");
@@ -2051,8 +2157,16 @@ mod tests {
         let cfg_path = base.join("config.json");
         let config = Mutex::new(crate::config::default_config()); // Builtin → master-782
 
-        // A release with nothing we can run is "no update", not an error.
+        // A release with nothing we can run is "no update", not an error — and
+        // it still counts as a check. GitHub answered; there was simply nothing
+        // for this platform. Were it not stamped, an upstream that renamed the
+        // Linux asset would make every single launch wait out a check and spend
+        // an API call for as long as that lasted.
         assert!(record_check(&config, &cfg_path, &root, Ok(None)).unwrap().is_none());
+        assert!(
+            config.lock().unwrap().engine_last_check.is_some(),
+            "reaching GitHub and finding no usable asset is still a completed check"
+        );
 
         let up = record_check(&config, &cfg_path, &root, Ok(Some(a_release("master-797-5ef4a75", 45020326))))
             .unwrap()
