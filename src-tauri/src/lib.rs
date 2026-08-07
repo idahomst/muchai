@@ -220,7 +220,6 @@ pub fn run() {
             commands::cancel_download,
             commands::pick_folder,
             commands::list_gpu_devices,
-            commands::engine_version,
             commands::delete_image,
             commands::list_recipes,
             commands::detect_folder,

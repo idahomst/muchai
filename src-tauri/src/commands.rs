@@ -243,16 +243,19 @@ pub fn list_gpu_devices(app: AppHandle, state: State<AppState>) -> Vec<GpuDevice
     devices
 }
 
-#[tauri::command]
-pub fn engine_version(app: AppHandle, state: State<AppState>) -> Option<String> {
+/// The running engine's commit, probed once per selection.
+///
+/// `devices::engine_version` spawns the binary and waits up to ten seconds for
+/// its banner, on the caller's thread — and `engine_status` is a synchronous
+/// command that the About dialog and the Engine panel both call. Caching it is
+/// what keeps opening About from costing a subprocess every time. Only a change
+/// of engine can change the answer, and that path drops the cache through
+/// [`invalidate_engine_caches`].
+fn cached_engine_version(state: &AppState, binary: Option<&Path>) -> Option<String> {
     if let Some(cached) = state.engine_version.lock().unwrap().as_ref() {
         return cached.clone();
     }
-    let cfg = state.config.lock().unwrap().clone();
-    let version = match resolve_binary(&app, &cfg) {
-        Some(bin) => crate::devices::engine_version(&bin),
-        None => None,
-    };
+    let version = binary.and_then(crate::devices::engine_version);
     *state.engine_version.lock().unwrap() = Some(version.clone());
     version
 }
@@ -1585,7 +1588,7 @@ pub fn engine_status(app: AppHandle, state: State<AppState>) -> EngineStatus {
 
     EngineStatus {
         tag: current_tag(&cfg, &root),
-        commit: path.as_deref().and_then(crate::devices::engine_version),
+        commit: cached_engine_version(&state, path.as_deref()),
         path: path.map(|p| p.to_string_lossy().into_owned()),
         fell_back: fell_back_to_builtin(&cfg.engine, &root),
         selection: cfg.engine,
@@ -1857,13 +1860,34 @@ pub async fn engine_apply_update(
     Ok(commit)
 }
 
+/// Switch the engine, writing before believing. Returns whether anything moved,
+/// so the caller knows if the caches have to go.
+///
+/// The write comes first on purpose. Mutating memory and then failing the save
+/// leaves this session running one engine and the next launch running another,
+/// with the device cache still describing the old binary — and the user's retry
+/// would then see `engine_changed == false` and be told it worked. A failure
+/// here has to leave the selection exactly as it was.
+fn apply_selection(
+    cfg: &mut AppConfig,
+    selection: EngineSelection,
+    config_path: &Path,
+) -> Result<bool, String> {
+    if !engine_changed(&cfg.engine, &selection) {
+        return Ok(false);
+    }
+    let candidate = AppConfig { engine: selection, ..cfg.clone() };
+    config::save_config_to(config_path, &candidate).map_err(|e| e.to_string())?;
+    *cfg = candidate;
+    Ok(true)
+}
+
 #[tauri::command]
 pub fn engine_select(state: State<AppState>, selection: EngineSelection) -> Result<(), String> {
     let mut cfg = state.config.lock().unwrap();
-    if engine_changed(&cfg.engine, &selection) {
-        cfg.engine = selection;
-        config::save_config_to(&config::config_file_path(), &cfg).map_err(|e| e.to_string())?;
-        drop(cfg);
+    let changed = apply_selection(&mut cfg, selection, &config::config_file_path())?;
+    drop(cfg);
+    if changed {
         invalidate_engine_caches(&state);
     }
     Ok(())
@@ -1935,6 +1959,63 @@ mod tests {
             state.engine_version.lock().unwrap().is_none(),
             "About must not keep reporting the previous engine's commit"
         );
+    }
+
+    /// About and the Engine panel both read the commit through `engine_status`,
+    /// and probing it spawns the engine with a ten-second ceiling. Both halves
+    /// matter: a hit must not re-probe, and a *failed* probe must be remembered
+    /// too — an engine that won't answer is exactly the one we must not ask
+    /// again every time the dialog opens.
+    #[test]
+    fn the_engine_commit_is_probed_once_per_selection() {
+        let state = test_state();
+        *state.engine_version.lock().unwrap() = Some(Some("b290693".into()));
+        assert_eq!(
+            cached_engine_version(&state, None),
+            Some("b290693".to_string()),
+            "a cached commit must be returned without touching the binary"
+        );
+
+        let state = test_state();
+        assert_eq!(cached_engine_version(&state, None), None);
+        assert_eq!(
+            *state.engine_version.lock().unwrap(),
+            Some(None),
+            "an engine that would not answer must be remembered as such, not retried on every open"
+        );
+    }
+
+    #[test]
+    fn a_failed_save_leaves_the_engine_selection_alone() {
+        let base = scratch("selectfail");
+        // A file where a directory would have to be: `save_config_to` creates
+        // the parent, so this is a write that cannot succeed.
+        let blocker = base.join("blocker");
+        std::fs::write(&blocker, b"not a directory").unwrap();
+        let mut cfg = crate::config::default_config();
+        cfg.engine = EngineSelection::Downloaded { tag: "master-797-5ef4a75".into() };
+
+        let r = apply_selection(&mut cfg, EngineSelection::Builtin, &blocker.join("config.json"));
+
+        assert!(r.is_err(), "a config that could not be written must be reported");
+        assert_eq!(
+            cfg.engine,
+            EngineSelection::Downloaded { tag: "master-797-5ef4a75".into() },
+            "an in-memory switch that never reached disk runs one engine now and another at the next launch"
+        );
+    }
+
+    #[test]
+    fn selecting_the_engine_already_in_use_writes_nothing() {
+        let base = scratch("selectsame");
+        let path = base.join("config.json");
+        let mut cfg = crate::config::default_config();
+        cfg.engine = EngineSelection::Builtin;
+
+        let changed = apply_selection(&mut cfg, EngineSelection::Builtin, &path).unwrap();
+
+        assert!(!changed, "re-picking the running engine must not drop the device cache");
+        assert!(!path.exists(), "nothing changed, so nothing should have been written");
     }
 
     #[test]

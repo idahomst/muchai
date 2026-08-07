@@ -2,10 +2,39 @@
   import { get } from "svelte/store";
   import { onMount } from "svelte";
   import { request, genStatus, history, currentImage, currentItem, settings, gpuDevices, sysStats, livePreview, loras } from "../stores";
-  import { generate, cancelGeneration, imageSrc, listHistory, onProgress, onGenNotice, onPreview, onLoraMissing } from "../api";
+  import { generate, cancelGeneration, imageSrc, listHistory, onProgress, onGenNotice, onPreview, onLoraMissing, engineSelect, engineStatus } from "../api";
   import { modelIsSet } from "../types";
 
   let lowVramAuto = false;
+
+  // Offer a way back only when the running engine is one we installed. A
+  // downloaded build that runs happily and emits garbage is the one failure the
+  // pre-install validation provably cannot catch, and a generation failing is
+  // the only moment the user will connect the two. Never offered for the
+  // built-in (nothing to revert to) or a custom build (their own choice).
+  //
+  // Resolved when a run fails rather than at mount: an engine installed from
+  // Preferences during this session is exactly the case this exists for, and a
+  // value read at startup would say "built-in" and hide the button.
+  let revertable = false;
+  let reverting = false;
+  // Shown *under* the generation error rather than replacing it: the failure
+  // the user was acting on is the context for this one.
+  let revertError = "";
+
+  async function revertEngine() {
+    reverting = true;
+    revertError = "";
+    try {
+      await engineSelect({ type: "builtin" });
+      revertable = false;
+      errorDismissed = true;
+    } catch (e) {
+      revertError = String(e);
+    } finally {
+      reverting = false;
+    }
+  }
 
   // Hides the error banner without touching `genStatus`, which stays "error"
   // until the next run and is read elsewhere. Reset when a run starts, so a new
@@ -29,6 +58,11 @@
   let previewTick = Date.now();
 
   async function run() {
+    // Cleared before the guards below, not after: their banners ("Enter a
+    // prompt.") have nothing to do with the engine, and a `true` left over from
+    // an earlier failure would offer to switch engines beside one of them.
+    revertable = false;
+    revertError = "";
     const req = get(request);
     if (!modelIsSet(req.model)) { genStatus.set({ kind: "error", message: "Select a model first." }); return; }
     if (!req.prompt.trim()) { genStatus.set({ kind: "error", message: "Enter a prompt." }); return; }
@@ -50,6 +84,17 @@
       genStatus.set({ kind: "idle" });
     } catch (e) {
       genStatus.set({ kind: "error", message: String(e) });
+      // Deliberately not awaited: `engine_status` is a synchronous command that
+      // may spend ten seconds probing an engine that has stopped answering —
+      // exactly the case this button exists for — and awaiting it would hold
+      // the banner and the live-draft cleanup below behind that stall.
+      // Best-effort: a status we can't read just leaves the banner as it was.
+      // `fell_back` excluded — the built-in engine already ran, so switching to
+      // it cannot change this outcome and the button would promise a fix it
+      // can't deliver. Preferences is where that stale selection is reported.
+      engineStatus()
+        .then((s) => { revertable = s.selection.type === "downloaded" && !s.fell_back; })
+        .catch(() => {});
     } finally {
       // Drop the live draft on every outcome (success, error, cancel-as-empty)
       // so the final image / prior view shows and no stale frame lingers.
@@ -142,7 +187,13 @@
 
 {#if $genStatus.kind === "error" && !errorDismissed}
   <div class="error" role="alert">
-    <span class="errortext">{$genStatus.message}</span>
+    <div class="errortext">
+      <span>{$genStatus.message}</span>
+      {#if revertError}<span class="reverterr">Could not switch to the built-in engine: {revertError}</span>{/if}
+    </div>
+    {#if revertable}
+      <button class="revert" on:click={revertEngine} disabled={reverting}>Use built-in engine</button>
+    {/if}
     <button class="error-x" aria-label="Dismiss error" on:click={() => (errorDismissed = true)}>✕</button>
   </div>
 {/if}
@@ -169,13 +220,19 @@
     color:var(--danger-soft); font-size:.8rem; white-space:pre-wrap; overflow-wrap:anywhere;
     max-height:7.5rem; overflow-y:auto; scrollbar-width:thin; scrollbar-color:var(--danger) transparent;
     display:flex; align-items:flex-start; gap:.5rem; }
-  .errortext { flex:1; min-width:0; }
+  .errortext { flex:1; min-width:0; display:flex; flex-direction:column; gap:.35rem; }
+  .reverterr { opacity:.85; }
   /* Sticks to the top of a scrolled banner so it stays reachable on a long
      engine dump. */
   .error-x { position:sticky; top:0; flex:0 0 auto; width:18px; height:18px; display:grid;
     place-items:center; border:none; background:transparent; color:inherit; cursor:pointer;
     font-size:11px; line-height:1; padding:0; }
   .error-x:hover { opacity:.7; }
+  /* Sticky for the same reason as the dismiss button: on a long engine dump the
+     way out must not scroll off the top of the banner. */
+  .revert { position:sticky; top:0; flex:0 0 auto; font:inherit; font-size:11px;
+    padding:2px 8px; white-space:nowrap; cursor:pointer; }
+  .revert:disabled { opacity:.5; cursor:default; }
   .cpu-note { margin-top:.5rem; padding:.4rem .5rem; border-radius:6px; background:var(--warn-tint);
     color:var(--warn); font-size:.75rem; }
 </style>
