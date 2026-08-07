@@ -80,6 +80,13 @@ export const engineUpdateTag = writable<string | null>(null);
 export const engineInstalling = writable(false);
 export const enginePct = writable<number | null>(null);
 
+/** The last engine check or install failure, or null. A store rather than panel
+ *  state for the same reason: an install that fails after Preferences closed
+ *  would otherwise write its error into a component nobody can see, and the
+ *  user would find only the old engine still selected, with no explanation.
+ *  Cleared when the panel is destroyed unless an install is still running. */
+export const engineError = writable<string | null>(null);
+
 export type GenStatus =
   | { kind: "idle" }
   | { kind: "running"; progress: ProgressUpdate | null }

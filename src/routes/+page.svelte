@@ -1,13 +1,14 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { get } from "svelte/store";
-  import { settings, request, history, sysStats, gpuDevices, refreshLibrary, refreshLoras, downloadProgress, downloadBusy, downloadError, library, selectedModelId, modelNotice, engineUpdateTag } from "$lib/stores";
+  import { settings, request, history, sysStats, gpuDevices, refreshLibrary, refreshLoras, downloadProgress, downloadBusy, downloadError, library, selectedModelId, modelNotice, engineUpdateTag, engineInstalling, engineError } from "$lib/stores";
   import { getSettings, setSettings, listHistory, onSystemStats, listGpuDevices, onDownloadProgress, onEngineUpdate } from "$lib/api";
   import ModelSelector from "$lib/components/ModelSelector.svelte";
   import NewModelDialog from "$lib/components/NewModelDialog.svelte";
   import ModelEditor from "$lib/components/ModelEditor.svelte";
   import AddLoraDialog from "$lib/components/AddLoraDialog.svelte";
   import DownloadStatus from "$lib/components/DownloadStatus.svelte";
+  import EngineInstallStatus from "$lib/components/EngineInstallStatus.svelte";
   import type { LibraryEntry } from "$lib/types";
   import PromptPanel from "$lib/components/PromptPanel.svelte";
   import SettingsPanel from "$lib/components/SettingsPanel.svelte";
@@ -177,6 +178,12 @@
      shows its own inline bar, so suppress the toast to avoid duplication. -->
 {#if !showNew && ($downloadBusy || $downloadError)}
   <DownloadStatus />
+{/if}
+
+<!-- Same shape for the engine install: Preferences shows its own inline
+     progress, so the toast only stands in once that dialog is closed. -->
+{#if !showPrefs && ($engineInstalling || $engineError)}
+  <EngineInstallStatus />
 {/if}
 
 <style>

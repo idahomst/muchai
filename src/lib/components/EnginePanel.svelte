@@ -1,11 +1,12 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
+  import { get } from "svelte/store";
   import {
-    settings, engineUpdateTag, engineInstalling, enginePct, downloadBusy,
+    settings, engineUpdateTag, engineInstalling, enginePct, downloadBusy, engineError,
   } from "$lib/stores";
   import {
     engineStatus, engineCheckUpdate, engineChangelog, engineApplyUpdate,
-    engineSelect, onEngineDownloadProgress, setSettings, cancelDownload,
+    engineSelect, onEngineDownloadProgress, setSettings, cancelDownload, getSettings,
   } from "$lib/api";
   import type { EngineStatus, EngineUpdate, EngineSelection, ChangeEntry } from "$lib/types";
   import { INSUFFICIENT_SPACE_PREFIX } from "$lib/types";
@@ -17,7 +18,8 @@
   let changes = $state<ChangeEntry[] | null>(null);
   let showAllChanges = $state(false);
   let checking = $state(false);
-  let error = $state<string | null>(null);
+  // Errors live in a store, not here: an install outlives this component, and a
+  // failure written into a destroyed panel is a failure the user never sees.
   let done = $state<string | null>(null);
   // Set once a check has completed and found nothing, so "Up to date" appears
   // only after we actually looked — never as an unearned claim on first paint.
@@ -32,12 +34,12 @@
     // A status the backend couldn't produce leaves the card in its "…" state
     // rather than throwing: nothing here is worth an error dialog.
     status = await engineStatus().catch(() => null);
-    // Opening this section is the user noticing the badge; clear it whether or
-    // not they go on to install, and remember the tag so it doesn't come back
-    // at the next launch. `engine_seen_tag` is the one engine field
-    // `set_settings` takes from the payload — see merged_settings.
+    // Opening this section is the user noticing the badge: remember the tag so
+    // it doesn't come back at the next launch, whether or not they go on to
+    // install. `engine_seen_tag` is the one engine field `set_settings` takes
+    // from the payload — see merged_settings. The dot itself is cleared in
+    // onDestroy, so it survives long enough to point here.
     const seen = $engineUpdateTag;
-    engineUpdateTag.set(null);
     if (seen && $settings && $settings.engine_seen_tag !== seen) {
       const next = { ...$settings, engine_seen_tag: seen };
       await setSettings(next).catch(() => {});
@@ -53,11 +55,18 @@
   onDestroy(() => {
     destroyed = true;
     unlisten?.();
+    // Cleared here rather than at mount: the dot on the Preferences header is
+    // what points at this section, and clearing it on the way in meant it could
+    // never be seen. The tag was already persisted as seen at mount.
+    engineUpdateTag.set(null);
+    // An install still running owns the error slot from here on — the toast is
+    // the only thing that can report it once this panel is gone.
+    if (!get(engineInstalling)) engineError.set(null);
   });
 
   async function check() {
     checking = true;
-    error = null; done = null; changes = null; upToDate = false;
+    engineError.set(null); done = null; changes = null; upToDate = false;
     try {
       update = await engineCheckUpdate();
       // A missing changelog is not a reason to withhold the update itself —
@@ -67,7 +76,7 @@
     } catch (e) {
       // A check the user asked for DOES report its failure — unlike the silent
       // background one, they are waiting on an answer.
-      error = String(e);
+      engineError.set(String(e));
     } finally {
       checking = false;
     }
@@ -76,14 +85,19 @@
   async function install() {
     if (!update) return;
     engineInstalling.set(true);
-    error = null; enginePct.set(0);
+    engineError.set(null); enginePct.set(0);
     try {
       const commit = await engineApplyUpdate(update.tag);
       done = `Installed ${update.tag} (commit ${commit}).`;
       update = null; changes = null; upToDate = true;
       status = await engineStatus();
+      // The install also wrote `engine_seen_tag`. This store is loaded once at
+      // mount and posted back whole on every preference change, so leaving it
+      // stale means the next theme toggle reverts the mark — and the badge
+      // returns at the next launch for the build the user just installed.
+      await getSettings().then((s) => settings.set(s)).catch(() => {});
     } catch (e) {
-      error = String(e);
+      engineError.set(String(e));
     } finally {
       engineInstalling.set(false);
       enginePct.set(null);
@@ -92,14 +106,16 @@
 
   // One AtomicBool serves every download in the backend, so this button would
   // also stop a model download running behind the dialog. Nothing in the
-  // backend enforces that single-flight — the UI does, by refusing to start an
-  // engine install while `downloadBusy`. See the note on `engine_apply_update`.
+  // backend enforces that single-flight — the UI does, in both directions: this
+  // panel refuses to install while `downloadBusy`, and the model and LoRA
+  // dialogs refuse to download while `engineInstalling`. See the note on
+  // `engine_apply_update`.
   function cancel() {
     cancelDownload().catch(() => {});
   }
 
   async function select(sel: EngineSelection) {
-    error = null; done = null;
+    engineError.set(null); done = null;
     // The offer on screen was computed against the engine they are leaving; it
     // is no longer an answer to the question they are now asking.
     update = null; changes = null; upToDate = false;
@@ -108,7 +124,7 @@
       status = await engineStatus();
       if (sel.type === "builtin") done = "Switched back to the built-in engine.";
     } catch (e) {
-      error = String(e);
+      engineError.set(String(e));
     }
   }
 
@@ -119,12 +135,12 @@
     const cur = $settings;
     if (!cur || cur.engine_update_check === on) return;
     settings.set({ ...cur, engine_update_check: on });
-    error = null;
+    engineError.set(null);
     try {
       await setSettings({ ...cur, engine_update_check: on });
     } catch (e) {
       settings.set(cur);
-      error = String(e);
+      engineError.set(String(e));
     }
   }
 
@@ -236,12 +252,12 @@
   </label>
 
   {#if done}<p class="ok" role="status">{done}</p>{/if}
-  {#if error}
-    <p class="err" role="alert">{error}</p>
+  {#if $engineError}
+    <p class="err" role="alert">{$engineError}</p>
     <!-- The backend prefixes out-of-space failures so the model downloader can
          raise its reclaim panel. That panel lives in the model dialog and does
          not belong here, so point at it rather than duplicating it. -->
-    {#if error.includes(INSUFFICIENT_SPACE_PREFIX)}
+    {#if $engineError.includes(INSUFFICIENT_SPACE_PREFIX)}
       <p class="hint">You can free space from the model list: New model → Reclaim space.</p>
     {/if}
   {/if}

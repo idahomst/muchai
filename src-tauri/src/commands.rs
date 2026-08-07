@@ -1580,7 +1580,12 @@ pub struct EngineStatus {
 /// asset selection is written for exactly that and nothing else.
 pub const UPDATES_SUPPORTED: bool = cfg!(all(target_os = "linux", target_arch = "x86_64"));
 
-#[tauri::command]
+/// Off the UI thread (`async`) even though the body is synchronous: a cold
+/// `cached_engine_version` spawns the engine and waits up to ten seconds for its
+/// banner, and the engine that has stopped answering is exactly the one the user
+/// is asking about when the revert button needs to appear. A sync command body
+/// runs on the thread that pumps the UI, so that wait would freeze the window.
+#[tauri::command(async)]
 pub fn engine_status(app: AppHandle, state: State<AppState>) -> EngineStatus {
     let cfg = state.config.lock().unwrap().clone();
     let root = config::engines_dir();
@@ -1675,17 +1680,29 @@ pub async fn engine_check_update(state: State<'_, AppState>) -> Result<Option<En
 /// this revision", so the card would quietly degrade to a single headline
 /// instead of showing the range. `None` on the left means exactly that second
 /// case: a custom build with no rev upstream has heard of.
+/// `None` when the right-hand side names nothing we will ask about.
 fn changelog_range(
     cfg: &AppConfig,
     engines_root: &Path,
     to_tag: String,
-) -> (Option<String>, String) {
+) -> Option<(Option<String>, String)> {
     let from = current_tag(cfg, engines_root);
     let from_sha = from.as_deref().and_then(engine_release::parse_tag).map(|t| t.sha);
-    // Anything that is not one of our tags is passed through as-is: it may
-    // already be a bare sha.
-    let to_sha = engine_release::parse_tag(&to_tag).map(|t| t.sha).unwrap_or(to_tag);
-    (from_sha, to_sha)
+    // Anything that is not one of our tags is passed through only when it is
+    // already a bare sha. `to_tag` arrives over IPC and is interpolated into
+    // upstream's `/compare` URL: an arbitrary string would be steering the
+    // request rather than naming a revision in it.
+    let to_sha = match engine_release::parse_tag(&to_tag) {
+        Some(t) => t.sha,
+        None if is_bare_sha(&to_tag) => to_tag,
+        None => return None,
+    };
+    Some((from_sha, to_sha))
+}
+
+/// A bare git revision: hex, and long enough for GitHub to resolve.
+fn is_bare_sha(s: &str) -> bool {
+    (7..=40).contains(&s.len()) && s.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 #[tauri::command]
@@ -1696,7 +1713,8 @@ pub async fn engine_changelog(
     let (from_sha, to_sha) = {
         let cfg = state.config.lock().unwrap();
         changelog_range(&cfg, &config::engines_dir(), to_tag)
-    };
+    }
+    .ok_or_else(|| "That isn't an engine release we can look up.".to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
         engine_release::fetch_changelog(from_sha.as_deref(), &to_sha)
     })
@@ -1729,6 +1747,11 @@ fn while_not_generating<T>(
 /// testable without a network. A config written before the install would name
 /// an engine that may never arrive, and the next start would fall back to the
 /// built-in one with no explanation.
+///
+/// Memory follows disk here for the same reason it does in [`apply_selection`]:
+/// a save that fails after the in-memory switch leaves this session running the
+/// new engine while the caller reports the whole install as failed, the next
+/// launch reverts to the old one, and the device cache still describes it.
 fn adopt_installed_engine(
     config: &Mutex<AppConfig>,
     config_path: &Path,
@@ -1737,10 +1760,14 @@ fn adopt_installed_engine(
 ) -> Result<String, String> {
     let commit = installed?;
     let mut cfg = config.lock().unwrap();
-    cfg.engine = EngineSelection::Downloaded { tag: tag.to_string() };
-    // Installing a release is the strongest possible form of having seen it.
-    cfg.engine_seen_tag = Some(tag.to_string());
-    config::save_config_to(config_path, &cfg).map_err(|e| e.to_string())?;
+    let candidate = AppConfig {
+        engine: EngineSelection::Downloaded { tag: tag.to_string() },
+        // Installing a release is the strongest possible form of having seen it.
+        engine_seen_tag: Some(tag.to_string()),
+        ..cfg.clone()
+    };
+    config::save_config_to(config_path, &candidate).map_err(|e| e.to_string())?;
+    *cfg = candidate;
     Ok(commit)
 }
 
@@ -1764,15 +1791,19 @@ fn adopt_installed_engine(
 /// All three pass every test that only exercises the pieces separately, so this
 /// function is the unit the tests must name.
 fn install_and_adopt(
-    flag: &Arc<AtomicBool>,
-    config: &Mutex<AppConfig>,
+    state: &AppState,
     config_path: &Path,
     engines_root: &Path,
     tag: &str,
     install: impl FnOnce() -> Result<String, String>,
 ) -> Result<String, String> {
-    while_not_generating(flag, || {
-        let commit = adopt_installed_engine(config, config_path, tag, install())?;
+    while_not_generating(&state.generating, || {
+        let commit = adopt_installed_engine(&state.config, config_path, tag, install())?;
+        // Under the same claim as the write, not back on the command's thread
+        // after the guard released: between those two points a generation could
+        // resolve the engine that was just installed while still reading the old
+        // one's cached device list.
+        invalidate_engine_caches(state);
         // Keep the two newest, never touching whatever is now selected. Inside
         // the guard and after the config write, so there is no instant at which
         // a generation could start against a tag this is about to delete.
@@ -1804,7 +1835,9 @@ pub async fn engine_apply_update(
     // documents, and stretches it: this is the first sharer reachable from
     // Preferences, which the model-download panel knows nothing about. Starting
     // a model download and an engine update together would have each cancel the
-    // other.
+    // other, so the UI refuses both directions — the Engine panel's install
+    // button is disabled while `downloadBusy`, and every model/LoRA download
+    // button is disabled while `engineInstalling`. Nothing here enforces it.
     let cancel = state.download_cancel.clone();
     cancel.store(false, Ordering::SeqCst);
     let (root2, tag2) = (root.clone(), tag.clone());
@@ -1818,7 +1851,7 @@ pub async fn engine_apply_update(
     let commit = tauri::async_runtime::spawn_blocking(move || {
         let state = app_state.state::<AppState>();
         let (root3, tag3) = (root2.clone(), tag2.clone());
-        install_and_adopt(&state.generating, &state.config, &config_path, &root3, &tag3, || {
+        install_and_adopt(&state, &config_path, &root3, &tag3, || {
             let release = engine_release::fetch_latest_release()?
                 .filter(|r| r.tag == tag2)
                 .ok_or_else(|| "That engine release is no longer available.".to_string())?;
@@ -1856,7 +1889,6 @@ pub async fn engine_apply_update(
     .await
     .map_err(|e| e.to_string())??;
 
-    invalidate_engine_caches(&state);
     Ok(commit)
 }
 
@@ -2104,7 +2136,7 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let mut cfg = crate::config::default_config(); // Builtin → master-782-b290693
 
-        let (from, to) = changelog_range(&cfg, &root, "master-797-5ef4a75".into());
+        let (from, to) = changelog_range(&cfg, &root, "master-797-5ef4a75".into()).unwrap();
         assert_eq!(
             from.as_deref(),
             Some("b290693"),
@@ -2113,14 +2145,23 @@ mod tests {
         assert_eq!(to, "5ef4a75", "a tag has to be reduced too — /compare 404s on a tag name");
 
         // Not one of our tags: passed through, because it may already be a sha.
-        let (_, to) = changelog_range(&cfg, &root, "deadbee".into());
+        let (_, to) = changelog_range(&cfg, &root, "deadbee".into()).unwrap();
         assert_eq!(to, "deadbee");
+
+        // …but only when it really is one. This value goes into the /compare
+        // URL, and any JS in the webview can call the command that supplies it.
+        for junk in ["master", "5ef4a75/../../repos/x/y", "not a sha", "?q=x", "deadbe"] {
+            assert!(
+                changelog_range(&cfg, &root, junk.into()).is_none(),
+                "{junk} names no revision — it would be steering the request"
+            );
+        }
 
         // A self-compiled engine: upstream has no revision to compare from, so
         // the card shows the headline rather than a made-up range.
         let custom = fake_engine_at(&base.join("mine")).to_string_lossy().into_owned();
         cfg.engine = EngineSelection::Custom { path: custom };
-        let (from, _) = changelog_range(&cfg, &root, "master-797-5ef4a75".into());
+        let (from, _) = changelog_range(&cfg, &root, "master-797-5ef4a75".into()).unwrap();
         assert_eq!(from, None);
 
         let _ = std::fs::remove_dir_all(&base);
@@ -2204,9 +2245,12 @@ mod tests {
         let base = scratch("install-adopt");
         let engines = base.join("engines");
         let cfg_path = base.join("config.json");
-        let config = Mutex::new(crate::config::default_config());
-        let flag = Arc::new(AtomicBool::new(false));
+        let state = test_state();
+        let (config, flag) = (&state.config, &state.generating);
         let tag = "master-797-5ef4a75";
+        // Both engine caches populated as a running session would have them.
+        *state.gpu_devices.lock().unwrap() = Some(Vec::new());
+        *state.engine_version.lock().unwrap() = Some(Some("b290693".into()));
 
         // Two older installs, one of which is the tag being installed now.
         for t in ["master-100-aaaaaaa", "master-200-bbbbbbb", tag] {
@@ -2215,7 +2259,7 @@ mod tests {
 
         let observed = Arc::new(Mutex::new(None));
         let seen = observed.clone();
-        let commit = install_and_adopt(&flag, &config, &cfg_path, &engines, tag, || {
+        let commit = install_and_adopt(&state, &cfg_path, &engines, tag, || {
             // Observed from *inside* the download: this is the window that a
             // pre-flight-only claim leaves open, and the window in which a
             // config written too early would already name the new engine.
@@ -2246,6 +2290,42 @@ mod tests {
         assert!(
             !engines.join("master-100-aaaaaaa").exists(),
             "the oldest engine should have been pruned as part of the install"
+        );
+        // Dropping the caches belongs to the install, not to the command that
+        // calls it: leaving it to the caller puts it after the guard released.
+        assert!(
+            state.gpu_devices.lock().unwrap().is_none()
+                && state.engine_version.lock().unwrap().is_none(),
+            "a new engine may enumerate GPUs differently and certainly reports another commit"
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// The install succeeded and the config write did not — a full disk, or a
+    /// read-only config. The engine that is *running* has to stay the one on
+    /// disk, or the caller reports a failure while the session quietly uses the
+    /// new build and the next launch reverts.
+    #[test]
+    fn a_config_write_that_fails_after_an_install_does_not_switch_the_engine() {
+        let base = scratch("adoptfail");
+        let blocker = base.join("blocker");
+        std::fs::write(&blocker, b"not a directory").unwrap();
+        let config = Mutex::new(crate::config::default_config());
+
+        let err = adopt_installed_engine(
+            &config,
+            &blocker.join("config.json"),
+            "master-797-5ef4a75",
+            Ok("5ef4a75".into()),
+        )
+        .unwrap_err();
+
+        assert!(!err.is_empty(), "a config that could not be written must be reported");
+        assert_eq!(
+            config.lock().unwrap().engine,
+            EngineSelection::Builtin,
+            "an engine the next launch won't run must not be the one this session runs"
         );
 
         let _ = std::fs::remove_dir_all(&base);
@@ -2448,6 +2528,60 @@ mod tests {
         {
             assert!(l.get(key).is_some(), "LoraInfo lost the `{key}` field");
         }
+    }
+
+    /// The same boundary as the LoRA pin above, for the engine payloads — and
+    /// checked in both directions, because a rename on either side compiles,
+    /// passes clippy, passes `svelte-check` and passes every other test here,
+    /// then produces `undefined` at runtime: the fallback warning never shows,
+    /// the download size renders as `NaN B`, and every changelog line is
+    /// filtered out as noise.
+    #[test]
+    fn engine_payloads_keep_the_field_names_the_frontend_reads() {
+        let types_ts = include_str!("../../src/lib/types.ts");
+        let pin = |value: serde_json::Value, keys: &[&str], what: &str| {
+            for key in keys {
+                assert!(value.get(key).is_some(), "{what} lost the `{key}` field");
+                assert!(
+                    types_ts.contains(&format!("{key}:")),
+                    "types.ts stopped reading {what}.{key}"
+                );
+            }
+        };
+
+        pin(
+            serde_json::to_value(EngineStatus {
+                selection: EngineSelection::Builtin,
+                tag: Some("master-782-b290693".into()),
+                commit: Some("b290693".into()),
+                path: Some("/usr/lib/muchai/sd-cli".into()),
+                fell_back: false,
+                installed: vec!["master-797-5ef4a75".into()],
+                supported: true,
+            })
+            .unwrap(),
+            &["selection", "tag", "commit", "path", "fell_back", "installed", "supported"],
+            "EngineStatus",
+        );
+        pin(
+            serde_json::to_value(EngineUpdate {
+                tag: "master-797-5ef4a75".into(),
+                asset_size: 45_000_000,
+                current_tag: Some("master-782-b290693".into()),
+            })
+            .unwrap(),
+            &["tag", "asset_size", "current_tag"],
+            "EngineUpdate",
+        );
+        pin(
+            serde_json::to_value(engine_release::ChangeEntry {
+                subject: "fix: qwen vae".into(),
+                noteworthy: true,
+            })
+            .unwrap(),
+            &["subject", "noteworthy"],
+            "ChangeEntry",
+        );
     }
 
     #[test]

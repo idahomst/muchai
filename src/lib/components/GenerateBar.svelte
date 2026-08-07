@@ -1,7 +1,7 @@
 <script lang="ts">
   import { get } from "svelte/store";
   import { onMount } from "svelte";
-  import { request, genStatus, history, currentImage, currentItem, settings, gpuDevices, sysStats, livePreview, loras } from "../stores";
+  import { request, genStatus, history, currentImage, currentItem, settings, gpuDevices, sysStats, livePreview, loras, engineInstalling } from "../stores";
   import { generate, cancelGeneration, imageSrc, listHistory, onProgress, onGenNotice, onPreview, onLoraMissing, engineSelect, engineStatus } from "../api";
   import { modelIsSet } from "../types";
 
@@ -84,10 +84,11 @@
       genStatus.set({ kind: "idle" });
     } catch (e) {
       genStatus.set({ kind: "error", message: String(e) });
-      // Deliberately not awaited: `engine_status` is a synchronous command that
-      // may spend ten seconds probing an engine that has stopped answering —
-      // exactly the case this button exists for — and awaiting it would hold
-      // the banner and the live-draft cleanup below behind that stall.
+      // Deliberately not awaited: `engine_status` can spend ten seconds probing
+      // an engine that has stopped answering — exactly the case this button
+      // exists for — and awaiting it would hold the live-draft cleanup below,
+      // and the banner, behind that wait. (The wait itself no longer blocks the
+      // window: the command is declared `async` on the Rust side for this.)
       // Best-effort: a status we can't read just leaves the banner as it was.
       // `fell_back` excluded — the built-in engine already ran, so switching to
       // it cannot change this outcome and the button would promise a fix it
@@ -127,7 +128,7 @@
   function onKey(e: KeyboardEvent) {
     if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
       e.preventDefault();
-      if (get(genStatus).kind !== "running") run();
+      if (get(genStatus).kind !== "running" && !get(engineInstalling)) run();
     }
   }
 
@@ -161,13 +162,21 @@
     <span class="step" aria-live="polite">{stepLabel}</span>
     <button class="cancel" on:click={cancelGeneration}>Cancel</button>
   {:else}
-    <button class="generate" on:click={run}>
+    <!-- An engine install holds the same slot a generation claims, and for the
+         whole download. Refusing here says why; the backend's refusal is
+         written for the other holder and would tell the user to press a Cancel
+         that stops nothing. -->
+    <button class="generate" on:click={run} disabled={$engineInstalling}>
       <span class="bolt" aria-hidden="true">⚡</span>
       Generate
       <span class="kbd" aria-hidden="true">Ctrl ↵</span>
     </button>
   {/if}
 </div>
+
+{#if $engineInstalling}
+  <div class="cpu-note" role="status">Installing an engine update — generation resumes when it finishes.</div>
+{/if}
 
 {#if $genStatus.kind === "running" && willRunOnCpu}
   <div class="cpu-note" role="status">Running on CPU — this will be much slower.</div>
@@ -204,6 +213,8 @@
     background:var(--accent); color:var(--on-accent); font:inherit; font-size:14px; font-weight:600;
     display:flex; align-items:center; justify-content:center; gap:9px; }
   .generate:hover { background:var(--accent-bright); }
+  .generate:disabled { opacity:.55; cursor:default; }
+  .generate:disabled:hover { background:var(--accent); }
   .bolt { font-size:14px; }
   /* Translucent white pill on the violet button — theme-independent overlay. */
   .kbd { font-size:11px; font-weight:600; opacity:.75; background:rgba(255,255,255,.16);
