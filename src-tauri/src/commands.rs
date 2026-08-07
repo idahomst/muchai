@@ -1778,6 +1778,12 @@ fn install_and_adopt(
     })
 }
 
+/// Byte progress while an engine archive downloads. Its own channel, so the
+/// engine bar and the model bar cannot cross-talk. Named rather than inlined
+/// because the listener is in another language in another file with nothing but
+/// this string joining them — see the test that pins the pair.
+const DOWNLOAD_PROGRESS_EVENT: &str = "engine:download:progress";
+
 #[tauri::command]
 pub async fn engine_apply_update(
     app: AppHandle,
@@ -1829,7 +1835,7 @@ pub async fn engine_apply_update(
                     {
                         last_emit = downloaded;
                         let _ = app.emit(
-                            "engine:download:progress",
+                            DOWNLOAD_PROGRESS_EVENT,
                             DownloadProgress {
                                 downloaded,
                                 total,
@@ -2701,5 +2707,20 @@ mod tests {
         assert!(!is_valid_engine_tag("../models"));
         assert!(!is_valid_engine_tag("/etc"));
         assert!(!is_valid_engine_tag("release/1.2"));
+    }
+
+    /// The progress bar's entire contract is this string, written once in Rust
+    /// and once in TypeScript, and a drift is silent: the install still
+    /// succeeds, the bar just never moves. There is no test runner on the
+    /// frontend, so this is the only thing that can notice. Matched at the
+    /// `listen(...)` call rather than anywhere in the file, so a comment
+    /// mentioning the old name cannot keep the assertion alive on its own.
+    #[test]
+    fn the_frontend_listens_for_the_progress_event_the_installer_emits() {
+        let api = include_str!("../../src/lib/api.ts");
+        assert!(
+            api.contains(&format!("(\"{DOWNLOAD_PROGRESS_EVENT}\"")),
+            "no listener for {DOWNLOAD_PROGRESS_EVENT} in api.ts"
+        );
     }
 }

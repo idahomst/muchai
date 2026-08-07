@@ -40,6 +40,13 @@ const CHECK_INTERVAL_SECS: u64 = 24 * 60 * 60;
 /// competing with a network round trip for the moment the window opens.
 const CHECK_DELAY_SECS: u64 = 10;
 
+/// The one thing the background check emits. Named rather than inlined because
+/// the listener is in another language in another file, with nothing but this
+/// string joining them: `the_frontend_listens_for_the_event_the_backend_emits`
+/// is what makes a drift here fail the build instead of silently losing the
+/// badge.
+const UPDATE_AVAILABLE_EVENT: &str = "engine:update-available";
+
 /// Is a background update check due?
 ///
 /// A `last` in the future means the clock moved backwards (skew, a restored
@@ -191,7 +198,7 @@ pub fn run() {
                     // is exactly the case `seen` exists to cover.
                     let seen = state.config.lock().unwrap().engine_seen_tag.clone();
                     if let Some(tag) = badge_tag(update, seen.as_deref()) {
-                        let _ = check_handle.emit("engine:update-available", tag);
+                        let _ = check_handle.emit(UPDATE_AVAILABLE_EVENT, tag);
                     }
                 });
             }
@@ -422,5 +429,26 @@ mod tests {
     fn nothing_to_badge_when_the_check_found_no_update() {
         assert_eq!(badge_tag(None, None), None);
         assert_eq!(badge_tag(None, Some("master-797-5ef4a75")), None);
+    }
+
+    /// The event name is the entire contract between the background check and
+    /// the badge, and it is written twice in two languages. There is no test
+    /// runner on the frontend, so this is the only automated check that the two
+    /// halves still agree — the same trick `builtin_tag_matches_fetch_script`
+    /// uses to pin the fetch script.
+    #[test]
+    fn the_frontend_listens_for_the_event_the_backend_emits() {
+        // Matched at the `listen(...)` call, not anywhere in the file: the name
+        // also appears in a doc comment there, and a stale comment must not be
+        // able to keep this assertion true on its own.
+        assert!(
+            include_str!("../../src/lib/api.ts").contains(&format!("(\"{UPDATE_AVAILABLE_EVENT}\"")),
+            "the badge is the check's only output; a name that drifts silently loses it"
+        );
+        // …and a listener nothing calls is the same silence by another route.
+        assert!(
+            include_str!("../../src/routes/+page.svelte").contains("onEngineUpdate("),
+            "nothing subscribes to the check's one output"
+        );
     }
 }

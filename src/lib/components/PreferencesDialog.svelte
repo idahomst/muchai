@@ -1,10 +1,11 @@
 <script lang="ts">
-  import { settings } from "$lib/stores";
+  import { settings, engineUpdateTag } from "$lib/stores";
   import { setSettings } from "$lib/api";
   import { LOAD_PRECISION_OPTIONS, type LoadPrecision } from "$lib/types";
   import ModelFolders from "./ModelFolders.svelte";
   import GalleryLocation from "./GalleryLocation.svelte";
   import DevicePicker from "./DevicePicker.svelte";
+  import EnginePanel from "./EnginePanel.svelte";
   import ThemeToggle from "./ThemeToggle.svelte";
 
   let { onclose }: { onclose: () => void } = $props();
@@ -182,6 +183,14 @@
         <p class="hint">{precisionHint}</p>
       </div>
 
+      <!-- The dot mirrors the one on the gear so a user who opened Preferences
+           for an unrelated reason still finds the section. It disappears as
+           soon as EnginePanel mounts and clears the store. -->
+      <p class="section-hdr">
+        Engine{#if $engineUpdateTag}<span class="hdr-dot" role="img" aria-label="update available"></span>{/if}
+      </p>
+      <EnginePanel />
+
       <p class="section-hdr">Appearance</p>
       <div class="prefrow theme-row">
         <span class="pk">Theme</span>
@@ -214,4 +223,6 @@
   .prefrow .pk { font-size:13px; color:var(--text-muted); min-width:120px; }
   .prefrow .pv { flex:1; min-width:0; }
   .err { font-size:12px; color:var(--danger); margin:8px 0 0; }
+  .hdr-dot { display:inline-block; width:5px; height:5px; margin-left:5px; vertical-align:middle;
+    border-radius:50%; background:var(--accent); }
 </style>

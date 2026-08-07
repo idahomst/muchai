@@ -211,4 +211,18 @@ mod tests {
         assert!(msg.contains("12 GB"), "should name the requirement, got: {msg}");
         assert!(msg.contains("3.1 GB"), "should name the free space, got: {msg}");
     }
+
+    /// The prefix above only works because the frontend spells it identically,
+    /// and two consumers now depend on it — the model dialog's reclaim panel
+    /// and the engine panel's pointer to it. A drift is silent: the failure
+    /// still reports, it just stops offering the way out. `include_str!` is how
+    /// the rest of this codebase pins a contract that crosses languages.
+    #[test]
+    fn the_frontend_matches_on_the_same_prefix() {
+        assert!(
+            include_str!("../../src/lib/types.ts")
+                .contains(&format!("= \"{INSUFFICIENT_SPACE_PREFIX}\"")),
+            "types.ts no longer declares {INSUFFICIENT_SPACE_PREFIX}"
+        );
+    }
 }
