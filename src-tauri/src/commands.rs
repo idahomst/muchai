@@ -69,7 +69,7 @@ impl Drop for RunGuard {
     }
 }
 
-fn now_unix() -> u64 {
+pub(crate) fn now_unix() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
@@ -257,13 +257,26 @@ pub fn engine_version(app: AppHandle, state: State<AppState>) -> Option<String> 
     version
 }
 
-/// Merge an incoming settings payload with the current backend state, keeping the
-/// backend-owned `last_request` from `current` (the UI's copy can be stale; it has
-/// its own dedicated command, so a preference save must never clobber it). Pure so
-/// it is unit-testable.
+/// Merge an incoming settings payload with the current backend state, keeping
+/// the backend-owned fields from `current`. Pure so it is unit-testable.
+///
+/// The UI loads the config once at mount and sends the whole struct back on
+/// every preference change, so any field the backend writes afterwards is
+/// clobbered by the next theme toggle unless it is preserved here. Each of
+/// these has its own command and none has a control in the settings payload:
+/// `last_request` belongs to generation, `engine` to `engine_select` and the
+/// installer, `engine_last_check` to the update check. Losing the last two is
+/// not cosmetic — a reverted `engine` silently drops the user back to the
+/// built-in binary, and a reverted `engine_last_check` makes the once-a-day
+/// check run on every launch.
+///
+/// `engine_seen_tag` is deliberately *not* preserved: dismissing the update
+/// badge is a UI act, and the panel records it through this same command.
 fn merged_settings(current: &AppConfig, incoming: AppConfig) -> AppConfig {
     AppConfig {
         last_request: current.last_request.clone(),
+        engine: current.engine.clone(),
+        engine_last_check: current.engine_last_check,
         ..incoming
     }
 }
@@ -271,8 +284,8 @@ fn merged_settings(current: &AppConfig, incoming: AppConfig) -> AppConfig {
 /// Did the user point MuchAI at a different engine binary?
 ///
 /// `EngineSelection` derives `PartialEq`; this exists to name the concept at
-/// both call sites (`set_settings` and `engine_select`) and to keep the reason
-/// documented where the caches are dropped.
+/// `engine_select`, the one command that can switch binaries, and to keep the
+/// reason documented where the caches are dropped.
 fn engine_changed(before: &EngineSelection, after: &EngineSelection) -> bool {
     before != after
 }
@@ -293,15 +306,16 @@ pub fn set_settings(
     state: State<AppState>,
     config: AppConfig,
 ) -> Result<(), String> {
-    // Merge AND persist under the lock so the preserved backend-owned
-    // `last_request` reflects the latest state and no concurrent mutator can slip
-    // a write in between our merge and save. Matches the sibling mutators, which
-    // all persist while still holding the lock.
+    // Merge AND persist under the lock so the preserved backend-owned fields
+    // reflect the latest state and no concurrent mutator can slip a write in
+    // between our merge and save. Matches the sibling mutators, which all
+    // persist while still holding the lock.
+    //
+    // No engine-cache invalidation here: `merged_settings` keeps the current
+    // selection, so this command cannot change which binary runs. Switching is
+    // `engine_select`'s job, and that is where the caches are dropped.
     let gallery_dir = {
         let mut cfg = state.config.lock().unwrap();
-        if engine_changed(&cfg.engine, &config.engine) {
-            invalidate_engine_caches(&state);
-        }
         *cfg = merged_settings(&cfg, config);
         config::save_config_to(&config::config_file_path(), &cfg).map_err(|e| e.to_string())?;
         cfg.gallery_dir.clone()
@@ -1595,8 +1609,9 @@ pub struct EngineUpdate {
 ///
 /// Takes the fetch's *result* rather than performing it, so that every
 /// decision here — what counts as a check, what counts as an update, and what
-/// a custom engine is told — is testable without a network.
-fn record_check(
+/// a custom engine is told — is testable without a network. Shared with the
+/// startup check in `lib.rs`, which needs the same three answers.
+pub(crate) fn record_check(
     config: &Mutex<AppConfig>,
     config_path: &Path,
     engines_root: &Path,
@@ -2401,13 +2416,17 @@ mod tests {
     }
 
     #[test]
-    fn set_settings_preserves_last_request() {
-        // Current backend state: has a meaningful, backend-owned last_request.
+    fn set_settings_preserves_the_fields_the_backend_owns() {
+        // Current backend state: a meaningful last_request, an engine installed
+        // and selected since the UI loaded, and a check already made today.
         let mut current = crate::config::default_config();
         current.last_request.prompt = "backend-owned prompt".into();
+        current.engine = EngineSelection::Downloaded { tag: "master-797-5ef4a75".into() };
+        current.engine_last_check = Some(1_800_000_000);
+        current.engine_seen_tag = Some("master-797-5ef4a75".into());
 
-        // Incoming payload from the UI: preference fields changed, but it carries a
-        // STALE (default) last_request.
+        // Incoming payload from the UI: preference fields changed, but the rest
+        // is the snapshot taken at mount, before any of the above happened.
         let mut incoming = crate::config::default_config();
         incoming.theme = crate::types::Theme::Light;
         incoming.low_vram = true;
@@ -2418,8 +2437,16 @@ mod tests {
         // Preference fields adopt the incoming values…
         assert_eq!(merged.theme, crate::types::Theme::Light);
         assert!(merged.low_vram);
-        // …but the backend-owned last_request is preserved from `current`.
+        // …but nothing the backend owns is rolled back by a theme toggle. A
+        // reverted engine would silently drop the user back to the built-in
+        // binary; a reverted timestamp would make the daily check run at every
+        // launch, which is the whole point of recording it.
         assert_eq!(merged.last_request.prompt, "backend-owned prompt");
+        assert_eq!(merged.engine, EngineSelection::Downloaded { tag: "master-797-5ef4a75".into() });
+        assert_eq!(merged.engine_last_check, Some(1_800_000_000));
+        // The badge is dismissed through this command, so this one field does
+        // come from the UI.
+        assert_eq!(merged.engine_seen_tag, None);
     }
 
     #[test]

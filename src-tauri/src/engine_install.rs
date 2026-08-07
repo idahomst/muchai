@@ -35,9 +35,6 @@ pub fn staging_dir(root: &Path, tag: &str) -> PathBuf {
 /// crash or kill mid-install can only leave one of these behind, and a staging
 /// directory is by definition incomplete. Best-effort — a failure here just
 /// wastes disk, it cannot break anything.
-// Not yet called outside this module or its tests — Task 13's startup sweep
-// calls it.
-#[allow(dead_code)]
 pub fn sweep_staging(root: &Path) {
     let Ok(rd) = std::fs::read_dir(root) else { return };
     for entry in rd.flatten() {
