@@ -1,6 +1,6 @@
 <script lang="ts">
   import { currentItem, settings, request, selectedModelId, loras } from "$lib/stores";
-  import { setSettings } from "$lib/api";
+  import { setSettings, pickRefImage } from "$lib/api";
   import { SAMPLERS, modelLabel } from "$lib/types";
   import type { LoraSelection } from "$lib/types";
 
@@ -32,6 +32,23 @@
     const name = $loras.find((l) => l.name === s.name)?.display_name ?? s.name;
     return `${name} @ ${s.weight.toFixed(2)}`;
   }
+
+  // Whether each reference of the *shown* item still resolves. Keyed by path so
+  // a stale answer can never be painted next to a different image. Null = not
+  // checked yet, which renders as plain text rather than as either verdict.
+  let refStatus = $state<Record<string, boolean>>({});
+  $effect(() => {
+    const paths = $currentItem?.request.ref_images ?? [];
+    if (paths.length === 0) return;
+    for (const p of paths) {
+      if (p in refStatus) continue;
+      pickRefImage(p)
+        .then(() => (refStatus = { ...refStatus, [p]: true }))
+        .catch(() => (refStatus = { ...refStatus, [p]: false }));
+    }
+  });
+
+  const basename = (p: string) => p.split(/[/\\]/).pop() ?? p;
 
   const samplerLabel = (v: string) =>
     SAMPLERS.find((s) => s.value === v)?.label ?? v;
@@ -69,7 +86,9 @@
         {#if expanded}
           <span class="src">from this image</span>
         {:else}
-          <span class="summary">Seed {r.seed} · {r.steps} steps · CFG {r.cfg_scale} · {r.width}×{r.height}</span>
+          <span class="summary">
+            {#if r.ref_images.length > 0}Edit · {/if}Seed {r.seed} · {r.steps} steps · CFG {r.cfg_scale} · {r.width}×{r.height}
+          </span>
         {/if}
       </button>
       <!-- Outside .hdr, not inside: .hdr is itself a button and nesting one
@@ -91,7 +110,22 @@
         {#if r.loras.length > 0}
           <div class="kv wide"><span class="k">LoRAs</span><span class="v">{r.loras.map(loraLabel).join(", ")}</span></div>
         {/if}
-        <div class="kv wide"><span class="k">Prompt</span><span class="v">{r.prompt}</span></div>
+        {#if r.ref_images.length > 0}
+          <div class="kv wide">
+            <span class="k">Editing</span>
+            <span class="v">
+              {#each r.ref_images as p (p)}
+                <span class="ref" class:gone={refStatus[p] === false} title={p}>
+                  {basename(p)}{#if refStatus[p] === false} <em>(file missing)</em>{/if}
+                </span>
+              {/each}
+            </span>
+          </div>
+        {/if}
+        <div class="kv wide">
+          <span class="k">{r.ref_images.length > 0 ? "Instruction" : "Prompt"}</span>
+          <span class="v">{r.prompt}</span>
+        </div>
         {#if r.negative_prompt}
           <div class="kv wide"><span class="k">Negative</span><span class="v">{r.negative_prompt}</span></div>
         {/if}
@@ -128,5 +162,8 @@
   .kv .v.mono { font-family:var(--mono); font-size:11.5px; }
   .kv.wide { grid-column:1 / -1; }
   .kv.wide .v { color:var(--text); white-space:normal; word-break:break-word; }
+  .ref { margin-right:10px; }
+  .ref.gone { text-decoration:line-through; color:var(--text-faint); }
+  .ref.gone em { font-style:normal; text-decoration:none; color:var(--warn); }
   .err { color:var(--danger); font-size:.78rem; }
 </style>
