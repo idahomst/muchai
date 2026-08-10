@@ -1,12 +1,10 @@
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { AppConfig, GalleryItem, GenerationRequest, ProgressUpdate, SystemStats, DownloadProgress, GpuDevice, RecipeInfo, GenDefaults, LibraryEntry, RatedCatalogEntry, ManifestFlags, ModelComponents, LibraryFit, SpaceCheck, ReclaimableModel, LoraInfo, AddedLora } from "./types";
+import type { AppConfig, GalleryItem, GenerationRequest, ProgressUpdate, SystemStats, DownloadProgress, GpuDevice, RecipeInfo, GenDefaults, LibraryEntry, RatedCatalogEntry, ManifestFlags, ModelComponents, LibraryFit, SpaceCheck, ReclaimableModel, LoraInfo, AddedLora, EngineSelection, EngineStatus, EngineUpdate, ChangeEntry } from "./types";
 
 export const getSettings = () => invoke<AppConfig>("get_settings");
 /** Enumerate Vulkan devices the engine can target (cached server-side). */
 export const listGpuDevices = () => invoke<GpuDevice[]>("list_gpu_devices");
-/** The bundled engine's commit hash (e.g. "b290693"), or null if unknown. Cached server-side. */
-export const engineVersion = () => invoke<string | null>("engine_version");
 export const setSettings = (config: AppConfig) => invoke<void>("set_settings", { config });
 export const listHistory = () => invoke<GalleryItem[]>("list_history");
 /** Returns one item per produced image (batch_count may yield several).
@@ -126,3 +124,35 @@ export const editLora = (id: string, displayName: string, family: string) =>
   invoke<LoraInfo>("edit_lora", { id, displayName, family });
 
 export const deleteLora = (id: string) => invoke<void>("delete_lora", { id });
+
+/** Which engine is running, plus what else is installed. */
+export const engineStatus = () => invoke<EngineStatus>("engine_status");
+
+/** Ask GitHub for the newest release. null = already current, unsupported
+ *  platform, or the running engine is a custom build we can't compare. Throws
+ *  on a network failure — callers the user didn't trigger must swallow it. */
+export const engineCheckUpdate = () => invoke<EngineUpdate | null>("engine_check_update");
+
+/** Upstream commits between the running engine and `toTag`. */
+export const engineChangelog = (toTag: string) =>
+  invoke<ChangeEntry[]>("engine_changelog", { toTag });
+
+/** Download, verify and install a release, then select it. Returns its commit. */
+export const engineApplyUpdate = (tag: string) => invoke<string>("engine_apply_update", { tag });
+
+export const engineSelect = (selection: EngineSelection) =>
+  invoke<void>("engine_select", { selection });
+
+/** Fires at most once a launch when a newer engine exists. Lights the badge;
+ *  never shows a dialog. Both event names below are pinned against the Rust
+ *  constants by tests in `lib.rs` that look for this exact `listen<...>("…"`
+ *  form — spell the literal out inline rather than hoisting it to a variable,
+ *  or the pin stops matching and silently protects nothing. */
+export const onEngineUpdate = (cb: (tag: string) => void): Promise<UnlistenFn> =>
+  listen<string>("engine:update-available", (e) => cb(e.payload));
+
+/** Byte progress while an engine is downloading. Separate event from model
+ *  downloads so the two progress bars can't cross-talk — only the *cancel*
+ *  flag is shared. */
+export const onEngineDownloadProgress = (cb: (p: DownloadProgress) => void): Promise<UnlistenFn> =>
+  listen<DownloadProgress>("engine:download:progress", (e) => cb(e.payload));

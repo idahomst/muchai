@@ -1,17 +1,20 @@
 <script lang="ts">
   import { version } from "../../../package.json";
   import { APP_TAGLINE, CREDITS } from "../about";
-  import { openExternal, engineVersion } from "../api";
+  import { openExternal, engineStatus } from "../api";
+  import type { EngineStatus } from "../types";
 
   let { onclose }: { onclose: () => void } = $props();
   let closeBtn = $state<HTMLButtonElement>();
-  let engineCommit = $state<string | null>(null);
+  // The whole status, not just the commit: a bare hash means nothing to a user
+  // comparing against the releases page, and the tag is what they can compare.
+  let engine = $state<EngineStatus | null>(null);
 
   $effect(() => { closeBtn?.focus(); });
 
-  // Best-effort engine-version probe; a failure just leaves the commit hidden.
+  // Best-effort engine probe; a failure just leaves the line hidden.
   $effect(() => {
-    engineVersion().then((v) => { engineCommit = v; }).catch(() => {});
+    engineStatus().then((s) => { engine = s; }).catch(() => {});
   });
 
   function onkeydown(e: KeyboardEvent) {
@@ -49,8 +52,8 @@
                   <span class="name">{item.label}</span>
                 {/if}
                 {#if item.note}<span class="note"> — {item.note}</span>{/if}
-                {#if section.heading === "Image engine" && engineCommit}
-                  <span class="commit" title="stable-diffusion.cpp build in use">(commit {engineCommit})</span>
+                {#if section.heading === "Image engine" && engine?.commit}
+                  <span class="commit" title="stable-diffusion.cpp build in use">({engine.tag ? `${engine.tag}, ` : ""}commit {engine.commit})</span>
                 {/if}
               </li>
             {/each}

@@ -260,7 +260,6 @@ mod tests {
             vae: Some("/m/ae.safetensors".into()),
             vae_format: Some("flux".into()),
             prediction: Some("flux_flow".into()),
-            ..Default::default()
         });
         let args = build_args(&req, "/out/x.png", None, EngineOptions::default());
         assert_eq!(val_after(&args, "--diffusion-model"), Some("/m/flux1-dev.safetensors"));

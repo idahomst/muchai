@@ -1,13 +1,14 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { get } from "svelte/store";
-  import { settings, request, history, sysStats, gpuDevices, refreshLibrary, refreshLoras, downloadProgress, downloadBusy, downloadError, library, selectedModelId, modelNotice } from "$lib/stores";
-  import { getSettings, setSettings, listHistory, onSystemStats, listGpuDevices, onDownloadProgress } from "$lib/api";
+  import { settings, request, history, sysStats, gpuDevices, refreshLibrary, refreshLoras, downloadProgress, downloadBusy, downloadError, library, selectedModelId, modelNotice, engineUpdateTag, engineInstalling, engineError } from "$lib/stores";
+  import { getSettings, setSettings, listHistory, onSystemStats, listGpuDevices, onDownloadProgress, onEngineUpdate } from "$lib/api";
   import ModelSelector from "$lib/components/ModelSelector.svelte";
   import NewModelDialog from "$lib/components/NewModelDialog.svelte";
   import ModelEditor from "$lib/components/ModelEditor.svelte";
   import AddLoraDialog from "$lib/components/AddLoraDialog.svelte";
   import DownloadStatus from "$lib/components/DownloadStatus.svelte";
+  import EngineInstallStatus from "$lib/components/EngineInstallStatus.svelte";
   import type { LibraryEntry } from "$lib/types";
   import PromptPanel from "$lib/components/PromptPanel.svelte";
   import SettingsPanel from "$lib/components/SettingsPanel.svelte";
@@ -94,7 +95,10 @@
     // App-level download-progress feed: keeps the store live regardless of
     // whether the New-model dialog is open, so DownloadStatus can show it.
     const unDl = onDownloadProgress((p) => downloadProgress.set(p));
-    return () => { un.then((f) => f()); unDl.then((f) => f()); };
+    // The background check fires at most once a launch, ~10s in. Its entire
+    // output is this store, which lights a dot — never a dialog.
+    const unEng = onEngineUpdate((tag) => engineUpdateTag.set(tag));
+    return () => { un.then((f) => f()); unDl.then((f) => f()); unEng.then((f) => f()); };
   });
 </script>
 
@@ -104,7 +108,9 @@
       <h1 class="brand">Much<span class="ai">AI</span></h1>
       <div class="hdr-actions">
         <button class="iconbtn" aria-label="Help" title="Help" onclick={() => (showWelcome = true)}>?</button>
-        <button class="iconbtn" aria-label="Preferences" title="Preferences" onclick={() => (showPrefs = true)}>⚙</button>
+        <button class="iconbtn" aria-label="Preferences"
+          title={$engineUpdateTag ? "Preferences — engine update available" : "Preferences"}
+          onclick={() => (showPrefs = true)}>⚙{#if $engineUpdateTag}<span class="dot" aria-hidden="true"></span>{/if}</button>
         <ThemeToggle />
       </div>
     </header>
@@ -174,6 +180,12 @@
   <DownloadStatus />
 {/if}
 
+<!-- Same shape for the engine install: Preferences shows its own inline
+     progress, so the toast only stands in once that dialog is closed. -->
+{#if !showPrefs && ($engineInstalling || $engineError)}
+  <EngineInstallStatus />
+{/if}
+
 <style>
   .app { display:flex; height:calc(100vh - 34px); }
   .controls { flex:0 0 340px; display:flex; flex-direction:column;
@@ -188,6 +200,11 @@
     color:var(--text-muted); cursor:pointer; font:inherit; font-size:14px;
     background:transparent; border:1px solid transparent; }
   .iconbtn:hover { background:var(--card-hover); color:var(--text); }
+  /* The whole engine-update notification: a dot, absolutely positioned so it
+     rides the gear without changing the header's layout. */
+  .iconbtn { position:relative; }
+  .dot { position:absolute; top:4px; right:4px; width:6px; height:6px;
+    border-radius:50%; background:var(--accent); }
 
   .panel-selector { flex:0 0 auto; padding:12px 16px; border-bottom:1px solid var(--border); }
   .model-notice { display:flex; align-items:flex-start; gap:8px; margin-top:10px;

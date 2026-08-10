@@ -21,10 +21,11 @@ pub struct ModelComponents {
     pub prediction: Option<String>, // --prediction
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Sampler {
     Euler,
+    #[default]
     EulerA,
     Heun,
     Dpm2,
@@ -54,15 +55,10 @@ impl Sampler {
     }
 }
 
-impl Default for Sampler {
-    fn default() -> Self {
-        Sampler::EulerA
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OutputFormat {
+    #[default]
     Png,
     Jpeg,
 }
@@ -77,24 +73,13 @@ impl OutputFormat {
     }
 }
 
-impl Default for OutputFormat {
-    fn default() -> Self {
-        OutputFormat::Png
-    }
-}
-
 /// UI color theme. Persisted in `AppConfig`. Defaults to Dark.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Theme {
+    #[default]
     Dark,
     Light,
-}
-
-impl Default for Theme {
-    fn default() -> Self {
-        Theme::Dark
-    }
 }
 
 /// A model reference: single all-in-one file, or split components.
@@ -124,11 +109,9 @@ impl ModelRef {
             ModelRef::SingleFile { path } => vec![path.clone()],
             ModelRef::MultiFile(c) => {
                 let mut paths = vec![c.diffusion_model.clone()];
-                for opt in [&c.vae, &c.clip_l, &c.clip_g, &c.t5xxl, &c.llm] {
-                    if let Some(p) = opt {
-                        if !p.trim().is_empty() {
-                            paths.push(p.clone());
-                        }
+                for p in [&c.vae, &c.clip_l, &c.clip_g, &c.t5xxl, &c.llm].into_iter().flatten() {
+                    if !p.trim().is_empty() {
+                        paths.push(p.clone());
                     }
                 }
                 paths
@@ -311,15 +294,6 @@ pub struct GalleryItem {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ModelInfo {
-    /// Absolute path passed to the engine via `-m`.
-    pub path: String,
-    /// File stem, shown in the UI.
-    pub name: String,
-    pub size_bytes: u64,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DownloadProgress {
     pub downloaded: u64,
     pub total: Option<u64>,
@@ -338,9 +312,52 @@ fn default_true() -> bool {
     true
 }
 
+/// Which engine binary MuchAI runs.
+///
+/// Replaces the overloaded `AppConfig.sd_binary_path`, which could not tell
+/// "the user pointed at a self-compiled build" apart from "the updater
+/// installed this" — so an auto-update would have silently stomped a
+/// deliberate choice. The updater only ever moves between `Builtin` and
+/// `Downloaded`; it refuses to touch `Custom`.
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum EngineSelection {
+    /// The engine bundled with this MuchAI build. Always present, never
+    /// pruned, so it is always available as the revert target.
+    #[default]
+    Builtin,
+    /// A release the updater downloaded, living in `engines/<tag>/`.
+    Downloaded { tag: String },
+    /// A path the user chose by hand.
+    Custom { path: String },
+}
+
+/// Deserialize `engine`, falling back to `Builtin` on anything unrecognised.
+///
+/// A plain `#[serde(default)]` only covers a *missing* key — a `null`, an
+/// unknown variant, or a variant from a newer MuchAI would abort the whole
+/// parse, and `load_config_from` turns any parse error into a fresh default
+/// config. That would cost the user every other setting they have. Since the
+/// updater makes downgrades a normal event, an unreadable selection degrades
+/// to the bundled engine rather than taking the config down with it.
+fn lenient_engine<'de, D>(d: D) -> Result<EngineSelection, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let v = serde_json::Value::deserialize(d)?;
+    Ok(serde_json::from_value(v).unwrap_or_default())
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AppConfig {
-    pub sd_binary_path: Option<String>, // None => use bundled sidecar
+    /// Legacy override, superseded by `engine`. Retained only so an existing
+    /// config can be migrated (see `migrate_engine_selection`): it is read once,
+    /// at load, and never written again. `EngineSelection` is the live field —
+    /// nothing consults `sd_binary_path` to decide which binary runs. Safe to
+    /// delete once enough releases have passed that every config has loaded
+    /// (and thus migrated) at least once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sd_binary_path: Option<String>,
     pub default_model_path: Option<String>,
     pub gallery_dir: String,
     /// Primary managed models folder; downloads land here.
@@ -387,6 +404,27 @@ pub struct AppConfig {
     /// always does. Old configs lack the key and get `auto`.
     #[serde(default = "default_load_precision")]
     pub load_precision: String,
+    /// Which engine binary to run. `#[serde(default)]` → `Builtin` for configs
+    /// written before this field existed; `load_config_from` then migrates any
+    /// legacy `sd_binary_path` into `Custom`. `deserialize_with` makes a `null`,
+    /// an unknown variant, or a malformed shape degrade to `Builtin` too, rather
+    /// than aborting the whole config parse — see `lenient_engine`.
+    #[serde(default, deserialize_with = "lenient_engine")]
+    pub engine: EngineSelection,
+    /// Ask GitHub for a newer engine release at most once a day. Default ON,
+    /// following the `live_preview` precedent; turning it off suppresses the
+    /// outbound request entirely.
+    #[serde(default = "default_true")]
+    pub engine_update_check: bool,
+    /// Unix seconds of the last update check — the once-a-day rate limit.
+    /// `None` means "never checked", which is deliberately distinct from a
+    /// check that happened at the Unix epoch.
+    #[serde(default)]
+    pub engine_last_check: Option<u64>,
+    /// Newest tag the user has already been shown, so the badge does not come
+    /// back on every launch until they install.
+    #[serde(default)]
+    pub engine_seen_tag: Option<String>,
     pub last_request: GenerationRequest,
 }
 
@@ -509,8 +547,10 @@ mod tests {
 
     #[test]
     fn generation_request_model_id_round_trips() {
-        let mut req = GenerationRequest::default();
-        req.model_id = Some("flux2-klein-9b-q4".into());
+        let req = GenerationRequest {
+            model_id: Some("flux2-klein-9b-q4".into()),
+            ..Default::default()
+        };
         let json = serde_json::to_string(&req).unwrap();
         let back: GenerationRequest = serde_json::from_str(&json).unwrap();
         assert_eq!(back.model_id.as_deref(), Some("flux2-klein-9b-q4"));
@@ -677,6 +717,49 @@ mod tests {
         let json = serde_json::to_string(&off).unwrap();
         let back: AppConfig = serde_json::from_str(&json).unwrap();
         assert!(!back.live_preview);
+    }
+
+    #[test]
+    fn app_config_engine_update_check_false_round_trips() {
+        // The field defaults to true via `default_true`; the classic failure
+        // mode for that pattern is an explicit `false` silently reverting to
+        // true on the next round-trip. Mirrors
+        // `app_config_live_preview_defaults_to_true_and_round_trips`.
+        let legacy = r#"{
+            "sd_binary_path": null,
+            "default_model_path": null,
+            "gallery_dir": "/g",
+            "last_request": {
+                "model": {"type": "single_file", "path": ""},
+                "prompt": "", "negative_prompt": "",
+                "steps": 20, "cfg_scale": 7.0, "sampler": "euler_a",
+                "width": 512, "height": 512, "seed": -1, "batch_count": 1
+            }
+        }"#;
+        let cfg: AppConfig = serde_json::from_str(legacy).unwrap();
+        assert!(cfg.engine_update_check, "missing key must default to true");
+
+        let mut off = cfg.clone();
+        off.engine_update_check = false;
+        let json = serde_json::to_string(&off).unwrap();
+        let back: AppConfig = serde_json::from_str(&json).unwrap();
+        assert!(!back.engine_update_check);
+    }
+
+    /// Pins the exact JSON wire form of `EngineSelection`. The hand-maintained
+    /// TS union in `src/lib/types.ts` (`EngineSelection`) mirrors these
+    /// literals byte-for-byte; if this changes, update the frontend in lockstep.
+    #[test]
+    fn engine_selection_wire_form_matches_frontend_contract() {
+        assert_eq!(serde_json::to_string(&EngineSelection::Builtin).unwrap(), r#"{"type":"builtin"}"#);
+        assert_eq!(
+            serde_json::to_string(&EngineSelection::Downloaded { tag: "t".into() }).unwrap(),
+            r#"{"type":"downloaded","tag":"t"}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&EngineSelection::Custom { path: "/p".into() }).unwrap(),
+            r#"{"type":"custom","path":"/p"}"#
+        );
     }
 
     #[test]

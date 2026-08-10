@@ -2,7 +2,7 @@
   import { get } from "svelte/store";
   import { catalogEntries, addCatalogModel, addUrlModel, addLocalModel, pickModelFile, openExternal,
            diskSpace, checkCatalogSpace, listReclaimable, trashDir, deleteModelEntry, openFolder } from "../api";
-  import { settings, runDownload, downloadBusy, downloadProgress, downloadError, refreshLibrary } from "../stores";
+  import { settings, runDownload, downloadBusy, downloadProgress, downloadError, refreshLibrary, engineInstalling } from "../stores";
   import { formatBytes, catalogTotalBytes } from "../modelFormat";
   import DownloadProgressBar from "./DownloadProgressBar.svelte";
   import { INSUFFICIENT_SPACE_PREFIX } from "../types";
@@ -235,7 +235,7 @@
                 </div>
                 <div class="catadd">
                   <span class="vfit {f.cls}">{f.text}</span>
-                  <button class="btn btn-ghost btn-sm" disabled={$downloadBusy} onclick={() => runCatalog(e.id)}>Add</button>
+                  <button class="btn btn-ghost btn-sm" disabled={$downloadBusy || $engineInstalling} onclick={() => runCatalog(e.id)}>Add</button>
                 </div>
               </div>
             {/each}
@@ -249,7 +249,7 @@
             <p class="microlabel">Name</p>
             <input class="dlg-input" bind:value={urlName} placeholder="My model" />
           </div>
-          <button class="btn btn-primary" disabled={$downloadBusy || !url.startsWith("https://")} onclick={() => run(() => addUrlModel(url, urlName))}>
+          <button class="btn btn-primary" disabled={$downloadBusy || $engineInstalling || !url.startsWith("https://")} onclick={() => run(() => addUrlModel(url, urlName))}>
             Download &amp; add
           </button>
           {#if $downloadBusy}<div class="progress"><DownloadProgressBar progress={$downloadProgress} /></div>{/if}
@@ -265,7 +265,7 @@
             <p class="microlabel">Name</p>
             <input class="dlg-input" bind:value={localName} placeholder="My model" />
           </div>
-          <button class="btn btn-primary" disabled={$downloadBusy || !localPath} onclick={() => run(() => addLocalModel(localPath, localName, null))}>
+          <button class="btn btn-primary" disabled={$downloadBusy || $engineInstalling || !localPath} onclick={() => run(() => addLocalModel(localPath, localName, null))}>
             Add (reference in place)
           </button>
           {#if $downloadBusy}<div class="progress"><DownloadProgressBar progress={$downloadProgress} /></div>{/if}

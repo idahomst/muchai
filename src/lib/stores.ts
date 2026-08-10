@@ -66,6 +66,27 @@ export async function runDownload<T>(fn: () => Promise<T>): Promise<T | null> {
   }
 }
 
+/** Tag of an engine update waiting to be noticed, or null. Set by the once-a-day
+ *  background check at launch — never by a manual check, which would light a dot
+ *  on the section the user is already looking at. Cleared once they have opened
+ *  the Engine section. Drives the dot on the gear icon. */
+export const engineUpdateTag = writable<string | null>(null);
+
+/** An engine install in flight, and its percentage (null until the first
+ *  progress event). App-level for the same reason `downloadBusy` is: the
+ *  install runs in the backend regardless of the dialog's lifetime, and it
+ *  holds the generation slot while it does, so closing Preferences must not be
+ *  what makes it invisible and uncancellable. */
+export const engineInstalling = writable(false);
+export const enginePct = writable<number | null>(null);
+
+/** The last engine check or install failure, or null. A store rather than panel
+ *  state for the same reason: an install that fails after Preferences closed
+ *  would otherwise write its error into a component nobody can see, and the
+ *  user would find only the old engine still selected, with no explanation.
+ *  Cleared when the panel is destroyed unless an install is still running. */
+export const engineError = writable<string | null>(null);
+
 export type GenStatus =
   | { kind: "idle" }
   | { kind: "running"; progress: ProgressUpdate | null }

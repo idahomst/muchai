@@ -1,4 +1,4 @@
-use crate::types::{GenDefaults, ModelComponents, Sampler};
+use crate::types::{GenDefaults, Sampler};
 use serde::{Deserialize, Serialize};
 
 /// Every base family a model in the library can carry, for the LoRA family
@@ -49,30 +49,6 @@ pub struct ModelRecipe {
     pub vae_format: Option<&'static str>,
     pub prediction: Option<&'static str>,
     pub shared: Vec<SharedComponent>,
-}
-
-impl ModelRecipe {
-    /// Required roles whose slot is empty (None / blank). Gates Save + generation.
-    pub fn missing_required_roles(&self, c: &ModelComponents) -> Vec<ComponentRole> {
-        self.roles
-            .iter()
-            .filter(|r| r.required)
-            .filter(|r| slot(c, r.role).map(|s| s.trim().is_empty()).unwrap_or(true))
-            .map(|r| r.role)
-            .collect()
-    }
-}
-
-/// Read the component slot for a role. Diffusion is always present (String).
-fn slot(c: &ModelComponents, role: ComponentRole) -> Option<&str> {
-    match role {
-        ComponentRole::Diffusion => Some(c.diffusion_model.as_str()),
-        ComponentRole::Vae => c.vae.as_deref(),
-        ComponentRole::ClipL => c.clip_l.as_deref(),
-        ComponentRole::ClipG => c.clip_g.as_deref(),
-        ComponentRole::T5xxl => c.t5xxl.as_deref(),
-        ComponentRole::Llm => c.llm.as_deref(),
-    }
 }
 
 /// Result of running detection: at most one matched filename per role.
@@ -521,20 +497,6 @@ mod tests {
         ];
         let (recipe, _d) = detect_best(&files).unwrap();
         assert_eq!(recipe.family, "flux2");
-    }
-
-    #[test]
-    fn missing_required_roles_reports_empty_slots() {
-        let c = ModelComponents {
-            diffusion_model: "/m/flux1-dev.safetensors".into(),
-            clip_l: Some("/m/clip_l.safetensors".into()),
-            ..Default::default()
-        };
-        let missing = flux().missing_required_roles(&c);
-        assert!(missing.contains(&ComponentRole::T5xxl));
-        assert!(missing.contains(&ComponentRole::Vae));
-        assert!(!missing.contains(&ComponentRole::Diffusion));
-        assert!(!missing.contains(&ComponentRole::ClipL));
     }
 
     #[test]

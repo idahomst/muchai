@@ -1,0 +1,19 @@
+{
+  "commits": [
+    { "commit": { "message": "feat: add hunyuan video 1.5 support (#1795)" } },
+    { "commit": { "message": "chore: add missing override declarations (#1800)" } },
+    { "commit": { "message": "docs: fix links to sd 1.5 and sd 2.1 (#1798)" } },
+    { "commit": { "message": "fix: Dockerfile.vulkan add missing libraries for nvidia support (#1805)" } },
+    { "commit": { "message": "fix: avoid structured binding capture in Hunyuan config (#1809)" } },
+    { "commit": { "message": "feat: add Mage-Flow support (#1808)" } },
+    { "commit": { "message": "fix: detect vision patch size for unsplit (HF-format) Qwen3-VL (#1811)" } },
+    { "commit": { "message": "feat: add IP-Adapter support for SD 1.5 and SDXL (#1803)" } },
+    { "commit": { "message": "fix: correct dangling pointer to empty image reference vector (#1813)" } },
+    { "commit": { "message": "docs: add Gimp plugins to UIs section (#1799)" } },
+    { "commit": { "message": "ci: update ROCm releases to 7.14.0 (#1802)" } },
+    { "commit": { "message": "fix: correct IP-Adapter CFG conditioning and defaults (#1815)" } },
+    { "commit": { "message": "fix: add frame dimension for Hunyuan IMG2VID encoding (#1816)" } },
+    { "commit": { "message": "fix: add missing sampler names (#1819)" } },
+    { "commit": { "message": "feat: expose IP-Adapter in server request schema and capabilities (#1824)" } }
+  ]
+}

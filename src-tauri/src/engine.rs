@@ -66,6 +66,42 @@ fn looks_like_oom(s: &str) -> bool {
     l.contains("out of memory") || l.contains("cuda error") || l.contains("oom")
 }
 
+/// How many times to wait out an "executable file busy" refusal, and how long
+/// to wait each time. A sixth of a second in the worst case, against a window
+/// that is milliseconds wide.
+const BUSY_RETRIES: u32 = 8;
+const BUSY_RETRY_PAUSE: std::time::Duration = std::time::Duration::from_millis(20);
+
+/// Start a process, waiting out a kernel that says the executable is busy.
+///
+/// Linux refuses to `exec` a file that is open for writing *anywhere* in the
+/// process, and MuchAI writes its own engine: the installer extracts `sd-cli`
+/// and probes it moments later. A `fork` on any other thread during that window
+/// inherits the writable descriptor and keeps the engine "busy" until that
+/// child execs — so the failure has nothing to do with the file, and retrying
+/// is not papering over anything. Not waiting throws away a verified 45 MB
+/// download, or fails a generation, with an error the user cannot act on.
+///
+/// Both callers spawn the same binary this crate just wrote, so the retry lives
+/// here rather than being duplicated at each spawn site.
+pub(crate) fn retrying_while_busy<T>(
+    mut start: impl FnMut() -> std::io::Result<T>,
+) -> std::io::Result<T> {
+    let mut attempts = 0;
+    loop {
+        match start() {
+            Err(e)
+                if e.kind() == std::io::ErrorKind::ExecutableFileBusy
+                    && attempts < BUSY_RETRIES =>
+            {
+                attempts += 1;
+                std::thread::sleep(BUSY_RETRY_PAUSE);
+            }
+            other => return other,
+        }
+    }
+}
+
 /// The backend selection and per-run engine options, bundled because the
 /// caller always decides both together (see `commands::generate`) — and
 /// because `run_generation` already sits at clippy's argument-count limit,
@@ -100,12 +136,10 @@ pub fn run_generation<F: FnMut(ProgressUpdate), N: FnMut(String)>(
     }
     let args = build_args(req, &output_path.to_string_lossy(), run_opts.backend, run_opts.opts);
 
-    let mut child = Command::new(binary)
-        .args(&args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| GenError::Spawn(e.to_string()))?;
+    let mut child = retrying_while_busy(|| {
+        Command::new(binary).args(&args).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()
+    })
+    .map_err(|e| GenError::Spawn(e.to_string()))?;
 
     let stdout = child.stdout.take().expect("stdout piped");
     let stderr = child.stderr.take().expect("stderr piped");
@@ -210,7 +244,7 @@ mod tests {
 
     #[test]
     fn streams_progress_and_succeeds() {
-        let _guard = spawn_lock().lock().unwrap();
+        let _guard = spawn_lock().lock().unwrap_or_else(|e| e.into_inner());
         // Realistic sampling bars: each carries an iteration-rate suffix, which
         // is what the parser keys on to tell sampling from model-loading bars.
         let bin = write_fake_engine(
@@ -241,9 +275,42 @@ mod tests {
         );
     }
 
+    /// `run_generation` has its own spawn site, so `engine_install`'s probe test
+    /// does not cover it: dropping the retry from here alone would leave that
+    /// one green. This is the test that notices.
+    #[test]
+    fn waits_out_a_busy_engine_binary() {
+        let _guard = spawn_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let bin = write_fake_engine("#!/bin/sh\nexit 0\n", "busy");
+
+        // Hold the executable open for writing, which is what makes the kernel
+        // refuse to exec it. The hold has to sit strictly between one attempt
+        // and the whole budget: long enough that the first attempt still lands
+        // inside it when this thread is competing for a core, short enough that
+        // the retries outlast it. 80 ms against a 160 ms budget.
+        let held = std::fs::OpenOptions::new().write(true).open(&bin).unwrap();
+        let releaser = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(80));
+            drop(held);
+        });
+
+        let slot: ChildSlot = Arc::new(Mutex::new(None));
+        let res = run_generation(
+            &bin,
+            &GenerationRequest::default(),
+            Path::new("/tmp/ignored.png"),
+            RunOptions { backend: None, opts: EngineOptions::default() },
+            &slot,
+            |_| {},
+            |_| {},
+        );
+        assert!(res.is_ok(), "a momentarily busy engine must be waited out, got {res:?}");
+        releaser.join().unwrap();
+    }
+
     #[test]
     fn splits_carriage_return_redraws() {
-        let _guard = spawn_lock().lock().unwrap();
+        let _guard = spawn_lock().lock().unwrap_or_else(|e| e.into_inner());
         // The engine redraws the sampling bar in place with '\r' and only prints
         // a trailing '\n' when the phase finishes. All three steps arrive on ONE
         // physical line; read_segments must split on '\r' so each step surfaces.
@@ -277,7 +344,7 @@ mod tests {
 
     #[test]
     fn ignores_loading_bars() {
-        let _guard = spawn_lock().lock().unwrap();
+        let _guard = spawn_lock().lock().unwrap_or_else(|e| e.into_inner());
         // A model-loading bar (byte-rate suffix, tensor counts as N/M) must NOT
         // be reported as sampling progress; only the real sampling bar counts.
         let bin = write_fake_engine(
@@ -305,7 +372,7 @@ mod tests {
     fn derives_seed_from_base_when_per_image_line_absent() {
         // A single-image run where the engine only echoes its resolved base seed
         // (no "generating image: 1/1 - seed S" line) must still report that seed.
-        let _guard = spawn_lock().lock().unwrap();
+        let _guard = spawn_lock().lock().unwrap_or_else(|e| e.into_inner());
         let bin = write_fake_engine(
             "#!/bin/sh\necho '  seed: 1648302913,'\necho '  |#####| 1/1'\nexit 0\n",
             "baseseed",
@@ -325,7 +392,7 @@ mod tests {
 
     #[test]
     fn maps_oom_failure() {
-        let _guard = spawn_lock().lock().unwrap();
+        let _guard = spawn_lock().lock().unwrap_or_else(|e| e.into_inner());
         let bin = write_fake_engine(
             "#!/bin/sh\necho 'CUDA error: out of memory' 1>&2\nexit 2\n",
             "oom",
@@ -351,7 +418,7 @@ mod tests {
 
     #[test]
     fn missing_binary_errors() {
-        let _guard = spawn_lock().lock().unwrap();
+        let _guard = spawn_lock().lock().unwrap_or_else(|e| e.into_inner());
         let slot: ChildSlot = Arc::new(Mutex::new(None));
         let res = run_generation(
             Path::new("/no/such/sd-cli"),
@@ -369,7 +436,7 @@ mod tests {
     fn reports_a_missing_lora_warning() {
         // The engine warns, then exits 0 with an unmodified image. The run must
         // still succeed AND the notice must reach the caller.
-        let _guard = spawn_lock().lock().unwrap();
+        let _guard = spawn_lock().lock().unwrap_or_else(|e| e.into_inner());
         let bin = write_fake_engine(
             "#!/bin/sh\necho \"[WARN ] can not found lora '/tmp/loras/film-grain.safetensors'\"\nexit 0\n",
             "loramissing",

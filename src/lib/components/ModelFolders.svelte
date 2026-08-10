@@ -71,7 +71,8 @@
 </div>
 
 <style>
-  .folders { font-size:.75rem; border-top:1px solid var(--border); padding:.45rem .2rem 0; display:flex; flex-direction:column; gap:.25rem; }
+  /* No border-top: the section header above draws the divider now. */
+  .folders { font-size:.75rem; padding:.45rem .2rem 0; display:flex; flex-direction:column; gap:.25rem; }
   .hdr { display:flex; align-items:center; justify-content:space-between; }
   .lbl { opacity:.6; }
   .row { display:flex; align-items:center; gap:.4rem; font-family:monospace; opacity:.9; }

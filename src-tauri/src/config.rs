@@ -1,4 +1,4 @@
-use crate::types::{AppConfig, GenerationRequest, Theme};
+use crate::types::{AppConfig, EngineSelection, GenerationRequest, Theme};
 use directories::ProjectDirs;
 use std::path::{Path, PathBuf};
 
@@ -19,6 +19,15 @@ pub fn default_models_dir() -> PathBuf {
     project_dirs()
         .map(|d| d.data_dir().join("models"))
         .unwrap_or_else(|| PathBuf::from("./models"))
+}
+
+/// Writable store for downloaded engine releases: `~/.local/share/muchai/engines/`.
+/// The bundled engine is *not* in here — it lives in the read-only Tauri
+/// resource dir — so nothing in this directory is load-bearing for startup.
+pub fn engines_dir() -> PathBuf {
+    project_dirs()
+        .map(|d| d.data_dir().join("engines"))
+        .unwrap_or_else(|| PathBuf::from("./engines"))
 }
 
 pub fn config_file_path() -> PathBuf {
@@ -43,7 +52,28 @@ pub fn default_config() -> AppConfig {
         low_vram: false,
         live_preview: true,
         load_precision: crate::types::LOAD_PRECISION_AUTO.to_string(),
+        engine: EngineSelection::Builtin,
+        engine_update_check: true,
+        engine_last_check: None,
+        engine_seen_tag: None,
         last_request: GenerationRequest::default(),
+    }
+}
+
+/// One-time migration of the legacy `sd_binary_path` override into the explicit
+/// `EngineSelection`. Idempotent: after the first run the legacy field is gone,
+/// so re-running it on an already-migrated config is a no-op.
+///
+/// The legacy field is cleared unconditionally, even when `engine` is already
+/// set and the path is therefore discarded. Leaving a stale path behind would
+/// let a later revert to `Builtin` resurrect it as `Custom` on the next load —
+/// the user would ask for the bundled engine and silently get someone else's
+/// binary back.
+fn migrate_engine_selection(cfg: &mut AppConfig) {
+    if let Some(p) = cfg.sd_binary_path.take() {
+        if cfg.engine == EngineSelection::Builtin {
+            cfg.engine = EngineSelection::Custom { path: p };
+        }
     }
 }
 
@@ -56,6 +86,7 @@ pub fn load_config_from(path: &Path) -> AppConfig {
     if cfg.models_dir.is_empty() {
         cfg.models_dir = default_models_dir().to_string_lossy().into_owned();
     }
+    migrate_engine_selection(&mut cfg);
     cfg
 }
 
@@ -436,6 +467,176 @@ mod tests {
         assert!(changed);
         // No trailing separator artifact from new.join("").
         assert_eq!(cfg.gallery_dir, "/home/u/.local/share/muchai");
+    }
+
+    #[test]
+    fn legacy_sd_binary_path_migrates_to_custom_selection() {
+        use crate::types::EngineSelection;
+        let dir = std::env::temp_dir().join(format!("muchai-cfg-eng1-{}", std::process::id()));
+        let path = dir.join("config.json");
+        std::fs::create_dir_all(&dir).unwrap();
+        // A pre-feature config file: sd_binary_path set, no engine key.
+        std::fs::write(
+            &path,
+            r#"{"sd_binary_path":"/opt/sd/sd-cli","default_model_path":null,"gallery_dir":"/tmp/g","last_request":{"model":{"type":"single_file","path":""},"prompt":"","negative_prompt":"","steps":20,"cfg_scale":7.0,"sampler":"euler_a","width":512,"height":512,"seed":-1,"batch_count":1}}"#,
+        )
+        .unwrap();
+
+        let cfg = load_config_from(&path);
+
+        assert_eq!(cfg.engine, EngineSelection::Custom { path: "/opt/sd/sd-cli".into() });
+        assert_eq!(cfg.sd_binary_path, None, "the legacy field must be cleared");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn config_without_engine_or_binary_path_defaults_to_builtin() {
+        use crate::types::EngineSelection;
+        let dir = std::env::temp_dir().join(format!("muchai-cfg-eng2-{}", std::process::id()));
+        let path = dir.join("config.json");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            &path,
+            r#"{"sd_binary_path":null,"default_model_path":null,"gallery_dir":"/tmp/g","last_request":{"model":{"type":"single_file","path":""},"prompt":"","negative_prompt":"","steps":20,"cfg_scale":7.0,"sampler":"euler_a","width":512,"height":512,"seed":-1,"batch_count":1}}"#,
+        )
+        .unwrap();
+
+        let cfg = load_config_from(&path);
+
+        assert_eq!(cfg.engine, EngineSelection::Builtin);
+        assert!(cfg.engine_update_check, "the daily check is on by default");
+        assert_eq!(cfg.engine_last_check, None, "never checked is not the same as checked at the epoch");
+        assert_eq!(cfg.engine_seen_tag, None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A `null` `engine` value must degrade to `Builtin`, not abort the whole
+    /// parse (which `load_config_from` turns into a fresh `default_config()`,
+    /// wiping every other setting). The sibling `gallery_dir` assertion is the
+    /// actual point: a test that only checked `engine == Builtin` would still
+    /// pass if the config had been silently replaced by defaults.
+    #[test]
+    fn null_engine_value_degrades_to_builtin_and_preserves_the_rest_of_the_config() {
+        use crate::types::EngineSelection;
+        let dir = std::env::temp_dir().join(format!("muchai-cfg-eng5-{}", std::process::id()));
+        let path = dir.join("config.json");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            &path,
+            r#"{"sd_binary_path":null,"engine":null,"default_model_path":null,"gallery_dir":"/tmp/distinctive-gallery","last_request":{"model":{"type":"single_file","path":""},"prompt":"","negative_prompt":"","steps":20,"cfg_scale":7.0,"sampler":"euler_a","width":512,"height":512,"seed":-1,"batch_count":1}}"#,
+        )
+        .unwrap();
+
+        let cfg = load_config_from(&path);
+
+        assert_eq!(cfg.engine, EngineSelection::Builtin);
+        assert_eq!(cfg.gallery_dir, "/tmp/distinctive-gallery", "the rest of the config must survive");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An unknown `engine` variant — e.g. one written by a newer MuchAI that the
+    /// user then rolled back from — must degrade to `Builtin` rather than
+    /// aborting the parse and wiping the config. See
+    /// `null_engine_value_degrades_to_builtin_and_preserves_the_rest_of_the_config`
+    /// for why the sibling assertion matters.
+    #[test]
+    fn unknown_engine_variant_degrades_to_builtin_and_preserves_the_rest_of_the_config() {
+        use crate::types::EngineSelection;
+        let dir = std::env::temp_dir().join(format!("muchai-cfg-eng6-{}", std::process::id()));
+        let path = dir.join("config.json");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            &path,
+            r#"{"sd_binary_path":null,"engine":{"type":"snapshot"},"default_model_path":null,"gallery_dir":"/tmp/distinctive-gallery","last_request":{"model":{"type":"single_file","path":""},"prompt":"","negative_prompt":"","steps":20,"cfg_scale":7.0,"sampler":"euler_a","width":512,"height":512,"seed":-1,"batch_count":1}}"#,
+        )
+        .unwrap();
+
+        let cfg = load_config_from(&path);
+
+        assert_eq!(cfg.engine, EngineSelection::Builtin);
+        assert_eq!(cfg.gallery_dir, "/tmp/distinctive-gallery", "the rest of the config must survive");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A malformed `engine` value — a recognised variant missing its required
+    /// field — must degrade to `Builtin` rather than aborting the parse and
+    /// wiping the config. See
+    /// `null_engine_value_degrades_to_builtin_and_preserves_the_rest_of_the_config`
+    /// for why the sibling assertion matters.
+    #[test]
+    fn malformed_engine_variant_degrades_to_builtin_and_preserves_the_rest_of_the_config() {
+        use crate::types::EngineSelection;
+        let dir = std::env::temp_dir().join(format!("muchai-cfg-eng7-{}", std::process::id()));
+        let path = dir.join("config.json");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            &path,
+            r#"{"sd_binary_path":null,"engine":{"type":"downloaded"},"default_model_path":null,"gallery_dir":"/tmp/distinctive-gallery","last_request":{"model":{"type":"single_file","path":""},"prompt":"","negative_prompt":"","steps":20,"cfg_scale":7.0,"sampler":"euler_a","width":512,"height":512,"seed":-1,"batch_count":1}}"#,
+        )
+        .unwrap();
+
+        let cfg = load_config_from(&path);
+
+        assert_eq!(cfg.engine, EngineSelection::Builtin);
+        assert_eq!(cfg.gallery_dir, "/tmp/distinctive-gallery", "the rest of the config must survive");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn already_migrated_config_is_left_alone() {
+        use crate::types::EngineSelection;
+        let dir = std::env::temp_dir().join(format!("muchai-cfg-eng3-{}", std::process::id()));
+        let path = dir.join("config.json");
+        std::fs::create_dir_all(&dir).unwrap();
+        // A config that has already been through the migration: an explicit
+        // `engine` and, crucially, no `sd_binary_path` key at all. Written as a
+        // hand literal (not via default_config()+save) so this actually
+        // exercises the "nothing left to migrate" path rather than merely
+        // proving save/load round-trips — a config with `sd_binary_path`
+        // present (even as null) never reaches the branch this test claims to
+        // cover.
+        std::fs::write(
+            &path,
+            r#"{"engine":{"type":"downloaded","tag":"master-797-5ef4a75"},"default_model_path":null,"gallery_dir":"/tmp/g","last_request":{"model":{"type":"single_file","path":""},"prompt":"","negative_prompt":"","steps":20,"cfg_scale":7.0,"sampler":"euler_a","width":512,"height":512,"seed":-1,"batch_count":1}}"#,
+        )
+        .unwrap();
+
+        let cfg = load_config_from(&path);
+
+        assert_eq!(
+            cfg.engine,
+            EngineSelection::Downloaded { tag: "master-797-5ef4a75".into() },
+            "an already-migrated selection must survive untouched"
+        );
+        assert_eq!(cfg.sd_binary_path, None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn explicit_engine_wins_and_the_stale_legacy_path_is_dropped() {
+        use crate::types::EngineSelection;
+        let dir = std::env::temp_dir().join(format!("muchai-cfg-eng4-{}", std::process::id()));
+        let path = dir.join("config.json");
+        std::fs::create_dir_all(&dir).unwrap();
+        // Hand-edited config: an explicit engine AND a leftover legacy path.
+        std::fs::write(
+            &path,
+            r#"{"sd_binary_path":"/opt/sd/sd-cli","engine":{"type":"downloaded","tag":"master-797-5ef4a75"},"default_model_path":null,"gallery_dir":"/tmp/g","last_request":{"model":{"type":"single_file","path":""},"prompt":"","negative_prompt":"","steps":20,"cfg_scale":7.0,"sampler":"euler_a","width":512,"height":512,"seed":-1,"batch_count":1}}"#,
+        )
+        .unwrap();
+
+        let cfg = load_config_from(&path);
+
+        assert_eq!(
+            cfg.engine,
+            EngineSelection::Downloaded { tag: "master-797-5ef4a75".into() },
+            "the explicit selection must win over the legacy path"
+        );
+        assert_eq!(
+            cfg.sd_binary_path, None,
+            "the stale path must be dropped, or reverting to Builtin later would resurrect it"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { addUrlLora, addLocalLora, detectLoraFamily, pickLoraFile, editLora, listFamilies } from "../api";
-  import { refreshLoras, downloadBusy, downloadProgress, downloadError, runDownload } from "../stores";
+  import { refreshLoras, downloadBusy, downloadProgress, downloadError, runDownload, engineInstalling } from "../stores";
   import DownloadProgressBar from "./DownloadProgressBar.svelte";
   import type { AddedLora } from "../types";
 
@@ -156,7 +156,7 @@
             <p class="microlabel">Name (optional)</p>
             <input class="dlg-input" bind:value={urlName} placeholder="Leave blank to use the source's name" />
           </div>
-          <button class="btn btn-primary" disabled={$downloadBusy || !url.startsWith("https://")} onclick={runUrl}>
+          <button class="btn btn-primary" disabled={$downloadBusy || $engineInstalling || !url.startsWith("https://")} onclick={runUrl}>
             Download &amp; add
           </button>
           {#if $downloadBusy}<div class="progress"><DownloadProgressBar progress={$downloadProgress} /></div>{/if}
@@ -191,7 +191,7 @@
                when the download finishes (it streams to a sibling .part file),
                so a local add started mid-download could be handed the same
                stem and the two would collide on one file. -->
-          <button class="btn btn-primary" disabled={busy || $downloadBusy || localPath === ""} onclick={runLocal}>Add</button>
+          <button class="btn btn-primary" disabled={busy || $downloadBusy || $engineInstalling || localPath === ""} onclick={runLocal}>Add</button>
         {/if}
       {/if}
     </div>

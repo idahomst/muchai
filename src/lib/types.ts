@@ -188,8 +188,56 @@ export interface GpuSelection {
   name: string;
 }
 
+// Wire values MUST match the Rust `EngineSelection` enum's serde form
+// (`#[serde(tag = "type", rename_all = "snake_case")]`, src-tauri/src/types.rs).
+export type EngineSelection =
+  | { type: "builtin" }
+  | { type: "downloaded"; tag: string }
+  | { type: "custom"; path: string };
+
+/** Everything the Engine preferences section renders, in one round trip.
+ *  Mirrors Rust `commands::EngineStatus`. */
+export interface EngineStatus {
+  /** The active selection, echoed so the UI never has to guess. */
+  selection: EngineSelection;
+  /** Release tag in use, or null for a custom build with unknown provenance. */
+  tag: string | null;
+  /** Commit from `--version`, or null when the engine won't run. */
+  commit: string | null;
+  /** Absolute path actually in use, after any fallback. */
+  path: string | null;
+  /** True when the selection couldn't be honoured and builtin was used. */
+  fell_back: boolean;
+  /** Downloaded engines available to select, newest first. */
+  installed: string[];
+  /** False off Linux x86_64, where no asset we can run is published. */
+  supported: boolean;
+}
+
+/** An available upgrade. Mirrors Rust `commands::EngineUpdate`. */
+export interface EngineUpdate {
+  tag: string;
+  asset_size: number;
+  /** Tag we compared against, so the UI can say "from X to Y". */
+  current_tag: string | null;
+}
+
+/** One upstream commit between the running engine and the candidate. Mirrors
+ *  Rust `engine_release::ChangeEntry`. `noteworthy` is false for docs/ci/chore
+ *  -style commits, which are collapsed behind a count. */
+export interface ChangeEntry {
+  subject: string;
+  noteworthy: boolean;
+}
+
 export interface AppConfig {
-  sd_binary_path: string | null;
+  // Legacy override, superseded by `engine`. Retained on the Rust struct only
+  // so an existing config can be migrated once at load; the backend never
+  // writes it again and nothing consults it to decide which binary runs.
+  // Mirrors Rust AppConfig.sd_binary_path. Optional because the Rust field is
+  // `skip_serializing_if = "Option::is_none"` and the one-time migration into
+  // `engine` clears it, so after the first load the key is absent, not null.
+  sd_binary_path?: string | null;
   default_model_path: string | null;
   gallery_dir: string;
   models_dir: string;
@@ -219,6 +267,19 @@ export interface AppConfig {
   // "auto" re-quantises only when the model won't fit the selected GPU,
   // "original" never does, any other value is an engine weight type.
   load_precision: LoadPrecision;
+  // Which engine binary the backend spawns. Mirrors Rust AppConfig.engine
+  // (#[serde(default)] → { type: "builtin" } for old configs).
+  engine: EngineSelection;
+  // Daily update check (mirrors Rust AppConfig.engine_update_check,
+  // #[serde(default = "default_true")] → true for old configs).
+  engine_update_check: boolean;
+  // Unix seconds of the last check, null if never. Backend-owned: `set_settings`
+  // preserves it, so what the UI sends here is ignored.
+  engine_last_check: number | null;
+  // Newest engine tag the user has been shown, so a declined update doesn't
+  // re-badge on every launch. null = nothing seen yet. Unlike the two fields
+  // above this one IS taken from the payload — dismissing the badge is a UI act.
+  engine_seen_tag: string | null;
 }
 
 // Values accepted by AppConfig.load_precision. The quantised entries must stay

@@ -63,7 +63,8 @@
 </div>
 
 <style>
-  .picker { font-size:.75rem; border-top:1px solid var(--border); padding:.45rem .2rem 0; display:flex; flex-direction:column; gap:.25rem; }
+  /* No border-top: the section header above draws the divider now. */
+  .picker { font-size:.75rem; padding:.45rem .2rem 0; display:flex; flex-direction:column; gap:.25rem; }
   .hdr { display:flex; align-items:center; justify-content:space-between; gap:.4rem; }
   .lbl-wrap { display:inline-flex; align-items:center; gap:.2rem; }
   .lbl { opacity:.6; }
