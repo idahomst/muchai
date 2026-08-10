@@ -1303,6 +1303,59 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// `install_release` composes space check, download, verify, extract and
+    /// `finish_install`. The pieces are tested individually above, but the
+    /// composition is what runs, and it is the composition that decides *when*
+    /// the existing install is at risk: it stages under `.staging-<tag>` and
+    /// only `finish_install` may touch `<tag>`. A refactor that staged in place,
+    /// or that cleared the destination up front "so the rename can't collide",
+    /// would pass every test above while destroying the engine the user is
+    /// running the moment their network drops mid-update.
+    ///
+    /// The download is failed by pointing at a closed port, so this needs no
+    /// network and no fixture archive.
+    #[test]
+    fn a_download_that_fails_leaves_the_installed_engine_of_that_tag_alone() {
+        let root = tmp("install-netfail-keep");
+        let engines = root.join("engines");
+        let tag = "master-797-5ef4a75";
+        let dest = install_dir(&engines, tag);
+        fake_engine(&dest, GOOD_VERSION, &full_help(), 0);
+        std::fs::write(dest.join("marker.txt"), b"the engine the user is running").unwrap();
+
+        let release = crate::engine_release::EngineRelease {
+            tag: tag.to_string(),
+            asset: crate::engine_release::ReleaseAsset {
+                name: "sd-master-797-5ef4a75-bin-Linux-vulkan-x64.zip".into(),
+                // Reserved, never listening: connection refused, promptly.
+                url: "http://127.0.0.1:1/engine.zip".into(),
+                size: 45_000_000,
+                sha256: None,
+            },
+        };
+
+        let err = install_release(
+            &engines,
+            &release,
+            u64::MAX,
+            |_, _| {},
+            &std::sync::atomic::AtomicBool::new(false),
+        )
+        .unwrap_err();
+
+        assert!(!err.is_empty(), "a failed download must say something");
+        assert_eq!(
+            std::fs::read_to_string(dest.join("marker.txt")).unwrap(),
+            "the engine the user is running",
+            "a failed download must not disturb the engine already installed under that tag"
+        );
+        assert!(
+            !staging_dir(&engines, tag).exists(),
+            "the failed staging tree must be cleaned up"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn a_failed_validation_leaves_nothing_installed() {
         let root = tmp("install-badval");
