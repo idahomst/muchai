@@ -1417,6 +1417,14 @@ pub fn list_families() -> Vec<String> {
     recipes::FAMILIES.iter().map(|s| s.to_string()).collect()
 }
 
+/// Families whose models take a reference image. The frontend decides whether
+/// to show the reference panel from this, rather than from a hardcoded copy
+/// that would drift the first time a second edit family is added.
+#[tauri::command]
+pub fn list_edit_families() -> Vec<String> {
+    recipes::EDIT_FAMILIES.iter().map(|s| s.to_string()).collect()
+}
+
 /// Base families a safetensors file's tensor names are consistent with. Empty
 /// means "can't tell" — the caller asks the user.
 #[tauri::command]

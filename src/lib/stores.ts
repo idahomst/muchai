@@ -17,6 +17,11 @@ export const sysStats = writable<SystemStats | null>(null);
 
 export const library = writable<LibraryEntry[]>([]);
 
+/** Families whose models take a reference image, from the backend recipe list.
+ *  Loaded once at mount; empty until then, which correctly hides the reference
+ *  panel rather than flashing it. */
+export const editFamilies = writable<string[]>([]);
+
 /** Id of the currently-selected library entry (drives recommended-settings). */
 export const selectedModelId = writable<string | null>(null);
 

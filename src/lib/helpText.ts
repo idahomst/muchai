@@ -27,6 +27,9 @@ export const HELP = {
   // LoraPanel
   lora:
     "Small add-on files that nudge a model toward a particular style, character, or subject — like a filter for the AI. Turn one on and slide its strength up or down. If a LoRA lists trigger words, click one to add it to your prompt.",
+  // RefImagePanel
+  refImage:
+    "The picture you want to change. Drop one here or choose a file, then describe the change you want — for example 'make the sky stormy'. MuchAI matches the output size to your image.",
   // ModelLibrary / DevicePicker
   model:
     "The AI model that turns your words into images. Download one to get started — different models produce different styles.",

@@ -112,6 +112,9 @@ export const listLoras = () => invoke<LoraInfo[]>("list_loras");
  *  that omits sd15/sdxl and includes "custom". */
 export const listFamilies = () => invoke<string[]>("list_families");
 
+/** Families whose models take a reference image, from the backend recipe list. */
+export const listEditFamilies = () => invoke<string[]>("list_edit_families");
+
 /** Base families a safetensors file's tensor names match. Empty = ask the user. */
 export const detectLoraFamily = (path: string) =>
   invoke<string[]>("detect_lora_family", { path });

@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { get } from "svelte/store";
-  import { settings, request, history, sysStats, gpuDevices, refreshLibrary, refreshLoras, downloadProgress, downloadBusy, downloadError, library, selectedModelId, modelNotice, engineUpdateTag, engineInstalling, engineError } from "$lib/stores";
-  import { getSettings, setSettings, listHistory, onSystemStats, listGpuDevices, onDownloadProgress, onEngineUpdate } from "$lib/api";
+  import { settings, request, history, sysStats, gpuDevices, refreshLibrary, refreshLoras, downloadProgress, downloadBusy, downloadError, library, selectedModelId, modelNotice, engineUpdateTag, engineInstalling, engineError, editFamilies } from "$lib/stores";
+  import { getSettings, setSettings, listHistory, onSystemStats, listGpuDevices, onDownloadProgress, onEngineUpdate, listEditFamilies } from "$lib/api";
   import ModelSelector from "$lib/components/ModelSelector.svelte";
   import NewModelDialog from "$lib/components/NewModelDialog.svelte";
   import ModelEditor from "$lib/components/ModelEditor.svelte";
@@ -10,6 +10,7 @@
   import DownloadStatus from "$lib/components/DownloadStatus.svelte";
   import EngineInstallStatus from "$lib/components/EngineInstallStatus.svelte";
   import type { LibraryEntry } from "$lib/types";
+  import RefImagePanel from "$lib/components/RefImagePanel.svelte";
   import PromptPanel from "$lib/components/PromptPanel.svelte";
   import SettingsPanel from "$lib/components/SettingsPanel.svelte";
   import GenerateBar from "$lib/components/GenerateBar.svelte";
@@ -90,6 +91,7 @@
         }
       }
       gpuDevices.set(await listGpuDevices());
+      editFamilies.set(await listEditFamilies());
     })();
     const un = onSystemStats((s) => sysStats.set(s));
     // App-level download-progress feed: keeps the store live regardless of
@@ -130,6 +132,7 @@
     </div>
 
     <div class="panel-body">
+      <RefImagePanel />
       <PromptPanel />
       <div class="divider"></div>
       <p class="section">Parameters</p>

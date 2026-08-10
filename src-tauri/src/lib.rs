@@ -240,6 +240,7 @@ pub fn run() {
             commands::trash_dir,
             commands::list_loras,
             commands::list_families,
+            commands::list_edit_families,
             commands::detect_lora_family,
             commands::pick_lora_file,
             commands::add_local_lora,

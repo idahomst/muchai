@@ -764,6 +764,14 @@ mod tests {
     }
 
     #[test]
+    fn the_edit_family_list_matches_the_predicate() {
+        for f in EDIT_FAMILIES {
+            assert!(is_edit_family(f), "{f} is listed but the predicate rejects it");
+            assert!(FAMILIES.contains(f), "{f} must also be a real family");
+        }
+    }
+
+    #[test]
     fn only_the_edit_families_can_take_a_reference_image() {
         assert!(is_edit_family("qwen-image-edit"));
         for f in ["sd15", "sdxl", "sd3", "flux1", "flux2", "qwen-image", "z-image", "custom", ""] {
