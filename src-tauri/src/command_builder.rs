@@ -69,6 +69,12 @@ fn prompt_with_loras(prompt: &str, loras: &[LoraSelection]) -> String {
     }
 }
 
+/// Whether this model carries a vision tower, i.e. whether the run will emit
+/// `--llm_vision`. See the graph-cut suppression in `build_args`.
+fn has_vision_tower(model: &ModelRef) -> bool {
+    matches!(model, ModelRef::MultiFile(c) if c.llm_vision.is_some())
+}
+
 /// Build the argument vector for stable-diffusion.cpp's CLI.
 /// Pure function (no I/O) so it is fully unit-testable.
 /// Flag spellings are confirmed against `fixtures/sd-help.txt`.
@@ -156,6 +162,18 @@ pub fn build_args(
         a.push("--offload-to-cpu".into());
         a.push("--vae-tiling".into());
         a.push("--diffusion-fa".into());
+    }
+    // Graph-cut is part of the low-VRAM bundle, but only for runs with no vision
+    // tower: `master-813-bfbef5b` aborts (SIGABRT in `ggml_graph_cut::
+    // build_segment`, via `LLMRunner::encode_image`) when the planner tries to
+    // segment the vision tower's graph. Measured on an RTX 3060: it aborts with
+    // and without `--tensor-type-rules`, and both runs without graph-cut got
+    // past `get_learned_condition` — so graph-cut alone is the cause, and
+    // dropping it is what makes editing run at all. Keyed off the component and
+    // not off `ref_images` because the two are equivalent at this point:
+    // `resolve_ref_images` rejects a vision-tower model with no reference before
+    // anything spawns.
+    if opts.low_vram && !has_vision_tower(&req.model) {
         // Graph-cut segmented execution against a VRAM budget, plus
         // residency+prefetch streaming of layers (inert without --max-vram).
         // A negative budget makes the engine auto-detect free VRAM and spare
@@ -340,6 +358,28 @@ mod tests {
         let args = build_args(&sample(), "/out/x.png", None, EngineOptions { low_vram: true, ..Default::default() });
         assert_eq!(val_after(&args, "--max-vram"), Some("-1"));
         assert!(args.iter().any(|x| x == "--stream-layers"));
+    }
+
+    #[test]
+    fn a_vision_tower_keeps_the_offload_flags_but_loses_graph_cut() {
+        use crate::types::ModelComponents;
+        let mut req = sample();
+        req.model = ModelRef::MultiFile(ModelComponents {
+            diffusion_model: "/m/qwen-edit.gguf".into(),
+            llm: Some("/m/shared/qwen2.5-vl.gguf".into()),
+            llm_vision: Some("/m/shared/mmproj.gguf".into()),
+            ..Default::default()
+        });
+        let args =
+            build_args(&req, "/out/x.png", None, EngineOptions { low_vram: true, ..Default::default() });
+        // Offload is what lets a 16 GB stack run on a 12 GB card at all.
+        for flag in ["--offload-to-cpu", "--vae-tiling", "--diffusion-fa"] {
+            assert!(args.iter().any(|x| x == flag), "{flag} must survive");
+        }
+        // Graph-cut is what aborts on the vision tower's encode_image.
+        for flag in ["--max-vram", "--stream-layers"] {
+            assert!(!args.iter().any(|x| x == flag), "{flag} must be absent");
+        }
     }
 
     #[test]

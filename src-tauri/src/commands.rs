@@ -507,8 +507,8 @@ pub async fn generate(
     }
     // Load-time precision: only the diffusion model is ever re-quantised, so it
     // is measured on its own and the remaining components counted as fixed cost.
-    let diffusion_bytes =
-        crate::weights::memory_bytes(std::path::Path::new(request.model.diffusion_path()));
+    let diffusion_path = std::path::Path::new(request.model.diffusion_path());
+    let diffusion_bytes = crate::weights::memory_bytes(diffusion_path);
     let other_bytes = weights_bytes
         .zip(diffusion_bytes)
         .map(|(all, diffusion)| all.saturating_sub(diffusion));
@@ -518,6 +518,7 @@ pub async fn generate(
         other_bytes,
         device_vram_mb,
         is_cpu,
+        crate::weights::is_quantized(diffusion_path),
     );
     let engine_opts = crate::command_builder::EngineOptions {
         low_vram,

@@ -331,6 +331,13 @@ pub fn recipes() -> Vec<ModelRecipe> {
                 role(ComponentRole::Vae, true, &["vae", "ae."]),
             ],
             vae_format: Some("auto"),
+            // No `flow_shift` here on purpose. leejet's docs pass
+            // `--flow-shift 3`, but an A/B at a fixed seed on engine
+            // `master-813-bfbef5b` (2026-08-10) produced visually
+            // indistinguishable images with and without it — `auto` already
+            // resolves to something equivalent for this family. Adding the
+            // field would mean a new `ModelComponents` slot, a flag-gate entry
+            // and a wider absent-component test, all to say nothing.
             prediction: None,
             shared: vec![
                 SharedComponent {

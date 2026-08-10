@@ -119,6 +119,20 @@ pub fn memory_bytes(path: &Path) -> Option<u64> {
     Some(from_header.unwrap_or(file_len))
 }
 
+/// Whether this file already stores its weights quantised, i.e. whether it is a
+/// GGUF. Unreadable or non-GGUF files answer `false`.
+///
+/// The distinction matters to the load-time precision ladder: `fit`'s arithmetic
+/// starts from an f16 baseline, which a GGUF has already left behind. See
+/// `fit::choose_weight_type`.
+pub fn is_quantized(path: &Path) -> bool {
+    let Ok(mut file) = fs::File::open(path) else {
+        return false;
+    };
+    let mut magic = [0u8; 4];
+    file.read_exact(&mut magic).is_ok() && &magic == b"GGUF"
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -234,6 +248,28 @@ mod tests {
         f.write_all(&[0u8; 996]).unwrap();
         drop(f);
         assert_eq!(memory_bytes(&p), Some(1000));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn only_a_gguf_counts_as_already_quantised() {
+        // The magic decides, not the extension: a `.gguf` name on a safetensors
+        // file would otherwise talk the precision ladder out of a real fit.
+        let dir = tmp("isquant");
+        let g = dir.join("model.gguf");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(&g, b"GGUF\0\0\0\0").unwrap();
+        assert!(is_quantized(&g));
+
+        let st = dir.join("model.safetensors");
+        write_safetensors(&st, r#"{"w":{"dtype":"F16","data_offsets":[0,64]}}"#, 64);
+        assert!(!is_quantized(&st));
+
+        // Too short to hold the magic, and absent entirely.
+        let tiny = dir.join("tiny.gguf");
+        fs::write(&tiny, b"GG").unwrap();
+        assert!(!is_quantized(&tiny));
+        assert!(!is_quantized(&dir.join("nope.gguf")));
         let _ = fs::remove_dir_all(&dir);
     }
 
