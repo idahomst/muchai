@@ -12,14 +12,21 @@
 # ENGINE_SHA256 together when intentionally upgrading (also bump
 # BUILTIN_ENGINE_TAG in src-tauri/src/engine_release.rs), and re-verify a real
 # generation.
+#
+# 2026-08-10: bumped b290693 -> bfbef5b. b290693 has a use-after-scope bug in
+# prepare_image_generation_embeds (`empty_ref_images` declared inside the
+# `if (use_ref_latent_img_cfg)` block, pointer read after it), taken by every
+# run with CFG > 1 AND at least one reference image — i.e. every instruction
+# edit. Fixed by leejet/stable-diffusion.cpp#1813 (b8bf676). bfbef5b is the
+# build verified by hand through the in-app engine updater.
 set -euo pipefail
 
 # --- Pinned engine release (leejet/stable-diffusion.cpp GitHub Releases) --------
-ENGINE_REV="b290693"
-ENGINE_TAG="master-782-b290693"
-ENGINE_ASSET="sd-master-b290693-bin-Linux-Ubuntu-24.04-x86_64-vulkan.zip"
+ENGINE_REV="bfbef5b"
+ENGINE_TAG="master-813-bfbef5b"
+ENGINE_ASSET="sd-master-bfbef5b-bin-Linux-Ubuntu-24.04-x86_64-vulkan.zip"
 ENGINE_URL="https://github.com/leejet/stable-diffusion.cpp/releases/download/${ENGINE_TAG}/${ENGINE_ASSET}"
-ENGINE_SHA256="e49466d0c0c5f985d9ca9f82c18bb55e8e02885c654210f918ca0c0098ea2829"
+ENGINE_SHA256="7672553dccb9c4eeec850e1a7ad6f3c4bcde584ad6deae6648ed8b29c5cdbf7f"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEST="$ROOT/src-tauri/binaries/engine"

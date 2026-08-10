@@ -273,7 +273,7 @@ mod tests {
     fn populate(root: &Path) {
         std::fs::create_dir_all(root.join(".staging-master-797-5ef4a75")).unwrap();
         std::fs::write(root.join(".staging-master-797-5ef4a75/sd-cli"), b"half").unwrap();
-        std::fs::create_dir_all(root.join("master-782-b290693")).unwrap();
+        std::fs::create_dir_all(root.join("master-813-bfbef5b")).unwrap();
     }
 
     fn an_update(tag: &str) -> commands::EngineUpdate {
@@ -321,7 +321,7 @@ mod tests {
             !root.join(".staging-master-797-5ef4a75").exists(),
             "a staging directory is an incomplete install and is never worth keeping"
         );
-        assert!(root.join("master-782-b290693").exists(), "a finished install must survive");
+        assert!(root.join("master-813-bfbef5b").exists(), "a finished install must survive");
         let _ = std::fs::remove_dir_all(&root);
     }
 
