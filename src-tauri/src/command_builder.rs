@@ -101,6 +101,9 @@ pub fn build_args(
             if let Some(v) = &c.llm {
                 push("--llm", v.clone());
             }
+            if let Some(v) = &c.llm_vision {
+                push("--llm_vision", v.clone());
+            }
             if let Some(v) = &c.vae_format {
                 push("--vae-format", v.clone());
             }
@@ -257,6 +260,7 @@ mod tests {
             clip_l: Some("/m/clip_l.safetensors".into()),
             clip_g: Some("/m/clip_g.safetensors".into()),
             llm: Some("/m/llm.safetensors".into()),
+            llm_vision: Some("/m/mmproj.safetensors".into()),
             vae: Some("/m/ae.safetensors".into()),
             vae_format: Some("flux".into()),
             prediction: Some("flux_flow".into()),
@@ -267,10 +271,25 @@ mod tests {
         assert_eq!(val_after(&args, "--clip_l"), Some("/m/clip_l.safetensors"));
         assert_eq!(val_after(&args, "--clip_g"), Some("/m/clip_g.safetensors"));
         assert_eq!(val_after(&args, "--llm"), Some("/m/llm.safetensors"));
+        assert_eq!(val_after(&args, "--llm_vision"), Some("/m/mmproj.safetensors"));
         assert_eq!(val_after(&args, "--vae"), Some("/m/ae.safetensors"));
         assert_eq!(val_after(&args, "--vae-format"), Some("flux"));
         assert_eq!(val_after(&args, "--prediction"), Some("flux_flow"));
         assert!(!args.iter().any(|x| x == "-m"), "multi-file must not emit -m");
+    }
+
+    #[test]
+    fn a_vision_tower_emits_llm_vision() {
+        use crate::types::ModelComponents;
+        let mut req = sample();
+        req.model = ModelRef::MultiFile(ModelComponents {
+            diffusion_model: "/m/qwen-edit.gguf".into(),
+            llm: Some("/m/shared/qwen2.5-vl.gguf".into()),
+            llm_vision: Some("/m/shared/mmproj.gguf".into()),
+            ..Default::default()
+        });
+        let args = build_args(&req, "/out/x.png", None, EngineOptions::default());
+        assert_eq!(val_after(&args, "--llm_vision"), Some("/m/shared/mmproj.gguf"));
     }
 
     #[test]
@@ -283,7 +302,7 @@ mod tests {
         });
         let args = build_args(&req, "/out/x.png", None, EngineOptions::default());
         assert_eq!(val_after(&args, "--diffusion-model"), Some("/m/d.safetensors"));
-        for flag in ["--vae", "--clip_l", "--clip_g", "--t5xxl", "--llm", "--vae-format", "--prediction"] {
+        for flag in ["--vae", "--clip_l", "--clip_g", "--t5xxl", "--llm", "--llm_vision", "--vae-format", "--prediction"] {
             assert!(!args.iter().any(|x| x == flag), "{flag} must be absent");
         }
     }

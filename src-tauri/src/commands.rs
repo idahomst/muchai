@@ -1151,6 +1151,7 @@ pub fn edit_model(
         clip_g: opt(&components.clip_g),
         t5xxl: opt(&components.t5xxl),
         llm: opt(&components.llm),
+        llm_vision: opt(&components.llm_vision),
     };
 
     man.set_editable(name, family, flags, normalized, recommended_settings);

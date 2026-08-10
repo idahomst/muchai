@@ -12,7 +12,7 @@ export type Sampler =
 
 // Wire values MUST match the Rust `ComponentRole` enum's serde snake_case form
 // (src-tauri/src/recipes.rs).
-export type ComponentRole = "diffusion" | "vae" | "clip_l" | "clip_g" | "t5xxl" | "llm";
+export type ComponentRole = "diffusion" | "vae" | "clip_l" | "clip_g" | "t5xxl" | "llm" | "llm_vision";
 
 export const ROLE_LABELS: Record<ComponentRole, string> = {
   diffusion: "Diffusion model",
@@ -21,6 +21,7 @@ export const ROLE_LABELS: Record<ComponentRole, string> = {
   clip_g: "CLIP-G text encoder",
   t5xxl: "T5-XXL text encoder",
   llm: "LLM text encoder",
+  llm_vision: "Vision tower (mmproj)",
 };
 
 // Engine enums, from src-tauri/fixtures/sd-help.txt. Empty = let engine auto-detect.
@@ -40,6 +41,7 @@ export interface ModelComponents {
   clip_g?: string | null;
   t5xxl?: string | null;
   llm?: string | null;
+  llm_vision?: string | null;
   vae_format?: string | null;
   prediction?: string | null;
 }

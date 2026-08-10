@@ -1226,7 +1226,7 @@ mod tests {
         // appear: `--vae-tiling` is last in `REQUIRED_FLAGS`, so it is only
         // ever reached by an implementation that skipped the cap.
         assert!(!err.contains("--vae-tiling"), "the list must be truncated: {err}");
-        assert!(err.contains("19 more"), "the message must account for the rest: {err}");
+        assert!(err.contains("20 more"), "the message must account for the rest: {err}");
         assert!(err.len() < 300, "the message must stay readable, got {} chars", err.len());
         let _ = std::fs::remove_dir_all(&root);
     }

@@ -19,6 +19,10 @@ pub enum ComponentRole {
     ClipG,
     T5xxl,
     Llm,
+    /// Vision tower (mmproj) of a vision-language text encoder — `--llm_vision`.
+    /// Belongs to the encoder, not to the diffusion model, which is why it
+    /// pools alongside the encoder rather than living in the model folder.
+    LlmVision,
 }
 
 /// One role's recognition rule within a recipe.

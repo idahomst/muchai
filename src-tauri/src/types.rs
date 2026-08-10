@@ -16,6 +16,8 @@ pub struct ModelComponents {
     #[serde(default)]
     pub llm: Option<String>, // --llm
     #[serde(default)]
+    pub llm_vision: Option<String>, // --llm_vision
+    #[serde(default)]
     pub vae_format: Option<String>, // --vae-format
     #[serde(default)]
     pub prediction: Option<String>, // --prediction
@@ -101,15 +103,19 @@ impl Default for ModelRef {
 impl ModelRef {
     /// The weight files that make up this model, for size/estimation purposes.
     /// Single-file → just its path. Multi-file → diffusion model plus every SET,
-    /// non-blank optional component (`vae`/`clip_l`/`clip_g`/`t5xxl`/`llm`).
-    /// The `vae_format` / `prediction` fields are engine flags, not files, and
-    /// are excluded. Order: diffusion, vae, clip_l, clip_g, t5xxl, llm.
+    /// non-blank optional component (`vae`/`clip_l`/`clip_g`/`t5xxl`/`llm`/
+    /// `llm_vision`). The `vae_format` / `prediction` fields are engine flags,
+    /// not files, and are excluded. Order: diffusion, vae, clip_l, clip_g,
+    /// t5xxl, llm, llm_vision.
     pub fn component_paths(&self) -> Vec<String> {
         match self {
             ModelRef::SingleFile { path } => vec![path.clone()],
             ModelRef::MultiFile(c) => {
                 let mut paths = vec![c.diffusion_model.clone()];
-                for p in [&c.vae, &c.clip_l, &c.clip_g, &c.t5xxl, &c.llm].into_iter().flatten() {
+                for p in [&c.vae, &c.clip_l, &c.clip_g, &c.t5xxl, &c.llm, &c.llm_vision]
+                    .into_iter()
+                    .flatten()
+                {
                     if !p.trim().is_empty() {
                         paths.push(p.clone());
                     }
@@ -133,13 +139,14 @@ impl ModelRef {
 /// Component slots whose file no longer exists on disk. Empty = all good.
 /// Only *set* slots are checked; a `None` optional slot is never reported.
 pub fn missing_components(c: &ModelComponents) -> Vec<(ComponentRole, String)> {
-    let checks: [(ComponentRole, Option<&String>); 6] = [
+    let checks: [(ComponentRole, Option<&String>); 7] = [
         (ComponentRole::Diffusion, Some(&c.diffusion_model)),
         (ComponentRole::Vae, c.vae.as_ref()),
         (ComponentRole::ClipL, c.clip_l.as_ref()),
         (ComponentRole::ClipG, c.clip_g.as_ref()),
         (ComponentRole::T5xxl, c.t5xxl.as_ref()),
         (ComponentRole::Llm, c.llm.as_ref()),
+        (ComponentRole::LlmVision, c.llm_vision.as_ref()),
     ];
     let mut out = Vec::new();
     for (role, path) in checks {
@@ -777,6 +784,7 @@ mod tests {
             vae: Some("/m/ae.safetensors".into()),
             clip_g: None,                 // unset → excluded
             llm: Some("   ".into()),      // blank → excluded
+            llm_vision: None,             // unset → excluded
             vae_format: Some("flux".into()), // NOT a file path → excluded
             prediction: Some("flux_flow".into()), // NOT a file path → excluded
         });
