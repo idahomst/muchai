@@ -212,6 +212,8 @@ pub fn run() {
             commands::generate,
             commands::cancel_generation,
             commands::pick_model_file,
+            commands::pick_ref_image,
+            commands::pick_ref_image_dialog,
             commands::pick_gallery_dir,
             commands::open_path,
             commands::open_url,

@@ -600,6 +600,74 @@ pub async fn pick_model_file(app: AppHandle, start_dir: Option<String>) -> Optio
     file.and_then(|f| f.into_path().ok()).map(|p| p.to_string_lossy().into_owned())
 }
 
+/// A reference image the user has chosen: where it is, how big it is, and the
+/// output size MuchAI will suggest for editing it.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RefImageInfo {
+    pub path: String,
+    pub width: u32,
+    pub height: u32,
+    pub suggested_width: u32,
+    pub suggested_height: u32,
+}
+
+/// Read a candidate reference image's header and describe it. Pure enough to
+/// test: no dialog, no app handle, no scope grant.
+///
+/// Only the first 1 MB is read, so pointing this at a 400 MB file is cheap and
+/// pointing it at a named pipe cannot hang on the whole stream.
+fn inspect_ref_image(path: &str) -> Result<RefImageInfo, String> {
+    use std::io::Read;
+    let f = std::fs::File::open(path).map_err(|e| format!("Could not read {path}: {e}"))?;
+    let mut head = Vec::new();
+    f.take(1024 * 1024)
+        .read_to_end(&mut head)
+        .map_err(|e| format!("Could not read {path}: {e}"))?;
+    let (width, height) = crate::imagedim::dimensions(&head)
+        .ok_or_else(|| "That file isn't an image MuchAI can read. Use a PNG, JPEG or WebP.".to_string())?;
+    let (suggested_width, suggested_height) = crate::imagedim::suggest_size(width, height);
+    Ok(RefImageInfo {
+        path: path.to_string(),
+        width,
+        height,
+        suggested_width,
+        suggested_height,
+    })
+}
+
+/// Inspect a reference image and grant the webview permission to display that
+/// one file.
+///
+/// `allow_file`, not `allow_directory`: a reference can live anywhere, and
+/// granting its folder would expose every other file in it — someone editing
+/// one holiday photo would hand the webview the whole album.
+#[tauri::command]
+pub async fn pick_ref_image(app: AppHandle, path: String) -> Result<RefImageInfo, String> {
+    let info = inspect_ref_image(&path)?;
+    let _ = app.asset_protocol_scope().allow_file(&info.path);
+    Ok(info)
+}
+
+/// The OS file dialog for choosing a reference image. `None` when cancelled.
+/// Inspection is a separate call so the ✎ button can reuse it with a path it
+/// already has.
+#[tauri::command]
+pub async fn pick_ref_image_dialog(app: AppHandle, start_dir: Option<String>) -> Option<String> {
+    use tauri_plugin_dialog::DialogExt;
+    let mut dialog = app
+        .dialog()
+        .file()
+        .add_filter("Images", &["png", "jpg", "jpeg", "webp"]);
+    if let Some(dir) = start_dir {
+        let p = PathBuf::from(&dir);
+        if p.is_dir() {
+            dialog = dialog.set_directory(&p);
+        }
+    }
+    let file = dialog.blocking_pick_file();
+    file.and_then(|f| f.into_path().ok()).map(|p| p.to_string_lossy().into_owned())
+}
+
 /// Open a folder (or file) in the OS file manager / default app. Runs the
 /// opener via its Rust API so it isn't subject to the JS command's path scope
 /// (the gallery dir is user-chosen and trusted).
@@ -2940,6 +3008,31 @@ mod tests {
         assert!(
             api.contains(&format!("(\"{DOWNLOAD_PROGRESS_EVENT}\"")),
             "no listener for {DOWNLOAD_PROGRESS_EVENT} in api.ts"
+        );
+    }
+
+    #[test]
+    fn inspecting_a_reference_image_reports_its_size_and_a_suggestion() {
+        let png = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/refimg/png_3000x2000.png");
+        let info = inspect_ref_image(png).expect("a real png inspects");
+        assert_eq!((info.width, info.height), (3000, 2000));
+        assert_eq!((info.suggested_width, info.suggested_height), (1248, 832));
+        assert_eq!(info.path, png, "the path is echoed back verbatim");
+    }
+
+    #[test]
+    fn a_missing_reference_image_is_an_error_not_a_panic() {
+        let err = inspect_ref_image("/nope/definitely-not-here.png").unwrap_err();
+        assert!(err.contains("read"), "the message names what failed: {err}");
+    }
+
+    #[test]
+    fn a_file_that_is_not_an_image_is_refused_by_content_not_by_extension() {
+        let txt = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/refimg/not_an_image.txt");
+        let err = inspect_ref_image(txt).unwrap_err();
+        assert!(
+            err.contains("PNG") && err.contains("JPEG") && err.contains("WebP"),
+            "the message must tell the user which formats work: {err}"
         );
     }
 }

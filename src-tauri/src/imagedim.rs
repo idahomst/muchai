@@ -16,9 +16,6 @@ const MAX_HEADER: usize = 1024 * 1024;
 
 /// Pixel dimensions of `bytes`, or `None` if it is not a PNG/JPEG/WebP or the
 /// header is malformed or truncated.
-// Not yet called outside tests — the reference-image picker command starts
-// consulting this in a later task.
-#[allow(dead_code)]
 pub fn dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
     let b = &bytes[..bytes.len().min(MAX_HEADER)];
     png(b).or_else(|| jpeg(b)).or_else(|| webp(b))
@@ -154,9 +151,6 @@ const TARGET_PIXELS: f64 = 1_048_576.0;
 ///
 /// A degenerate source (a zero dimension, which `dimensions` never returns but
 /// a caller could still pass) falls back to 1024×1024.
-// Not yet called outside tests — the reference-image picker command starts
-// consulting this in a later task.
-#[allow(dead_code)]
 pub fn suggest_size(src_w: u32, src_h: u32) -> (u32, u32) {
     if src_w == 0 || src_h == 0 {
         return (1024, 1024);

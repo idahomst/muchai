@@ -1,6 +1,6 @@
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { AppConfig, GalleryItem, GenerationRequest, ProgressUpdate, SystemStats, DownloadProgress, GpuDevice, RecipeInfo, GenDefaults, LibraryEntry, RatedCatalogEntry, ManifestFlags, ModelComponents, LibraryFit, SpaceCheck, ReclaimableModel, LoraInfo, AddedLora, EngineSelection, EngineStatus, EngineUpdate, ChangeEntry } from "./types";
+import type { AppConfig, GalleryItem, GenerationRequest, ProgressUpdate, SystemStats, DownloadProgress, GpuDevice, RecipeInfo, GenDefaults, LibraryEntry, RatedCatalogEntry, ManifestFlags, ModelComponents, LibraryFit, SpaceCheck, ReclaimableModel, LoraInfo, AddedLora, EngineSelection, EngineStatus, EngineUpdate, ChangeEntry, RefImageInfo } from "./types";
 
 export const getSettings = () => invoke<AppConfig>("get_settings");
 /** Enumerate Vulkan devices the engine can target (cached server-side). */
@@ -17,6 +17,10 @@ export const deleteImage = (path: string) => invoke<void>("delete_image", { imag
 export const cancelGeneration = () => invoke<void>("cancel_generation");
 export const pickModelFile = (startDir?: string) =>
   invoke<string | null>("pick_model_file", { startDir: startDir ?? null });
+export const pickRefImageDialog = (startDir?: string) =>
+  invoke<string | null>("pick_ref_image_dialog", { startDir: startDir ?? null });
+export const pickRefImage = (path: string) =>
+  invoke<RefImageInfo>("pick_ref_image", { path });
 export const pickGalleryDir = () => invoke<string | null>("pick_gallery_dir");
 
 /** Open a folder (or file) in the OS file manager / default app. */

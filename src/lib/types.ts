@@ -394,6 +394,15 @@ export interface SpaceCheck {
   ok: boolean;
 }
 
+/** A chosen reference image (mirrors Rust commands::RefImageInfo). */
+export interface RefImageInfo {
+  path: string;
+  width: number;
+  height: number;
+  suggested_width: number;
+  suggested_height: number;
+}
+
 /** Mirrors Rust `commands::ReclaimableModel`: an installed model and the bytes
  *  deleting it would free. */
 export interface ReclaimableModel {
