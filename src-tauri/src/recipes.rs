@@ -322,10 +322,11 @@ pub fn recipes() -> Vec<ModelRecipe> {
                     &["qwenvl", "qwen2.5", "qwen2_5", "qwen_2.5", "llm"],
                     &["mmproj", "llm_vision", "qwen2vl_vision"],
                 ),
-                // Patterns ordered so the most specific wins `detect`'s
-                // longest-match rule: an mmproj file is also a "vision" file,
-                // and the encoder's own filename contains "qwen2.5", so the
-                // vision tower must out-specify both.
+                // Pattern order is irrelevant — `detect` takes the *longest*
+                // match, not the first. What matters is that the mmproj's own
+                // filename says so: the plain `"vision"` catch-all is here for
+                // repos that name the file that way, and would otherwise be all
+                // this role has to go on.
                 role(ComponentRole::LlmVision, true, &["mmproj", "llm_vision", "qwen2vl_vision", "vision"]),
                 role(ComponentRole::Vae, true, &["vae", "ae."]),
             ],

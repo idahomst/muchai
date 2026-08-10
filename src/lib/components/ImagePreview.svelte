@@ -103,7 +103,14 @@
     try {
       const info = await pickRefImage(item.image_path);
       if (!selectedIsEditModel) {
-        const pick = editModels[0];
+        // A broken entry is one the model picker itself refuses to select — its
+        // files are missing — so selecting it here would leave the user staring
+        // at a model they cannot generate with and no reason why.
+        const pick = editModels.find((e) => !e.broken);
+        if (!pick) {
+          error = "Your edit model is missing its files. Open the model list to repair it.";
+          return;
+        }
         selectedModelId.set(pick.id);
         request.update((r) => ({ ...r, model: pick.model, model_id: pick.id }));
         // Several to choose from: show the picker so the automatic choice is

@@ -90,8 +90,13 @@
           modelNotice.set("Your last model is no longer in your library. Pick a model to continue.");
         }
       }
-      gpuDevices.set(await listGpuDevices());
-      editFamilies.set(await listEditFamilies());
+      // Concurrent, not sequential: enumerating GPUs shells out and can take a
+      // second or more, and until the edit-family list lands the reference
+      // panel is hidden and the instruction box is labelled "Prompt" — a
+      // visible flash on the restored model, for no reason.
+      const [devices, families] = await Promise.all([listGpuDevices(), listEditFamilies()]);
+      gpuDevices.set(devices);
+      editFamilies.set(families);
     })();
     const un = onSystemStats((s) => sysStats.set(s));
     // App-level download-progress feed: keeps the store live regardless of

@@ -30,14 +30,14 @@
   function applyRecommended() {
     const r = recommended;
     if (!r) return;
-    request.update((req) => ({
-      ...req,
-      steps: r.steps,
-      cfg_scale: r.cfg_scale,
-      sampler: r.sampler,
-      width: r.width,
-      height: r.height,
-    }));
+    request.update((req) => {
+      // With a reference image loaded, the size is not a free choice: it was
+      // matched to that image when it was picked, and overwriting it with the
+      // family's square default is how an edit comes back stretched. Everything
+      // else the recommendation offers still applies.
+      const size = req.ref_images.length > 0 ? {} : { width: r.width, height: r.height };
+      return { ...req, steps: r.steps, cfg_scale: r.cfg_scale, sampler: r.sampler, ...size };
+    });
   }
   // ⟳ pins a fresh concrete seed (so the result is reproducible), unlike the
   // -1 "random each run" sentinel.

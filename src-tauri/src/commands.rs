@@ -363,7 +363,10 @@ pub fn cancel_generation(state: State<AppState>) {
 ///
 /// Edit-capability is asked two ways, because one is not enough:
 ///
-/// 1. `family` — the resolved manifest family. Authoritative when present.
+/// 1. `family` — the resolved manifest family. Sufficient, not authoritative:
+///    the two questions are OR-ed, so a family that is not an edit family does
+///    not veto a model that carries a vision tower. A user who hand-assembles
+///    an edit stack under family `custom` still gets their reference through.
 /// 2. The model itself carrying a `llm_vision` component. `family` is `None`
 ///    for an ad-hoc request, and `ParamsPanel.load()` deliberately replays a
 ///    gallery item as ad-hoc. Without this fallback a replayed edit would run
@@ -667,8 +670,10 @@ pub struct RefImageInfo {
 /// Read a candidate reference image's header and describe it. Pure enough to
 /// test: no dialog, no app handle, no scope grant.
 ///
-/// Only the first 1 MB is read, so pointing this at a 400 MB file is cheap and
-/// pointing it at a named pipe cannot hang on the whole stream.
+/// Only the first 1 MB is read, so pointing this at a 400 MB file is cheap.
+/// The cap bounds the read, not the open: `File::open` on a FIFO still blocks
+/// until a writer appears. That is acceptable here because the path comes from
+/// the user's own file picker or drop, not from anything remote.
 fn inspect_ref_image(path: &str) -> Result<RefImageInfo, String> {
     use std::io::Read;
     let f = std::fs::File::open(path).map_err(|e| format!("Could not read {path}: {e}"))?;
