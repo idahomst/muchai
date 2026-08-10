@@ -121,17 +121,14 @@ pub fn detect(recipe: &ModelRecipe, filenames: &[String]) -> DetectedComponents 
     DetectedComponents { assignments }
 }
 
-/// Pick the family that best explains this file set: a recipe whose every
-/// required role is matched outranks one that is still missing a required
-/// role, then most required roles matched, then most total roles matched.
-/// None if no recipe matches any required role.
+/// Pick the family that best explains this file set: most required roles matched,
+/// then most total roles matched. None if no recipe matches any required role.
 ///
-/// The completeness check matters once two recipes share a diffusion
-/// pattern: `qwen-image-edit`'s diffusion patterns include `"qwen-image"` (it
-/// has to recognise `qwen-image-edit-*.gguf`), so a plain Qwen-Image file set
-/// ties qwen-image-edit on required-matched count whenever no mmproj file is
-/// present — but qwen-image-edit is still missing its required
-/// `LlmVision` role, so it must lose the tie to the family it fully matches.
+/// `max_by_key` returns the *last* maximum, so a tie is settled by recipe order
+/// — which is not a meaningful ranking. Two recipes must therefore never be
+/// able to tie on the same file set; that is enforced in the recipes, by
+/// keeping each family's diffusion patterns narrow enough not to match another
+/// family's files. See the comment on `qwen-image-edit`'s Diffusion role.
 pub fn detect_best(filenames: &[String]) -> Option<(ModelRecipe, DetectedComponents)> {
     recipes()
         .into_iter()
