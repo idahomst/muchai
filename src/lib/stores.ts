@@ -22,6 +22,16 @@ export const library = writable<LibraryEntry[]>([]);
  *  panel rather than flashing it. */
 export const editFamilies = writable<string[]>([]);
 
+/** Catalog id the New-model dialog should scroll to and highlight when it
+ *  opens — set when the user asks to edit an image with no edit model
+ *  installed. Cleared by the dialog once it has consumed it. */
+export const catalogHighlightId = writable<string | null>(null);
+
+/** Set when "Edit this image" wants the model picker left open, because more
+ *  than one edit model exists and the automatic choice should be visible
+ *  rather than silent. The picker clears it after opening. */
+export const revealModelPicker = writable(false);
+
 /** Id of the currently-selected library entry (drives recommended-settings). */
 export const selectedModelId = writable<string | null>(null);
 

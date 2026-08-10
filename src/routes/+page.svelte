@@ -147,7 +147,7 @@
   </aside>
 
   <section class="stage">
-    <ImagePreview />
+    <ImagePreview onNeedEditModel={() => (showNew = true)} />
     <ParamsPanel />
     <HistoryStrip />
   </section>

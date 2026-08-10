@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { library, request, selectedModelId, modelNotice, sysStats } from "../stores";
+  import { library, request, selectedModelId, modelNotice, sysStats, revealModelPicker } from "../stores";
   import { rateLibrary } from "../api";
   import { familyBadge, quantBadge } from "../modelFormat";
   import type { LibraryEntry, LibraryFit } from "../types";
@@ -59,6 +59,14 @@
 
   function toggle() { open = !open; if (open) filter = ""; }
   function close() { open = false; }
+
+  // "Edit this image" picked a model on the user's behalf when several were
+  // possible; opening the picker is how that choice is made visible.
+  $effect(() => {
+    if (!$revealModelPicker) return;
+    open = true;
+    revealModelPicker.set(false);
+  });
 
   function select(entry: LibraryEntry) {
     selectedModelId.set(entry.id);

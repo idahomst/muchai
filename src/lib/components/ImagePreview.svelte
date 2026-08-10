@@ -1,7 +1,10 @@
 <script lang="ts">
   import { get } from "svelte/store";
-  import { currentImage, currentItem, history, livePreview } from "../stores";
-  import { deleteImage, listHistory, imageSrc, openFolder } from "../api";
+  import { currentImage, currentItem, history, livePreview, library, selectedModelId,
+           editFamilies, request, catalogHighlightId, revealModelPicker } from "../stores";
+  import { deleteImage, listHistory, imageSrc, openFolder, pickRefImage } from "../api";
+
+  let { onNeedEditModel }: { onNeedEditModel: () => void } = $props();
 
   // The live draft (if any) wins over the settled image. When a draft 404s
   // (engine hasn't written the first frame yet) we clear it so the fallback
@@ -72,6 +75,54 @@
     confirming = false;
     error = null;
   }
+
+  /** The catalog entry offered when the user wants to edit but owns no edit
+   *  model. Matches the id in resources/catalog.json. */
+  const EDIT_CATALOG_ID = "qwen-image-edit-2511-q3ks";
+
+  const editModels = $derived($library.filter((e) => $editFamilies.includes(e.family)));
+  const selectedIsEditModel = $derived(
+    editModels.some((e) => e.id === $selectedModelId),
+  );
+
+  /** Set the shown image as the reference and make sure an edit model is
+   *  selected. Also the iteration loop: the result lands in the gallery, and
+   *  pressing this again edits that. */
+  async function editThisImage() {
+    const item = get(currentItem);
+    if (!item || busy) return;
+    error = null;
+    // No edit model at all: the catalog is the only way forward, so open it
+    // pointed at the entry rather than leaving the user to find it.
+    if (editModels.length === 0) {
+      catalogHighlightId.set(EDIT_CATALOG_ID);
+      onNeedEditModel();
+      return;
+    }
+    busy = true;
+    try {
+      const info = await pickRefImage(item.image_path);
+      if (!selectedIsEditModel) {
+        const pick = editModels[0];
+        selectedModelId.set(pick.id);
+        request.update((r) => ({ ...r, model: pick.model, model_id: pick.id }));
+        // Several to choose from: show the picker so the automatic choice is
+        // visible and changeable, rather than silently deciding for them.
+        if (editModels.length > 1) revealModelPicker.set(true);
+      }
+      request.update((r) => ({
+        ...r,
+        ref_images: [info.path],
+        width: info.suggested_width,
+        height: info.suggested_height,
+      }));
+      document.getElementById("prompt")?.focus();
+    } catch (e) {
+      error = String(e);
+    } finally {
+      busy = false;
+    }
+  }
 </script>
 
 <div class="preview">
@@ -89,6 +140,10 @@
           <button class="tool" onclick={cancel} disabled={busy}
             aria-label="Cancel" title="Cancel">Cancel</button>
         {:else}
+          <button class="tool" onclick={editThisImage} disabled={!$currentItem || busy}
+            aria-label="Edit this image" title="Edit this image">
+            <span aria-hidden="true">✎</span>
+          </button>
           <button class="tool" onclick={openContainingFolder} disabled={!$currentItem}
             aria-label="Open containing folder" title="Open folder">
             <span aria-hidden="true">🗀</span>
