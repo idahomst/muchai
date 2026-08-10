@@ -13,13 +13,9 @@ pub const FAMILIES: &[&str] =
 /// a from-scratch prompt. A list rather than a suffix rule: `qwen-image-edit`
 /// has `qwen-image` as a prefix, and any prefix/suffix cleverness here ends up
 /// handing a reference image to a model that cannot use one.
-// Not yet called outside tests — `generate` starts consulting this in a later
-// task that decides the ref_images gate.
-#[allow(dead_code)]
 pub const EDIT_FAMILIES: &[&str] = &["qwen-image-edit"];
 
 /// True when models of this family are instruction editors.
-#[allow(dead_code)]
 pub fn is_edit_family(family: &str) -> bool {
     EDIT_FAMILIES.contains(&family)
 }

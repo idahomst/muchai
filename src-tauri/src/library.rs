@@ -90,7 +90,6 @@ pub fn resolve_request_model(models_dir: &Path, request: &GenerationRequest) -> 
 /// separate function rather than a wider `resolve_request_model` return type:
 /// every other caller wants only the `ModelRef`, and the two lookups are
 /// cheap (one `model.json` read each) and independent.
-#[allow(dead_code)] // wired in a later task that decides the ref_images gate.
 pub fn resolve_request_family(models_dir: &Path, request: &GenerationRequest) -> Option<String> {
     let id = request.model_id.as_deref()?;
     resolve_by_id(models_dir, id).map(|e| e.family)

@@ -359,6 +359,54 @@ pub fn cancel_generation(state: State<AppState>) {
     let _ = std::fs::remove_file(preview_path());
 }
 
+/// Whether this run's reference images may reach the engine, or why not.
+///
+/// Edit-capability is asked two ways, because one is not enough:
+///
+/// 1. `family` — the resolved manifest family. Authoritative when present.
+/// 2. The model itself carrying a `llm_vision` component. `family` is `None`
+///    for an ad-hoc request, and `ParamsPanel.load()` deliberately replays a
+///    gallery item as ad-hoc. Without this fallback a replayed edit would run
+///    as text-to-image and *succeed*, silently ignoring the reference — the
+///    worst failure mode available, since the output looks fine.
+///
+/// A vision tower is a sound signal: it is the component that makes reading a
+/// reference physically possible, and only an edit recipe assembles one.
+///
+/// A non-edit model is never an error: the user's reference is preserved and
+/// simply not passed, so switching to a text-to-image model to try a variation
+/// and switching back does not cost them the image they chose. Discarding a
+/// user's input to keep internal state tidy is the wrong trade — the same rule
+/// the LoRA selection follows.
+fn resolve_ref_images(
+    family: Option<&str>,
+    model: &ModelRef,
+    ref_images: &[String],
+) -> Result<bool, String> {
+    let has_vision_tower = match model {
+        ModelRef::MultiFile(c) => {
+            c.llm_vision.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false)
+        }
+        ModelRef::SingleFile { .. } => false,
+    };
+    let is_edit = family.map(recipes::is_edit_family).unwrap_or(false) || has_vision_tower;
+    if !is_edit {
+        return Ok(false);
+    }
+    if ref_images.is_empty() {
+        return Err(
+            "This model edits an existing image. Add a reference image above the instruction."
+                .to_string(),
+        );
+    }
+    for p in ref_images {
+        if !std::path::Path::new(p).exists() {
+            return Err(format!("The reference image is no longer at {p}. Choose it again."));
+        }
+    }
+    Ok(true)
+}
+
 #[tauri::command]
 pub async fn generate(
     app: AppHandle,
@@ -396,6 +444,13 @@ pub async fn generate(
     // warning and a wrong-looking-but-successful image.
     let lora_dir =
         loras::resolve_selection(std::path::Path::new(&cfg.models_dir), &request.loras)?;
+    // Reference images are decided here for the same reason: an edit model run
+    // without one produces a confident, unrelated image and no engine warning.
+    // The family is re-read from model.json alongside the components above.
+    let ref_family =
+        library::resolve_request_family(std::path::Path::new(&cfg.models_dir), &request);
+    let ref_images =
+        resolve_ref_images(ref_family.as_deref(), &request.model, &request.ref_images)?;
     // Validate the saved device against the enumerated list (cached) and map it
     // to a backend; a stale/absent selection falls back to the engine default
     // when a real GPU exists, or to the CPU backend when none does.
@@ -466,9 +521,7 @@ pub async fn generate(
         preview_path: preview.as_ref().map(|p| p.to_string_lossy().into_owned()),
         weight_type,
         lora_dir,
-        // Deciding this from the resolved model's family is a later task; for
-        // now the gate stays closed so no ref image can reach the engine.
-        ref_images: false,
+        ref_images,
     };
 
     // Run the (blocking) engine on a worker thread so the async command yields.
@@ -3034,5 +3087,86 @@ mod tests {
             err.contains("PNG") && err.contains("JPEG") && err.contains("WebP"),
             "the message must tell the user which formats work: {err}"
         );
+    }
+
+    fn plain_model() -> ModelRef {
+        ModelRef::SingleFile { path: "/m/sd15.safetensors".into() }
+    }
+
+    fn model_with_vision_tower() -> ModelRef {
+        ModelRef::MultiFile(crate::types::ModelComponents {
+            diffusion_model: "/m/qwen-edit.gguf".into(),
+            llm: Some("/m/shared/qwen2.5-vl.gguf".into()),
+            llm_vision: Some("/m/shared/mmproj.gguf".into()),
+            ..Default::default()
+        })
+    }
+
+    /// A reference image that really exists on disk, in a directory of this
+    /// test's own. Returns the directory too, so the caller can remove it.
+    fn a_present_reference(name: &str) -> (PathBuf, Vec<String>) {
+        let dir = scratch(name);
+        let img = dir.join("cat.png");
+        std::fs::write(&img, b"x").unwrap();
+        (dir, vec![img.to_string_lossy().into_owned()])
+    }
+
+    #[test]
+    fn an_edit_family_with_a_present_reference_enables_the_flag() {
+        let (dir, refs) = a_present_reference("refpresent");
+        assert_eq!(resolve_ref_images(Some("qwen-image-edit"), &plain_model(), &refs), Ok(true));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_edit_family_without_a_reference_is_blocked_with_an_actionable_message() {
+        let err = resolve_ref_images(Some("qwen-image-edit"), &plain_model(), &[]).unwrap_err();
+        assert!(err.contains("edits an existing image"), "{err}");
+        assert!(err.contains("reference image"), "{err}");
+    }
+
+    #[test]
+    fn a_reference_that_has_moved_is_blocked_and_named() {
+        let refs = vec!["/gone/cat.png".to_string()];
+        let err = resolve_ref_images(Some("qwen-image-edit"), &plain_model(), &refs).unwrap_err();
+        assert!(err.contains("/gone/cat.png"), "the message names the file: {err}");
+        assert!(err.contains("Choose it again"), "{err}");
+    }
+
+    #[test]
+    fn a_non_edit_family_neither_errors_nor_passes_the_reference() {
+        // The reference does not even have to exist: it is never looked at.
+        let refs = vec!["/gone/cat.png".to_string()];
+        for family in [Some("qwen-image"), Some("flux2"), Some("sd15"), None] {
+            assert_eq!(
+                resolve_ref_images(family, &plain_model(), &refs),
+                Ok(false),
+                "{family:?} must silently ignore a reference, never reject it"
+            );
+            assert_eq!(resolve_ref_images(family, &plain_model(), &[]), Ok(false));
+        }
+    }
+
+    #[test]
+    fn a_replayed_edit_is_still_an_edit_even_without_a_family() {
+        // ParamsPanel.load() replays a gallery item as ad-hoc: model_id null,
+        // so no family. Without the vision-tower fallback this run would
+        // succeed and quietly ignore the reference.
+        let (dir, refs) = a_present_reference("refreplay");
+        assert_eq!(resolve_ref_images(None, &model_with_vision_tower(), &refs), Ok(true));
+        // And the empty case is still blocked, not silently downgraded.
+        let err = resolve_ref_images(None, &model_with_vision_tower(), &[]).unwrap_err();
+        assert!(err.contains("edits an existing image"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_blank_vision_tower_path_does_not_count_as_one() {
+        let model = ModelRef::MultiFile(crate::types::ModelComponents {
+            diffusion_model: "/m/x.gguf".into(),
+            llm_vision: Some("   ".into()),
+            ..Default::default()
+        });
+        assert_eq!(resolve_ref_images(None, &model, &["/gone/cat.png".to_string()]), Ok(false));
     }
 }
