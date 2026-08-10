@@ -43,6 +43,15 @@ pub struct RoleSpec {
     pub required: bool,
     /// Case-insensitive substring matches on the filename, e.g. ["t5xxl", "t5-xxl"].
     pub patterns: Vec<&'static str>,
+    /// Case-insensitive substrings that disqualify a filename from this role
+    /// even when a pattern matches. `detect` resolves each role independently,
+    /// so without this one file can win two roles: `qwen_image_vae.safetensors`
+    /// matches the Qwen diffusion pattern `"qwen_image"` (10 chars) far more
+    /// strongly than the VAE pattern `"vae"` (3), and the mmproj matches the
+    /// encoder's `"qwen2.5"` exactly as well as the encoder itself does. Both
+    /// end with a component pointed at the wrong file and no missing-component
+    /// warning, because every path exists.
+    pub exclude: Vec<&'static str>,
 }
 
 /// A family-common downloadable part (VAE / encoder) reused across the family.
@@ -102,6 +111,9 @@ pub fn detect(recipe: &ModelRecipe, filenames: &[String]) -> DetectedComponents 
         let mut best: Option<(usize, &str)> = None; // (pattern length, filename)
         for name in filenames {
             let lower = name.to_lowercase();
+            if spec.exclude.iter().any(|x| lower.contains(&x.to_lowercase())) {
+                continue;
+            }
             let score = spec
                 .patterns
                 .iter()
@@ -142,7 +154,18 @@ pub fn detect_best(filenames: &[String]) -> Option<(ModelRecipe, DetectedCompone
 }
 
 fn role(role: ComponentRole, required: bool, patterns: &[&'static str]) -> RoleSpec {
-    RoleSpec { role, required, patterns: patterns.to_vec() }
+    RoleSpec { role, required, patterns: patterns.to_vec(), exclude: Vec::new() }
+}
+
+/// A role whose patterns are broad enough to reach a file that belongs to a
+/// different slot. See `RoleSpec::exclude`.
+fn role_not(
+    role: ComponentRole,
+    required: bool,
+    patterns: &[&'static str],
+    exclude: &[&'static str],
+) -> RoleSpec {
+    RoleSpec { role, required, patterns: patterns.to_vec(), exclude: exclude.to_vec() }
 }
 
 /// Built-in family recipes. `custom` is the manual-flow pseudo-family:
@@ -232,8 +255,19 @@ pub fn recipes() -> Vec<ModelRecipe> {
             pool_family: "qwen-image",
             name: "Qwen-Image",
             roles: vec![
-                role(ComponentRole::Diffusion, true, &["qwen-image", "qwen_image", "qwen"]),
-                role(ComponentRole::Llm, true, &["qwenvl", "qwen2.5", "qwen2_5", "qwen_2.5", "llm"]),
+                // `"qwen_image"` matches `qwen_image_vae.safetensors` more
+                // strongly than `"vae"` does, so without the exclusion the VAE
+                // becomes the diffusion model on any folder that holds both.
+                role_not(ComponentRole::Diffusion, true, &["qwen-image", "qwen_image", "qwen"], &["vae"]),
+                // The mmproj shares the encoder's name up to a suffix. This
+                // family has no vision slot, but the shared pool it reads from
+                // holds one for qwen-image-edit.
+                role_not(
+                    ComponentRole::Llm,
+                    true,
+                    &["qwenvl", "qwen2.5", "qwen2_5", "qwen_2.5", "llm"],
+                    &["mmproj", "llm_vision", "qwen2vl_vision"],
+                ),
                 role(ComponentRole::Vae, true, &["vae", "ae."]),
             ],
             vae_format: Some("auto"),
@@ -271,8 +305,23 @@ pub fn recipes() -> Vec<ModelRecipe> {
                 // pattern here makes an ordinary text-to-image Qwen file set
                 // tie with — and then out-rank — its own family. Only a
                 // filename that actually says "edit" is an edit model.
-                role(ComponentRole::Diffusion, true, &["qwen-image-edit", "qwen_image_edit", "qwen-edit", "qwen_edit"]),
-                role(ComponentRole::Llm, true, &["qwenvl", "qwen2.5", "qwen2_5", "qwen_2.5", "llm"]),
+                role_not(
+                    ComponentRole::Diffusion,
+                    true,
+                    &["qwen-image-edit", "qwen_image_edit", "qwen-edit", "qwen_edit"],
+                    &["vae"],
+                ),
+                // Excluding the vision tower is what keeps `--llm` and
+                // `--llm_vision` from being handed the same file: the mmproj
+                // matches `"qwen2.5"` exactly as well as the encoder does, so
+                // the winner would otherwise be whichever `read_dir` returned
+                // first — and the real encoder would go unassigned.
+                role_not(
+                    ComponentRole::Llm,
+                    true,
+                    &["qwenvl", "qwen2.5", "qwen2_5", "qwen_2.5", "llm"],
+                    &["mmproj", "llm_vision", "qwen2vl_vision"],
+                ),
                 // Patterns ordered so the most specific wins `detect`'s
                 // longest-match rule: an mmproj file is also a "vision" file,
                 // and the encoder's own filename contains "qwen2.5", so the
@@ -819,5 +868,69 @@ mod tests {
             Some("Qwen2.5-VL-7B-Instruct-mmproj-BF16.gguf"),
             "the mmproj must land in the vision slot, not the encoder's"
         );
+    }
+
+    /// The mmproj matches the encoder's `"qwen2.5"` exactly as well as the
+    /// encoder itself does, and `detect` keeps the first file on a tie — so
+    /// before the exclusion this passed only because the encoder happened to be
+    /// listed first. `read_dir` gives no such guarantee. List the mmproj first.
+    #[test]
+    fn the_vision_tower_never_takes_the_encoder_slot_whatever_the_file_order() {
+        let edit = [
+            "Qwen2.5-VL-7B-Instruct-mmproj-BF16.gguf".to_string(),
+            "qwen-image-edit-2511-Q3_K_S.gguf".to_string(),
+            "Qwen2.5-VL-7B-Instruct.Q4_K_S.gguf".to_string(),
+            "qwen_image_vae.safetensors".to_string(),
+        ];
+        let (r, d) = detect_best(&edit).expect("an edit set is detectable");
+        assert_eq!(r.family, "qwen-image-edit");
+        assert_eq!(d.get(ComponentRole::Llm), Some("Qwen2.5-VL-7B-Instruct.Q4_K_S.gguf"));
+        assert_eq!(d.get(ComponentRole::LlmVision), Some("Qwen2.5-VL-7B-Instruct-mmproj-BF16.gguf"));
+    }
+
+    /// `qwen_image_vae.safetensors` matches the diffusion pattern `"qwen_image"`
+    /// (10 characters) far more strongly than the VAE's `"vae"` (3), so the VAE
+    /// used to win the diffusion slot outright — both flags pointed at a 0.25 GB
+    /// VAE and nothing reported a missing component, because every path existed.
+    #[test]
+    fn the_vae_never_takes_the_diffusion_slot() {
+        let plain = [
+            "qwen_image_vae.safetensors".to_string(),
+            "qwen-image-2512-Q2_K.gguf".to_string(),
+            "Qwen2.5-VL-7B-Instruct.Q4_K_S.gguf".to_string(),
+        ];
+        let (r, d) = detect_best(&plain).expect("a plain Qwen set is detectable");
+        assert_eq!(r.family, "qwen-image");
+        assert_eq!(d.get(ComponentRole::Diffusion), Some("qwen-image-2512-Q2_K.gguf"));
+        assert_eq!(d.get(ComponentRole::Vae), Some("qwen_image_vae.safetensors"));
+    }
+
+    /// A file can only be one component. `detect` resolves each role
+    /// independently, so nothing structural stops two roles from landing on the
+    /// same file — the generation then points two flags at one path while the
+    /// real component for the losing role goes unassigned, and no
+    /// missing-component warning fires because every path exists. Feed each
+    /// recipe one plausible filename per pattern and assert the assignment stays
+    /// one-to-one.
+    #[test]
+    fn no_recipe_gives_one_file_to_two_roles() {
+        for r in recipes() {
+            let files: Vec<String> = r
+                .roles
+                .iter()
+                .flat_map(|s| s.patterns.iter())
+                .map(|p| format!("{p}.gguf"))
+                .collect();
+            let d = detect(&r, &files);
+            let mut taken: Vec<&str> = Vec::new();
+            for (role, name) in &d.assignments {
+                assert!(
+                    !taken.contains(&name.as_str()),
+                    "{}: {name} fills {role:?} and an earlier role at the same time",
+                    r.family
+                );
+                taken.push(name);
+            }
+        }
     }
 }
