@@ -1,25 +1,16 @@
 <script lang="ts">
   import { get } from "svelte/store";
   import { getCurrentWebview } from "@tauri-apps/api/webview";
-  import { request, library, selectedModelId, editFamilies } from "../stores";
+  import { request, isEditingModel } from "../stores";
   import { pickRefImage, pickRefImageDialog, imageSrc } from "../api";
-  import type { LibraryEntry, RefImageInfo } from "../types";
+  import type { RefImageInfo } from "../types";
   import { HELP } from "../helpText";
-
-  let lib = $state<LibraryEntry[]>([]);
-  library.subscribe((v) => (lib = v));
-
-  let selId = $state<string | null>(null);
-  selectedModelId.subscribe((v) => (selId = v));
-
-  let families = $state<string[]>([]);
-  editFamilies.subscribe((v) => (families = v));
 
   let refs = $state<string[]>([]);
   request.subscribe((r) => (refs = r.ref_images));
 
-  const modelFamily = $derived(lib.find((e) => e.id === selId)?.family ?? "");
-  const canEdit = $derived(families.includes(modelFamily));
+  let canEdit = $state(false);
+  isEditingModel.subscribe((v) => (canEdit = v));
 
   // Dimensions of the current reference, filled by the last successful pick.
   // Null after a reload (the request persists paths, not sizes) — the panel
@@ -86,7 +77,7 @@
     let disposed = false;
     getCurrentWebview()
       .onDragDropEvent((e) => {
-        if (!get(editFamilies).includes(modelFamily)) return;
+        if (!get(isEditingModel)) return;
         if (e.payload.type === "over") dragOver = true;
         else if (e.payload.type === "leave") dragOver = false;
         else if (e.payload.type === "drop") {

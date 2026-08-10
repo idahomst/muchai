@@ -1,10 +1,11 @@
 <script lang="ts">
-  import { request, library, selectedModelId, editFamilies } from "../stores";
+  import { request, isEditingModel } from "../stores";
   import { HELP } from "../helpText";
 
   // Legacy-mode component: `$:` and store auto-subscription, not runes.
-  $: entry = $library.find((e) => e.id === $selectedModelId) ?? null;
-  $: editing = entry !== null && $editFamilies.includes(entry.family);
+  // The label must agree with the panel above it, so both read the one store
+  // that mirrors the backend's gate rather than each deriving their own.
+  $: editing = $isEditingModel;
 </script>
 
 <div class="field">

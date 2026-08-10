@@ -1,4 +1,4 @@
-import { writable } from "svelte/store";
+import { writable, derived } from "svelte/store";
 import type { GenerationRequest, GalleryItem, SystemStats, AppConfig, ProgressUpdate, GpuDevice, LibraryEntry, DownloadProgress, LoraInfo } from "./types";
 import { defaultRequest } from "./types";
 import { listLibrary, listLoras } from "./api";
@@ -21,6 +21,29 @@ export const library = writable<LibraryEntry[]>([]);
  *  Loaded once at mount; empty until then, which correctly hides the reference
  *  panel rather than flashing it. */
 export const editFamilies = writable<string[]>([]);
+
+/** Whether the run that would start right now takes a reference image.
+ *
+ *  This must mirror `resolve_ref_images` in the backend exactly, because that
+ *  is what actually decides. It asks two questions, and so does this: is the
+ *  selected model's family an edit family, *or* does the model carry a vision
+ *  tower? The second is what covers a replayed gallery item — `ParamsPanel`
+ *  loads it as ad-hoc (`model_id: null`), so it has no family at all, and a
+ *  family-only test would hide the reference panel while the backend went
+ *  right on demanding an image.
+ *
+ *  Keyed off `request.model_id` rather than `selectedModelId` for the same
+ *  reason: `model_id` is the field the backend re-resolves the family from. */
+export const isEditingModel = derived(
+  [request, library, editFamilies],
+  ([$request, $library, $editFamilies]) => {
+    const id = $request.model_id;
+    const family = id ? $library.find((e) => e.id === id)?.family : undefined;
+    const hasVisionTower =
+      $request.model.type === "multi_file" && ($request.model.llm_vision ?? "").trim() !== "";
+    return (family !== undefined && $editFamilies.includes(family)) || hasVisionTower;
+  },
+);
 
 /** Catalog id the New-model dialog should scroll to and highlight when it
  *  opens — set when the user asks to edit an image with no edit model
