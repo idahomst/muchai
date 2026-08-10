@@ -17,6 +17,12 @@ pub struct EngineOptions {
     /// `--lora-model-dir` and the prompt tags, because tags without a directory
     /// resolve against the engine's default path and silently apply nothing.
     pub lora_dir: Option<String>,
+    /// Whether `req.ref_images` may reach the engine. `true` only when the
+    /// caller has confirmed the resolved model belongs to an edit family and
+    /// every path exists. `false` drops the list entirely: a `--ref-image` on a
+    /// model that cannot consume one is not ignored by the engine, it changes
+    /// the run. Mirrors the `lora_dir` gate above.
+    pub ref_images: bool,
 }
 
 /// Tensor-name prefixes that identify diffusion-model weights.
@@ -78,6 +84,9 @@ pub fn build_args(
     // Selections are honoured only alongside a pool directory (see EngineOptions).
     let loras: &[LoraSelection] =
         if opts.lora_dir.is_some() { req.loras.as_slice() } else { &[] };
+    // Same shape for reference images: intent lives on the request, permission
+    // lives on the options.
+    let ref_images: &[String] = if opts.ref_images { req.ref_images.as_slice() } else { &[] };
     let mut push = |flag: &str, val: String| {
         a.push(flag.to_string());
         a.push(val);
@@ -111,6 +120,9 @@ pub fn build_args(
                 push("--prediction", v.clone());
             }
         }
+    }
+    for r in ref_images {
+        push("--ref-image", r.clone());
     }
     push("-p", prompt_with_loras(&req.prompt, loras));
     if !req.negative_prompt.is_empty() {
@@ -475,5 +487,60 @@ mod tests {
         // immediately otherwise) and an override is a footgun. Pinned.
         let args = build_args(&with_loras(&[("a", 1.0)]), "/out/x.png", None, lora_opts());
         assert!(!args.iter().any(|x| x == "--lora-apply-mode"));
+    }
+
+    fn with_refs(paths: &[&str]) -> GenerationRequest {
+        let mut req = sample();
+        req.ref_images = paths.iter().map(|p| p.to_string()).collect();
+        req
+    }
+
+    fn ref_opts() -> EngineOptions {
+        EngineOptions { ref_images: true, ..Default::default() }
+    }
+
+    #[test]
+    fn a_reference_image_becomes_a_ref_image_flag() {
+        let args = build_args(&with_refs(&["/pics/cat.png"]), "/out/x.png", None, ref_opts());
+        assert_eq!(val_after(&args, "--ref-image"), Some("/pics/cat.png"));
+    }
+
+    #[test]
+    fn every_reference_image_gets_its_own_flag() {
+        let args = build_args(
+            &with_refs(&["/pics/a.png", "/pics/b.png"]),
+            "/out/x.png",
+            None,
+            ref_opts(),
+        );
+        let refs: Vec<&str> = args
+            .windows(2)
+            .filter(|w| w[0] == "--ref-image")
+            .map(|w| w[1].as_str())
+            .collect();
+        assert_eq!(refs, vec!["/pics/a.png", "/pics/b.png"], "order is preserved");
+    }
+
+    #[test]
+    fn reference_images_are_dropped_when_the_caller_did_not_enable_them() {
+        let args = build_args(&with_refs(&["/pics/cat.png"]), "/out/x.png", None, EngineOptions::default());
+        assert!(
+            !args.iter().any(|a| a == "--ref-image"),
+            "a ref image on a model that cannot edit must never reach the engine"
+        );
+        assert!(
+            !args.iter().any(|a| a == "/pics/cat.png"),
+            "and neither must its path"
+        );
+    }
+
+    #[test]
+    fn no_reference_image_produces_a_byte_identical_command() {
+        let baseline = build_args(&sample(), "/out/x.png", Some("vulkan1"), EngineOptions::default());
+        let enabled = build_args(&sample(), "/out/x.png", Some("vulkan1"), ref_opts());
+        assert_eq!(
+            baseline, enabled,
+            "enabling the gate with an empty list must not perturb an ordinary run"
+        );
     }
 }

@@ -23,7 +23,7 @@ use std::collections::BTreeSet;
 ///
 /// `--version` is intentionally absent: the engine does not advertise it in
 /// `--help`, and it is checked separately by the identity probe.
-pub const REQUIRED_FLAGS: [&str; 23] = [
+pub const REQUIRED_FLAGS: [&str; 24] = [
     "--backend",
     "--cfg-scale",
     "--clip_g",
@@ -39,6 +39,7 @@ pub const REQUIRED_FLAGS: [&str; 23] = [
     "--preview",
     "--preview-interval",
     "--preview-path",
+    "--ref-image",
     "--sampling-method",
     "--steps",
     "--stream-layers",

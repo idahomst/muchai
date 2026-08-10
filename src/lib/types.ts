@@ -145,6 +145,10 @@ export interface GenerationRequest {
   // LoRAs applied to this run (mirrors Rust GenerationRequest.loras,
   // #[serde(default)] → [] for old configs and gallery sidecars).
   loras: LoraSelection[];
+  // Reference images for instruction editing, absolute paths (mirrors Rust
+  // GenerationRequest.ref_images, #[serde(default)] → [] for old configs and
+  // gallery sidecars). Whether they reach the engine is the backend's call.
+  ref_images: string[];
 }
 
 // Mirrors Rust `GenDefaults` (src-tauri/src/types.rs). Recommended per-family
@@ -301,7 +305,7 @@ export const defaultRequest = (): GenerationRequest => ({
   model: { type: "single_file", path: "" }, prompt: "", negative_prompt: "",
   steps: 20, cfg_scale: 7.0, sampler: "euler_a",
   width: 512, height: 512, seed: -1, batch_count: 1,
-  output_format: "png", model_id: null, loras: [],
+  output_format: "png", model_id: null, loras: [], ref_images: [],
 });
 
 export const SAMPLERS: { value: Sampler; label: string }[] = [

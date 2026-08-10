@@ -200,6 +200,14 @@ pub struct GenerationRequest {
     /// engine command line is byte-identical to a pre-LoRA run.
     #[serde(default)]
     pub loras: Vec<LoraSelection>,
+    /// Reference images for instruction editing, in order, as absolute paths.
+    /// The user's *intent* — whether it is honoured is the caller's decision
+    /// (see `EngineOptions::ref_images`), because only the caller knows whether
+    /// the selected model belongs to an edit family. `#[serde(default)]` so
+    /// every pre-feature config and gallery sidecar still loads; empty means
+    /// the engine command line is byte-identical to a pre-edit run.
+    #[serde(default)]
+    pub ref_images: Vec<String>,
 }
 
 impl Default for GenerationRequest {
@@ -218,6 +226,7 @@ impl Default for GenerationRequest {
             output_format: OutputFormat::default(),
             model_id: None,
             loras: Vec::new(),
+            ref_images: Vec::new(),
         }
     }
 }
@@ -810,6 +819,18 @@ mod tests {
         }"#;
         let req: GenerationRequest = serde_json::from_str(json).unwrap();
         assert!(req.loras.is_empty());
+    }
+
+    #[test]
+    fn request_without_a_ref_images_key_deserializes_to_an_empty_list() {
+        let json = r#"{
+            "model": {"type":"single_file","path":"/m/x.safetensors"},
+            "prompt": "a cat", "negative_prompt": "", "steps": 20, "cfg_scale": 7.0,
+            "sampler": "euler_a", "width": 512, "height": 512, "seed": -1,
+            "batch_count": 1
+        }"#;
+        let req: GenerationRequest = serde_json::from_str(json).expect("old sidecars still load");
+        assert!(req.ref_images.is_empty());
     }
 
     #[test]

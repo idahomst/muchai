@@ -466,6 +466,9 @@ pub async fn generate(
         preview_path: preview.as_ref().map(|p| p.to_string_lossy().into_owned()),
         weight_type,
         lora_dir,
+        // Deciding this from the resolved model's family is a later task; for
+        // now the gate stays closed so no ref image can reach the engine.
+        ref_images: false,
     };
 
     // Run the (blocking) engine on a worker thread so the async command yields.
