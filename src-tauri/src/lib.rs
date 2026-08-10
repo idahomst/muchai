@@ -13,6 +13,7 @@ mod engine_release;
 mod fit;
 mod gallery;
 mod hf;
+mod imagedim;
 mod library;
 mod lora_detect;
 mod loras;
