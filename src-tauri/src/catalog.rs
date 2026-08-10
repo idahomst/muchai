@@ -481,9 +481,17 @@ mod tests {
         // only ungated SD3.5 GGUFs (city96 lineage) decode to a degenerate
         // constant latent ("blue square") under the pinned engine, so we ship no
         // SD3.5 catalog entry. The sd3 recipe stays for manual multi-file adds.
-        for fam in ["sd15", "sdxl", "flux1", "flux2", "qwen-image", "z-image"] {
+        for fam in ["sd15", "sdxl", "flux1", "flux2", "qwen-image", "qwen-image-edit", "z-image"] {
             assert!(entries.iter().any(|e| e.family == fam), "family {fam} missing from catalog");
         }
+        // The edit entry must not carry its own `shared` overrides: those land
+        // in the model folder, un-pooled, and would duplicate the encoder the
+        // recipe already pools under shared/qwen-image.
+        let edit = entries
+            .iter()
+            .find(|e| e.family == "qwen-image-edit")
+            .expect("an edit entry ships");
+        assert!(edit.shared.is_empty(), "the edit entry's parts come from the recipe");
     }
 
     #[test]

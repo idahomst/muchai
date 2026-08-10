@@ -202,6 +202,21 @@
       "shared": [],
       "min_vram_mb": 12288,
       "recommended_vram_mb": 16384
+    },
+    {
+      "id": "qwen-image-edit-2511-q3ks",
+      "name": "Qwen-Image-Edit 2511 (GGUF Q3_K_S)",
+      "family": "qwen-image-edit",
+      "license": "Apache-2.0",
+      "source_url": "https://huggingface.co/unsloth/Qwen-Image-Edit-2511-GGUF",
+      "diffusion": {
+        "url": "https://huggingface.co/unsloth/Qwen-Image-Edit-2511-GGUF/resolve/main/qwen-image-edit-2511-Q3_K_S.gguf",
+        "filename": "qwen-image-edit-2511-Q3_K_S.gguf",
+        "size_bytes": 9218914912
+      },
+      "shared": [],
+      "min_vram_mb": 12288,
+      "recommended_vram_mb": 24576
     }
   ]
 }
