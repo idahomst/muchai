@@ -205,7 +205,13 @@
 </div>
 
 <style>
-  .section-hdr.first { margin-top: 8px; }
+  /* The dialog's only visual break used to be whatever border the first widget
+     in a section happened to draw, so Folders and Hardware looked divided and
+     Secrets, Engine and Appearance did not. The rule belongs to the header, so
+     every section is separated the same way. Scoped here: the same class is
+     used in ModelEditor and About, which are not sectioned lists. */
+  .section-hdr { border-top: 1px solid var(--border); padding-top: 18px; }
+  .section-hdr.first { margin-top: 8px; border-top: none; padding-top: 0; }
   .dlg-field.last { margin-bottom: 0; }
   .tip { font-size:12.5px; color:var(--text-muted); background:var(--card);
     border:1px solid var(--border); border-radius:var(--radius-sm);
