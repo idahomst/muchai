@@ -145,10 +145,7 @@ pub fn detect_best(filenames: &[String]) -> Option<(ModelRecipe, DetectedCompone
             (r, d)
         })
         .filter(|(r, d)| d.required_matched(r) > 0)
-        .max_by_key(|(r, d)| {
-            let required_total = r.roles.iter().filter(|s| s.required).count();
-            (d.required_matched(r) == required_total, d.required_matched(r), d.assignments.len())
-        })
+        .max_by_key(|(r, d)| (d.required_matched(r), d.assignments.len()))
 }
 
 fn role(role: ComponentRole, required: bool, patterns: &[&'static str]) -> RoleSpec {
@@ -275,7 +272,13 @@ pub fn recipes() -> Vec<ModelRecipe> {
             pool_family: "qwen-image",
             name: "Qwen-Image-Edit",
             roles: vec![
-                role(ComponentRole::Diffusion, true, &["qwen-image-edit", "qwen_image_edit", "qwen-image", "qwen"]),
+                // Deliberately narrow: NOT "qwen-image"/"qwen". The plain
+                // Qwen-Image family already claims those, and since
+                // "qwen-image" is a prefix of "qwen-image-edit", a broad
+                // pattern here makes an ordinary text-to-image Qwen file set
+                // tie with — and then out-rank — its own family. Only a
+                // filename that actually says "edit" is an edit model.
+                role(ComponentRole::Diffusion, true, &["qwen-image-edit", "qwen_image_edit", "qwen-edit", "qwen_edit"]),
                 role(ComponentRole::Llm, true, &["qwenvl", "qwen2.5", "qwen2_5", "qwen_2.5", "llm"]),
                 // Patterns ordered so the most specific wins `detect`'s
                 // longest-match rule: an mmproj file is also a "vision" file,
@@ -785,5 +788,35 @@ mod tests {
                 r.family
             );
         }
+    }
+
+    /// `qwen-image` is a prefix of `qwen-image-edit`, so the two recipes are one
+    /// careless pattern away from claiming each other's files. A plain
+    /// text-to-image Qwen set misdetected as an editor would demand an mmproj it
+    /// has no use for; an edit set misdetected as plain Qwen would drop the
+    /// vision tower and silently generate an unrelated picture. Pin both ways.
+    #[test]
+    fn qwen_edit_and_plain_qwen_do_not_claim_each_others_files() {
+        let plain = [
+            "qwen-image-2512-Q2_K.gguf".to_string(),
+            "Qwen2.5-VL-7B-Instruct.Q4_K_S.gguf".to_string(),
+            "qwen_image_vae.safetensors".to_string(),
+        ];
+        let (r, _) = detect_best(&plain).expect("a plain Qwen set is detectable");
+        assert_eq!(r.family, "qwen-image", "no mmproj in sight — this is not an editor");
+
+        let edit = [
+            "qwen-image-edit-2511-Q3_K_S.gguf".to_string(),
+            "Qwen2.5-VL-7B-Instruct.Q4_K_S.gguf".to_string(),
+            "Qwen2.5-VL-7B-Instruct-mmproj-BF16.gguf".to_string(),
+            "qwen_image_vae.safetensors".to_string(),
+        ];
+        let (r, d) = detect_best(&edit).expect("an edit set is detectable");
+        assert_eq!(r.family, "qwen-image-edit");
+        assert_eq!(
+            d.get(ComponentRole::LlmVision),
+            Some("Qwen2.5-VL-7B-Instruct-mmproj-BF16.gguf"),
+            "the mmproj must land in the vision slot, not the encoder's"
+        );
     }
 }
