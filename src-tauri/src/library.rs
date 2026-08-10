@@ -81,6 +81,21 @@ pub fn resolve_request_model(models_dir: &Path, request: &GenerationRequest) -> 
     }
 }
 
+/// The family of the managed model this request targets, re-read from
+/// `model.json` — the same single-source-of-truth rule `resolve_request_model`
+/// follows, so a family edited between selection and generation is honoured.
+///
+/// `None` for an ad-hoc request (`model_id: None` — a manual single-file pick
+/// or a replayed history item) and for a model that has since been deleted. A
+/// separate function rather than a wider `resolve_request_model` return type:
+/// every other caller wants only the `ModelRef`, and the two lookups are
+/// cheap (one `model.json` read each) and independent.
+#[allow(dead_code)] // wired in a later task that decides the ref_images gate.
+pub fn resolve_request_family(models_dir: &Path, request: &GenerationRequest) -> Option<String> {
+    let id = request.model_id.as_deref()?;
+    resolve_by_id(models_dir, id).map(|e| e.family)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -267,5 +282,43 @@ mod tests {
             ..Default::default()
         };
         assert!(resolve_request_model(&root, &req).is_err());
+    }
+
+    #[test]
+    fn a_managed_request_resolves_its_family_from_the_manifest() {
+        let root = std::env::temp_dir().join(format!("muchai-req-family-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let dir = root.join("model-a");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("diff.gguf"), b"x").unwrap();
+        let m = ModelManifest {
+            schema_version: 1,
+            id: "model-a".into(),
+            name: "Qwen Edit".into(),
+            family: "qwen-image-edit".into(),
+            source: ManifestSource::Local { original_path: "/x".into() },
+            components: ManifestComponents { diffusion_model: "diff.gguf".into(), ..Default::default() },
+            flags: ManifestFlags::default(),
+            recommended_settings: None,
+        };
+        manifest::save_to(&dir, &m).unwrap();
+
+        let mut req = GenerationRequest { model_id: Some("model-a".into()), ..Default::default() };
+        assert_eq!(resolve_request_family(&root, &req).as_deref(), Some("qwen-image-edit"));
+
+        req.model_id = None;
+        assert_eq!(
+            resolve_request_family(&root, &req),
+            None,
+            "an ad-hoc model has no manifest and therefore no family"
+        );
+
+        req.model_id = Some("model-gone".into());
+        assert_eq!(
+            resolve_request_family(&root, &req),
+            None,
+            "a deleted model resolves to no family, not to a stale one"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

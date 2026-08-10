@@ -9,6 +9,21 @@ use serde::{Deserialize, Serialize};
 pub const FAMILIES: &[&str] =
     &["sd15", "sdxl", "sd3", "flux1", "flux2", "qwen-image", "z-image"];
 
+/// Families whose models take a reference image and an instruction rather than
+/// a from-scratch prompt. A list rather than a suffix rule: `qwen-image-edit`
+/// has `qwen-image` as a prefix, and any prefix/suffix cleverness here ends up
+/// handing a reference image to a model that cannot use one.
+// Not yet called outside tests — `generate` starts consulting this in a later
+// task that decides the ref_images gate.
+#[allow(dead_code)]
+pub const EDIT_FAMILIES: &[&str] = &["qwen-image-edit"];
+
+/// True when models of this family are instruction editors.
+#[allow(dead_code)]
+pub fn is_edit_family(family: &str) -> bool {
+    EDIT_FAMILIES.contains(&family)
+}
+
 /// A typed slot in a split model, each wired to one engine flag.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -674,5 +689,13 @@ mod tests {
         // The two that have no recipe at all — the reason this list exists.
         assert!(FAMILIES.contains(&"sd15"));
         assert!(FAMILIES.contains(&"sdxl"));
+    }
+
+    #[test]
+    fn only_the_edit_families_can_take_a_reference_image() {
+        assert!(is_edit_family("qwen-image-edit"));
+        for f in ["sd15", "sdxl", "sd3", "flux1", "flux2", "qwen-image", "z-image", "custom", ""] {
+            assert!(!is_edit_family(f), "{f} is not an editing family");
+        }
     }
 }
