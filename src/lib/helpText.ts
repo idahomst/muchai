@@ -5,6 +5,8 @@ export const HELP = {
   // PromptPanel
   prompt:
     "Describe the image you want — subject, style, colors, mood. Be specific, e.g. 'a red fox in a snowy forest, watercolor'.",
+  instruction:
+    "Say what to CHANGE about the image, not what the finished picture contains. 'Make the sky stormy' works; 'a house under a stormy sky' will redraw the whole scene.",
   negativePrompt:
     "Things you DON'T want in the image (e.g. 'blurry, text, extra fingers'). Optional. It only works on models that use guidance — Stable Diffusion (1.5 / XL) and Qwen-Image. The fast 'turbo' models (FLUX, Z-Image) ignore it, so you can leave it empty for those.",
   // SettingsPanel
