@@ -187,7 +187,14 @@ pub struct EntryPlan {
 /// Per-entry `shared` overrides → model folder (not pooled).
 pub fn plan_entry_downloads(entry: &CatalogEntry, models_dir: &Path) -> EntryPlan {
     let model_dir = models_dir.join(&entry.id);
-    let shared_dir = models_dir.join("shared").join(&entry.family);
+    // Shared parts pool per *recipe*, not per entry family: an edit family
+    // reuses its base family's encoder and VAE rather than re-downloading them.
+    let pool = crate::recipes::recipes()
+        .into_iter()
+        .find(|r| r.family == entry.family)
+        .map(|r| r.pool_family.to_string())
+        .unwrap_or_else(|| entry.family.clone());
+    let shared_dir = models_dir.join("shared").join(&pool);
     let mut files = Vec::new();
 
     files.push(PlannedFile {
@@ -476,6 +483,39 @@ mod tests {
         // SD3.5 catalog entry. The sd3 recipe stays for manual multi-file adds.
         for fam in ["sd15", "sdxl", "flux1", "flux2", "qwen-image", "z-image"] {
             assert!(entries.iter().any(|e| e.family == fam), "family {fam} missing from catalog");
+        }
+    }
+
+    #[test]
+    fn an_edit_entry_pools_into_the_base_familys_directory() {
+        let entry = CatalogEntry {
+            id: "qwen-image-edit-2511-q3ks".into(),
+            name: "Qwen-Image-Edit 2511".into(),
+            family: "qwen-image-edit".into(),
+            license: "Apache-2.0".into(),
+            source_url: "https://huggingface.co/unsloth/Qwen-Image-Edit-2511-GGUF".into(),
+            diffusion: CatalogFile {
+                url: "https://h/qwen-image-edit-2511-Q3_K_S.gguf".into(),
+                filename: "qwen-image-edit-2511-Q3_K_S.gguf".into(),
+                size_bytes: 9_218_914_912,
+            },
+            shared: vec![],
+            min_vram_mb: 12288,
+            recommended_vram_mb: 24576,
+        };
+        let plan = plan_entry_downloads(&entry, Path::new("/models"));
+        let pooled: Vec<&Path> =
+            plan.files.iter().filter(|f| f.shared).map(|f| f.dest.as_path()).collect();
+        assert!(!pooled.is_empty(), "the edit recipe has shared components");
+        for dest in pooled {
+            assert!(
+                dest.starts_with("/models/shared/qwen-image"),
+                "{dest:?} must reuse the qwen-image pool, not create a new one"
+            );
+            assert!(
+                !dest.starts_with("/models/shared/qwen-image-edit"),
+                "{dest:?} re-downloads what the user already has"
+            );
         }
     }
 }

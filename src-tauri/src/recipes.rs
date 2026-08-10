@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 /// the `custom` recipe is not a base family. Keep in sync with
 /// `family_defaults` below and with `catalog::validate`.
 pub const FAMILIES: &[&str] =
-    &["sd15", "sdxl", "sd3", "flux1", "flux2", "qwen-image", "z-image"];
+    &["sd15", "sdxl", "sd3", "flux1", "flux2", "qwen-image", "qwen-image-edit", "z-image"];
 
 /// Families whose models take a reference image and an instruction rather than
 /// a from-scratch prompt. A list rather than a suffix rule: `qwen-image-edit`
@@ -63,6 +63,12 @@ pub struct SharedComponent {
 #[derive(Debug, Clone)]
 pub struct ModelRecipe {
     pub family: &'static str,
+    /// Directory under `models_dir/shared/` this family's shared components
+    /// pool into. Equal to `family` for every family that owns its parts.
+    /// `qwen-image-edit` sets `"qwen-image"`: it uses the identical Qwen2.5-VL
+    /// encoder and VAE, and pooling under its own id would re-download 4.7 GB
+    /// the user already has. Pinned by `only_the_edit_family_pools_somewhere_else`.
+    pub pool_family: &'static str,
     pub name: &'static str,
     pub roles: Vec<RoleSpec>,
     pub vae_format: Option<&'static str>,
@@ -119,8 +125,17 @@ pub fn detect(recipe: &ModelRecipe, filenames: &[String]) -> DetectedComponents 
     DetectedComponents { assignments }
 }
 
-/// Pick the family that best explains this file set: most required roles matched,
-/// then most total roles matched. None if no recipe matches any required role.
+/// Pick the family that best explains this file set: a recipe whose every
+/// required role is matched outranks one that is still missing a required
+/// role, then most required roles matched, then most total roles matched.
+/// None if no recipe matches any required role.
+///
+/// The completeness check matters once two recipes share a diffusion
+/// pattern: `qwen-image-edit`'s diffusion patterns include `"qwen-image"` (it
+/// has to recognise `qwen-image-edit-*.gguf`), so a plain Qwen-Image file set
+/// ties qwen-image-edit on required-matched count whenever no mmproj file is
+/// present — but qwen-image-edit is still missing its required
+/// `LlmVision` role, so it must lose the tie to the family it fully matches.
 pub fn detect_best(filenames: &[String]) -> Option<(ModelRecipe, DetectedComponents)> {
     recipes()
         .into_iter()
@@ -130,7 +145,10 @@ pub fn detect_best(filenames: &[String]) -> Option<(ModelRecipe, DetectedCompone
             (r, d)
         })
         .filter(|(r, d)| d.required_matched(r) > 0)
-        .max_by_key(|(r, d)| (d.required_matched(r), d.assignments.len()))
+        .max_by_key(|(r, d)| {
+            let required_total = r.roles.iter().filter(|s| s.required).count();
+            (d.required_matched(r) == required_total, d.required_matched(r), d.assignments.len())
+        })
 }
 
 fn role(role: ComponentRole, required: bool, patterns: &[&'static str]) -> RoleSpec {
@@ -143,6 +161,7 @@ pub fn recipes() -> Vec<ModelRecipe> {
     vec![
         ModelRecipe {
             family: "flux1",
+            pool_family: "flux1",
             name: "FLUX.1 (dev / schnell / krea)",
             roles: vec![
                 role(ComponentRole::Diffusion, true, &["flux1", "flux-1", "flux"]),
@@ -175,6 +194,7 @@ pub fn recipes() -> Vec<ModelRecipe> {
         },
         ModelRecipe {
             family: "sd3",
+            pool_family: "sd3",
             name: "Stable Diffusion 3 / 3.5",
             roles: vec![
                 role(ComponentRole::Diffusion, true, &["sd3", "sd_3", "stable-diffusion-3"]),
@@ -219,6 +239,7 @@ pub fn recipes() -> Vec<ModelRecipe> {
         },
         ModelRecipe {
             family: "qwen-image",
+            pool_family: "qwen-image",
             name: "Qwen-Image",
             roles: vec![
                 role(ComponentRole::Diffusion, true, &["qwen-image", "qwen_image", "qwen"]),
@@ -249,7 +270,52 @@ pub fn recipes() -> Vec<ModelRecipe> {
             ],
         },
         ModelRecipe {
+            family: "qwen-image-edit",
+            // Same Qwen2.5-VL encoder, same VAE as Qwen-Image — pool with it.
+            pool_family: "qwen-image",
+            name: "Qwen-Image-Edit",
+            roles: vec![
+                role(ComponentRole::Diffusion, true, &["qwen-image-edit", "qwen_image_edit", "qwen-image", "qwen"]),
+                role(ComponentRole::Llm, true, &["qwenvl", "qwen2.5", "qwen2_5", "qwen_2.5", "llm"]),
+                // Patterns ordered so the most specific wins `detect`'s
+                // longest-match rule: an mmproj file is also a "vision" file,
+                // and the encoder's own filename contains "qwen2.5", so the
+                // vision tower must out-specify both.
+                role(ComponentRole::LlmVision, true, &["mmproj", "llm_vision", "qwen2vl_vision", "vision"]),
+                role(ComponentRole::Vae, true, &["vae", "ae."]),
+            ],
+            vae_format: Some("auto"),
+            prediction: None,
+            shared: vec![
+                SharedComponent {
+                    // Byte-identical to the qwen-image entry above, and pooled
+                    // to the same path, so an existing install is reused rather
+                    // than re-fetched. Keep the two in sync.
+                    role: ComponentRole::Llm,
+                    url: "https://huggingface.co/mradermacher/Qwen2.5-VL-7B-Instruct-GGUF/resolve/main/Qwen2.5-VL-7B-Instruct.Q4_K_S.gguf",
+                    size_bytes: 4_457_767_936,
+                    filename: "Qwen2.5-VL-7B-Instruct.Q4_K_S.gguf",
+                },
+                SharedComponent {
+                    // The vision tower the plain qwen-image family has no use
+                    // for. BF16 because mmproj is small and quantising the
+                    // vision tower is where edit fidelity goes to die.
+                    role: ComponentRole::LlmVision,
+                    url: "https://huggingface.co/QuantStack/Qwen-Image-Edit-GGUF/resolve/main/mmproj/Qwen2.5-VL-7B-Instruct-mmproj-BF16.gguf",
+                    size_bytes: 1_354_163_040,
+                    filename: "Qwen2.5-VL-7B-Instruct-mmproj-BF16.gguf",
+                },
+                SharedComponent {
+                    role: ComponentRole::Vae,
+                    url: "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/vae/qwen_image_vae.safetensors",
+                    size_bytes: 253_806_246,
+                    filename: "qwen_image_vae.safetensors",
+                },
+            ],
+        },
+        ModelRecipe {
             family: "flux2",
+            pool_family: "flux2",
             name: "FLUX.2 (klein / dev)",
             roles: vec![
                 role(ComponentRole::Diffusion, true, &["flux2", "flux-2", "flux.2"]),
@@ -282,6 +348,7 @@ pub fn recipes() -> Vec<ModelRecipe> {
         },
         ModelRecipe {
             family: "z-image",
+            pool_family: "z-image",
             name: "Z-Image (Turbo)",
             roles: vec![
                 role(ComponentRole::Diffusion, true, &["z_image", "z-image", "zimage"]),
@@ -307,6 +374,7 @@ pub fn recipes() -> Vec<ModelRecipe> {
         },
         ModelRecipe {
             family: "custom",
+            pool_family: "custom",
             name: "Custom (assign files manually)",
             roles: vec![
                 role(ComponentRole::Diffusion, true, &[]),
@@ -365,6 +433,10 @@ pub fn family_defaults(family: &str, diffusion_filename: Option<&str>) -> Option
             }
         }
         "qwen-image" => Some(d(20, 2.5, Sampler::Euler, 1024, 1024)),
+        // Same sampler/steps/CFG as the base family. 1024×1024 is only the
+        // fallback: an edit run overrides width/height from the reference
+        // image's aspect ratio (see `imagedim::suggest_size`).
+        "qwen-image-edit" => Some(d(20, 2.5, Sampler::Euler, 1024, 1024)),
         "z-image" => Some(d(8, 1.0, Sampler::Euler, 1024, 1024)),
         "sdxl" => Some(d(28, 7.0, Sampler::EulerA, 1024, 1024)),
         "sd15" => Some(d(20, 7.0, Sampler::EulerA, 512, 512)),
@@ -565,6 +637,10 @@ mod tests {
         assert_eq!((qwen.steps, qwen.cfg_scale), (20, 2.5));
         assert_eq!(qwen.sampler, crate::types::Sampler::Euler);
         assert_eq!((qwen.width, qwen.height), (1024, 1024));
+        let edit = family_defaults("qwen-image-edit", None).unwrap();
+        assert_eq!((edit.steps, edit.cfg_scale), (20, 2.5));
+        assert_eq!(edit.sampler, crate::types::Sampler::Euler);
+        assert_eq!((edit.width, edit.height), (1024, 1024));
         let sdxl = family_defaults("sdxl", None).unwrap();
         assert_eq!((sdxl.steps, sdxl.sampler, (sdxl.width, sdxl.height)),
                    (28, crate::types::Sampler::EulerA, (1024, 1024)));
@@ -696,6 +772,18 @@ mod tests {
         assert!(is_edit_family("qwen-image-edit"));
         for f in ["sd15", "sdxl", "sd3", "flux1", "flux2", "qwen-image", "z-image", "custom", ""] {
             assert!(!is_edit_family(f), "{f} is not an editing family");
+        }
+    }
+
+    #[test]
+    fn only_the_edit_family_pools_somewhere_else() {
+        for r in recipes() {
+            let expected = if r.family == "qwen-image-edit" { "qwen-image" } else { r.family };
+            assert_eq!(
+                r.pool_family, expected,
+                "{} pools its shared components under the wrong directory",
+                r.family
+            );
         }
     }
 }
