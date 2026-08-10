@@ -18,7 +18,8 @@ HuggingFace or Civitai wouldn’t be so easy, and that it places greater
 demands on users in terms of their knowledge of the models. However, a model 
 catalog could be helpful to get started.
 
-Support for LoRA and ControlNet is planned ;)
+Support for LoRA and instruction-based editing has since landed. ControlNet is
+still planned ;)
 
 
 ## Features
@@ -26,6 +27,9 @@ Support for LoRA and ControlNet is planned ;)
 - **Text-to-image generation**, fully local and offline.
 - **Model library with curated downloads** — hardware-aware starter models rated
   for your VRAM, plus paste-a-URL for your own.
+- **Instruction editing** — drop in a photo, say what to change ("make the sky
+  stormy"), and get that change rather than a fresh picture. Edit the result
+  again to keep refining.
 - **Live preview** — watch a rough draft form as it generates, so you can cancel
   early when the composition is wrong.
 - **Runs on GPU or CPU** — Vulkan backend across NVIDIA / AMD / Intel, with a CPU
