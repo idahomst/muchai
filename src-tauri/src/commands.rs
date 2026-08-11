@@ -2111,9 +2111,19 @@ mod tests {
     fn auto_uma_budget_is_never_below_the_floor() {
         // The exact figure depends on the machine's RAM — budget.rs pins the table
         // down. What matters here is that the command reads real memory and honours
-        // the floor even if sysinfo reports nothing.
+        // the floor even if sysinfo reports nothing. The floor alone would still
+        // pass if sysinfo reported 0 memory, so an upper bound is asserted too:
+        // read RAM independently (a second sysinfo probe, not the command's own
+        // conversion) and check the budget never exceeds it, which would catch a
+        // units bug — a stray or missing /1024/1024, or raw bytes passed as MB —
+        // that a floor-only check can't.
         let mb = super::auto_uma_budget_mb();
         assert!(mb >= crate::sysmon::budget::MIN_BUDGET_MB, "got {mb} MB");
+
+        let mut sys = sysinfo::System::new();
+        sys.refresh_memory();
+        let ram_total_mb = sys.total_memory() / 1024 / 1024;
+        assert!(mb <= ram_total_mb, "got {mb} MB, machine has {ram_total_mb} MB");
     }
 
     fn test_state() -> AppState {
