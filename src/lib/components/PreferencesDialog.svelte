@@ -123,15 +123,21 @@
 
   // Optimistic save of the shared-memory budget, on the same serialized chain as
   // the tokens and toggles. Blank — or anything that isn't a positive number —
-  // means auto, stored as null rather than a silent 0.
-  function saveUmaBudget(raw: string) {
+  // means auto, stored as null rather than a silent 0. `target` is the input
+  // element itself: the `value={umaBudget}` binding is one-way and only touches
+  // the DOM when the expression changes, so when normalizing lands back on the
+  // already-stored value (e.g. rejected text, or two typings that round to the
+  // same GB) there is no state change to clear what's on screen — set the DOM
+  // directly so a rejected entry never lingers as if it were in force.
+  function saveUmaBudget(raw: string, target: HTMLInputElement) {
     saveChain = saveChain.then(async () => {
       const cur = $settings;
       if (!cur) return;
       const gb = Number(raw.trim().replace(",", "."));
       const value = raw.trim() === "" || !Number.isFinite(gb) || gb <= 0 ? null : Math.round(gb * 1024);
       if (cur.uma_budget_mb === value) {
-        umaBudget = mbToGb(value); // still normalize what was typed
+        umaBudget = mbToGb(value);
+        target.value = umaBudget;
         return;
       }
       const next = { ...cur, uma_budget_mb: value };
@@ -140,9 +146,11 @@
       try {
         await setSettings(next);
         umaBudget = mbToGb(value);
+        target.value = umaBudget;
       } catch (e) {
         settings.set({ ...($settings ?? cur), uma_budget_mb: cur.uma_budget_mb });
         umaBudget = mbToGb(cur.uma_budget_mb ?? null);
+        target.value = umaBudget;
         error = String(e);
       }
     });
@@ -225,7 +233,7 @@
           value={umaBudget}
           disabled={!$settings}
           placeholder={autoBudget ? `Auto — ${autoBudget} GB` : "Auto"}
-          onchange={(e) => saveUmaBudget(e.currentTarget.value)} />
+          onchange={(e) => saveUmaBudget(e.currentTarget.value, e.currentTarget)} />
         <p class="hint">{umaHint}</p>
       </div>
       <div class="dlg-field precision">
