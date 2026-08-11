@@ -127,8 +127,12 @@ export const addLocalLora = (path: string, name: string, family: string) =>
 export const addUrlLora = (url: string, name: string) =>
   invoke<AddedLora>("add_url_lora", { url, name });
 
-export const editLora = (id: string, displayName: string, family: string) =>
-  invoke<LoraInfo>("edit_lora", { id, displayName, family });
+export const editLora = (
+  id: string,
+  displayName: string,
+  family: string,
+  baseModel: string,
+) => invoke<LoraInfo>("edit_lora", { id, displayName, family, baseModel });
 
 export const deleteLora = (id: string) => invoke<void>("delete_lora", { id });
 

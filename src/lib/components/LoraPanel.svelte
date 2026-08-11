@@ -130,6 +130,7 @@
   let editingId = $state<string | null>(null);
   let editName = $state("");
   let editFamily = $state("");
+  let editBaseModel = $state("");
   let confirmingDelete = $state(false);
   let busy = $state(false);
   let error = $state<string | null>(null);
@@ -138,6 +139,7 @@
     editingId = editingId === l.id ? null : l.id;
     editName = l.display_name;
     editFamily = l.family;
+    editBaseModel = l.base_model;
     confirmingDelete = false;
     error = null;
   }
@@ -145,7 +147,7 @@
     busy = true;
     error = null;
     try {
-      await editLora(l.id, editName, editFamily);
+      await editLora(l.id, editName, editFamily, editBaseModel);
       await refreshLoras();
       editingId = null;
     } catch (e) {
@@ -262,6 +264,15 @@
               <option value="">Unknown</option>
               {#each families as f}<option value={f}>{f}</option>{/each}
             </select>
+            <!-- Free text on purpose. It is a note to yourself, shown verbatim
+                 and never matched against anything, so anything that helps you
+                 recognise the right base model is a valid value. Civitai fills
+                 it at add-time; a local file or an older entry starts empty. -->
+            <input
+              class="text"
+              bind:value={editBaseModel}
+              aria-label="Base model note"
+              placeholder="Base model — e.g. Flux.2 Klein 4B" />
             <!-- The pool filename is the engine's identity for this LoRA and is
                  immutable. Showing it here is how the user finds out an add was
                  auto-suffixed after a name collision. -->

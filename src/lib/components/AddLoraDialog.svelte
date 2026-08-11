@@ -49,7 +49,10 @@
     busy = true;
     error = null;
     try {
-      await editLora(p.lora.id, p.lora.display_name, pendingFamily);
+      // Only the family is being confirmed here. The name and the base-model
+      // note are passed back unchanged so this step cannot quietly erase what
+      // the source already told us.
+      await editLora(p.lora.id, p.lora.display_name, pendingFamily, p.lora.base_model);
       await refreshLoras();
       onClose();
     } catch (e) {

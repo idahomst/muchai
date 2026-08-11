@@ -255,6 +255,7 @@ pub fn rename(
     id: &str,
     display_name: &str,
     family: &str,
+    base_model: &str,
 ) -> Result<LoraInfo, String> {
     let display_name = display_name.trim();
     if display_name.is_empty() {
@@ -269,6 +270,11 @@ pub fn rename(
             .ok_or_else(|| format!("unknown LoRA {id}"))?;
         e.display_name = display_name.to_string();
         e.family = family.trim().to_string();
+        // Trimmed but otherwise verbatim, and allowed to be empty. This is the
+        // source's own label shown to a human, never matched against anything,
+        // so normalising it would destroy the very detail that makes it useful
+        // (a "Klein 4B" that reads "flux2" tells the user nothing).
+        e.base_model = base_model.trim().to_string();
         e.clone()
     };
     index.schema_version = INDEX_SCHEMA_VERSION;
@@ -564,7 +570,7 @@ mod tests {
         // saved gallery item and the persisted last_request.
         let dir = tmp("rename");
         pool_with(&dir, &["film-grain"]);
-        let updated = rename(&dir, "lora-film-grain", "Film Grain v2", "flux1").unwrap();
+        let updated = rename(&dir, "lora-film-grain", "Film Grain v2", "flux1", "").unwrap();
         assert_eq!(updated.display_name, "Film Grain v2");
         assert_eq!(updated.family, "flux1");
         assert_eq!(updated.name, "film-grain");
@@ -576,7 +582,41 @@ mod tests {
     fn rename_rejects_an_empty_display_name() {
         let dir = tmp("rename-empty");
         pool_with(&dir, &["film-grain"]);
-        assert!(rename(&dir, "lora-film-grain", "   ", "sdxl").is_err());
+        assert!(rename(&dir, "lora-film-grain", "   ", "sdxl", "").is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rename_edits_the_base_model_label_in_place() {
+        // The whole point of the field: a LoRA added before `base_model` existed,
+        // or added from a local file, carries "" and could otherwise only be
+        // annotated by deleting it and re-adding from the source URL.
+        let dir = tmp("rename-basemodel");
+        pool_with(&dir, &["film-grain"]);
+        assert_eq!(list(&dir)[0].base_model, "SDXL 1.0", "the fixture starts labelled");
+
+        let updated =
+            rename(&dir, "lora-film-grain", "Film Grain", "flux2", "  Flux.2 Klein 4B  ").unwrap();
+        assert_eq!(updated.base_model, "Flux.2 Klein 4B", "surrounding space is trimmed");
+        assert_eq!(list(&dir)[0].base_model, "Flux.2 Klein 4B", "and it survives a reload");
+
+        // Clearing it is allowed — an unlabelled LoRA is a legitimate state, and
+        // a wrong label is worse than none.
+        let cleared = rename(&dir, "lora-film-grain", "Film Grain", "flux2", "").unwrap();
+        assert_eq!(cleared.base_model, "");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rename_keeps_the_base_model_verbatim_rather_than_normalising_it() {
+        // It is the source's own string, shown to a human and never matched
+        // against anything. Case and punctuation are the signal that lets
+        // someone tell a 4B LoRA from a 9B one.
+        let dir = tmp("rename-verbatim");
+        pool_with(&dir, &["film-grain"]);
+        let updated =
+            rename(&dir, "lora-film-grain", "Film Grain", "", "SDXL 1.0 / Illustrious").unwrap();
+        assert_eq!(updated.base_model, "SDXL 1.0 / Illustrious");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
