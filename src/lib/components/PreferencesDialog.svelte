@@ -160,7 +160,20 @@
   // is different from a discrete card being selected.
   const umaHint = $derived.by(() => {
     const gpu = $sysStats?.gpu ?? null;
-    if (gpu?.shared) return "In force: the selected device shares system memory.";
+    if (gpu?.shared) {
+      // An override is stored exactly as typed but clamped to [1 GB, installed
+      // RAM] when read, so the field and the monitor can disagree. The monitor's
+      // total *is* the clamped figure — name it here rather than leave a rejected
+      // number looking like it is in force.
+      const set = $settings?.uma_budget_mb ?? null;
+      const live = gpu.vram_total_mb;
+      if (set !== null && live !== null && live !== set) {
+        return live < set
+          ? `In force: ${mbToGb(live)} GB — clamped to installed memory.`
+          : `In force: ${mbToGb(live)} GB — raised to the smallest usable budget.`;
+      }
+      return "In force: the selected device shares system memory.";
+    }
     if (gpu) return "Ignored right now — the selected device has memory of its own.";
     return "Used only while a device that shares system memory is selected.";
   });
