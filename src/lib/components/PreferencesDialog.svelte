@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { settings, engineUpdateTag } from "$lib/stores";
-  import { setSettings } from "$lib/api";
+  import { settings, engineUpdateTag, sysStats } from "$lib/stores";
+  import { setSettings, autoUmaBudgetMb } from "$lib/api";
   import { LOAD_PRECISION_OPTIONS, type LoadPrecision } from "$lib/types";
   import ModelFolders from "./ModelFolders.svelte";
   import GalleryLocation from "./GalleryLocation.svelte";
@@ -16,6 +16,19 @@
   let showHf = $state(false);
   let showCivitai = $state(false);
   let error = $state<string | null>(null);
+
+  // The config stores MB; this field talks GB, the unit model sizes and the
+  // monitor row are quoted in. Seeded once on mount, like the token fields.
+  const mbToGb = (mb: number | null) => (mb === null ? "" : (mb / 1024).toFixed(1));
+  let umaBudget = $state(mbToGb($settings?.uma_budget_mb ?? null));
+  // The auto figure for this machine, for the placeholder. Fetched rather than
+  // recomputed here so the 70%-of-RAM rule lives in exactly one place.
+  let autoBudget = $state<string | null>(null);
+  $effect(() => {
+    autoUmaBudgetMb()
+      .then((mb) => (autoBudget = mbToGb(mb)))
+      .catch(() => (autoBudget = null));
+  });
 
   // Writes are serialized through this promise chain so two token fields saved in
   // quick succession (the first-run case: entering HF + Civitai together) can't
@@ -107,6 +120,42 @@
   const precisionHint = $derived(
     LOAD_PRECISION_OPTIONS.find((o) => o.value === ($settings?.load_precision ?? "auto"))?.hint ?? ""
   );
+
+  // Optimistic save of the shared-memory budget, on the same serialized chain as
+  // the tokens and toggles. Blank — or anything that isn't a positive number —
+  // means auto, stored as null rather than a silent 0.
+  function saveUmaBudget(raw: string) {
+    saveChain = saveChain.then(async () => {
+      const cur = $settings;
+      if (!cur) return;
+      const gb = Number(raw.trim().replace(",", "."));
+      const value = raw.trim() === "" || !Number.isFinite(gb) || gb <= 0 ? null : Math.round(gb * 1024);
+      if (cur.uma_budget_mb === value) {
+        umaBudget = mbToGb(value); // still normalize what was typed
+        return;
+      }
+      const next = { ...cur, uma_budget_mb: value };
+      settings.set(next);
+      error = null;
+      try {
+        await setSettings(next);
+        umaBudget = mbToGb(value);
+      } catch (e) {
+        settings.set({ ...($settings ?? cur), uma_budget_mb: cur.uma_budget_mb });
+        umaBudget = mbToGb(cur.uma_budget_mb ?? null);
+        error = String(e);
+      }
+    });
+  }
+
+  // Three states, not two: no GPU row at all (CPU selected, or stats not in yet)
+  // is different from a discrete card being selected.
+  const umaHint = $derived.by(() => {
+    const gpu = $sysStats?.gpu ?? null;
+    if (gpu?.shared) return "In force: the selected device shares system memory.";
+    if (gpu) return "Ignored right now — the selected device has memory of its own.";
+    return "Used only while a device that shares system memory is selected.";
+  });
 </script>
 
 <div class="modal-backdrop" onclick={(e) => { if (e.target === e.currentTarget) onclose(); }} role="presentation">
@@ -170,6 +219,15 @@
         <span class="check-box"></span>
         <span>Live preview <em>— rough draft while generating, cancel early</em></span>
       </label>
+      <div class="dlg-field uma">
+        <p class="microlabel">Shared-memory budget (GB)</p>
+        <input class="dlg-input" inputmode="decimal"
+          value={umaBudget}
+          disabled={!$settings}
+          placeholder={autoBudget ? `Auto — ${autoBudget} GB` : "Auto"}
+          onchange={(e) => saveUmaBudget(e.currentTarget.value)} />
+        <p class="hint">{umaHint}</p>
+      </div>
       <div class="dlg-field precision">
         <p class="microlabel">Load precision</p>
         <select class="dlg-select"
@@ -223,6 +281,7 @@
   .hint { font-size:11.5px; color:var(--text-muted); margin:5px 0 0; }
   .check { margin-top:14px; }
   .dlg-field.precision { margin-top:14px; margin-bottom:0; }
+  .dlg-field.uma { margin-top:14px; margin-bottom:0; }
   .check em { color:var(--text-muted); font-style:normal; }
   .prefrow { display:flex; align-items:center; gap:12px; padding:10px 0; }
   .prefrow.theme-row { padding-top:0; }
