@@ -1316,6 +1316,17 @@ pub fn disk_space(state: State<AppState>) -> Option<u64> {
     crate::diskspace::available_bytes(std::path::Path::new(&models_dir))
 }
 
+/// The auto memory budget for this machine, ignoring any override — what the
+/// Preferences field shows as its placeholder. Deliberately not read from
+/// `sysStats.gpu`: that total already reflects an override once one is set, and is
+/// absent on a discrete-only or CPU-only machine, where the field is still shown.
+#[tauri::command]
+pub fn auto_uma_budget_mb() -> u64 {
+    let mut sys = sysinfo::System::new();
+    sys.refresh_memory();
+    crate::sysmon::budget::uma_budget_mb(sys.total_memory() / 1024 / 1024, None)
+}
+
 /// Pre-flight for a catalog install: what it needs vs. what is free.
 /// `free_bytes` is `None` when the probe failed, in which case `ok` is `true` —
 /// an unmeasurable disk must not block the user.
@@ -2094,6 +2105,15 @@ mod tests {
             std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
         p
+    }
+
+    #[test]
+    fn auto_uma_budget_is_never_below_the_floor() {
+        // The exact figure depends on the machine's RAM — budget.rs pins the table
+        // down. What matters here is that the command reads real memory and honours
+        // the floor even if sysinfo reports nothing.
+        let mb = super::auto_uma_budget_mb();
+        assert!(mb >= crate::sysmon::budget::MIN_BUDGET_MB, "got {mb} MB");
     }
 
     fn test_state() -> AppState {

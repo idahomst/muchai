@@ -240,6 +240,7 @@ pub fn run() {
             commands::edit_model,
             commands::delete_model_entry,
             commands::disk_space,
+            commands::auto_uma_budget_mb,
             commands::check_catalog_space,
             commands::list_reclaimable,
             commands::trash_dir,

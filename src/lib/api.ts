@@ -96,6 +96,10 @@ export const recommendedSettings = (id: string) =>
 /** Free bytes where models are stored; null when the probe failed. */
 export const diskSpace = () => invoke<number | null>("disk_space");
 
+/** Memory budget assumed for a shared-memory GPU, before any override — the
+ *  Preferences placeholder. */
+export const autoUmaBudgetMb = () => invoke<number>("auto_uma_budget_mb");
+
 /** Pre-flight a catalog install against free disk space. */
 export const checkCatalogSpace = (catalogId: string) =>
   invoke<SpaceCheck>("check_catalog_space", { catalogId });
