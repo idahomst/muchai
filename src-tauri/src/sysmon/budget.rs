@@ -11,20 +11,14 @@
 /// ¾ of RAM as its device heap on integrated parts, Apple's
 /// `recommendedMaxWorkingSetSize` is ~75%, and `amdgpu`'s GTT limit defaults to
 /// about half.
-// Only the test module uses this today; `gather` and the Tauri command wired up
-// in later tasks are the real callers. Without `allow`, clippy's dead-code lint
-// fires because it checks the non-test build of the lib target.
-#[allow(dead_code)]
 pub const UMA_SHARE_PCT: u64 = 70;
 
 /// Held back for the OS, the desktop and MuchAI itself. Only binds below ~13 GB of
 /// RAM, where a flat percentage over-promises.
-#[allow(dead_code)]
 pub const HOST_RESERVE_MB: u64 = 4096;
 
 /// Never report zero: a zero total makes `catalog::rate_entry` fall through to its
 /// whole-RAM fallback, which is *more* generous than the budget it replaced.
-#[allow(dead_code)]
 pub const MIN_BUDGET_MB: u64 = 1024;
 
 /// The memory budget for a unified-memory device, in MB.
@@ -32,7 +26,6 @@ pub const MIN_BUDGET_MB: u64 = 1024;
 /// `override_mb` replaces the whole computation, clamped to
 /// `[MIN_BUDGET_MB, ram_total_mb]`, so a hand-edited config cannot produce a
 /// nonsensical budget. `None` means auto: `min(ram * 70%, ram - 4 GB)`, floored.
-#[allow(dead_code)]
 pub fn uma_budget_mb(ram_total_mb: u64, override_mb: Option<u64>) -> u64 {
     if let Some(v) = override_mb {
         // max() on the upper bound so the clamp cannot invert when RAM reads

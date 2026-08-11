@@ -51,6 +51,8 @@ pub fn resolve_target(selection: Option<GpuSelection>, devices: &[GpuDevice]) ->
             .expect("validate_gpu_selection guarantees the device exists");
         return match device.kind {
             DeviceKind::Cpu => Target::None,
+            // Only `Integrated` denotes a device whose memory comes from system
+            // RAM; every other non-CPU kind (Discrete, Other) has its own pool.
             kind => Target::Device { name: device.name.clone(), uma: kind == DeviceKind::Integrated },
         };
     }
@@ -75,6 +77,9 @@ pub fn name_matches(candidate: &str, target: &str) -> bool {
 /// match the returned `name` is overwritten with the selected display name, so the
 /// monitor shows the familiar Vulkan name while the live numbers come from the
 /// provider.
+///
+/// Deliberately blind to `target`'s `uma` flag: matching is by name only, and
+/// substituting the memory budget for a UMA device is `gather`'s job, not this one.
 pub fn select_gpu(gpus: &[GpuStats], target: &Target) -> Option<GpuStats> {
     match target {
         Target::None => None,
@@ -87,7 +92,19 @@ pub fn select_gpu(gpus: &[GpuStats], target: &Target) -> Option<GpuStats> {
 
 /// Gather CPU/RAM via sysinfo, collect GPU stats from every provider, and pick the
 /// one matching `target`.
-pub fn gather(sys: &mut System, providers: &[Box<dyn GpuProvider>], target: &Target) -> SystemStats {
+///
+/// For a unified-memory target the row is *synthesised* rather than selected: the
+/// device has no VRAM pool to read, so its total comes from `budget::uma_budget_mb`
+/// (see `uma_override_mb`, the user's Preferences value). Whatever the provider did
+/// manage to read — busy%, GTT used — is carried across. This is the only place
+/// that knows whether a total came from the device or from the budget, which is
+/// what `GpuStats::shared` records.
+pub fn gather(
+    sys: &mut System,
+    providers: &[Box<dyn GpuProvider>],
+    target: &Target,
+    uma_override_mb: Option<u64>,
+) -> SystemStats {
     sys.refresh_cpu_usage();
     sys.refresh_memory();
     let cpu_pct = sys.global_cpu_usage();
@@ -102,7 +119,25 @@ pub fn gather(sys: &mut System, providers: &[Box<dyn GpuProvider>], target: &Tar
             for p in providers {
                 all.extend(p.probe());
             }
-            select_gpu(&all, target)
+            match target {
+                // A unified-memory device may match no provider at all (an Intel
+                // iGPU publishes nothing in sysfs; a DGX Spark has no provider
+                // here), so the row is built from the target rather than found.
+                Target::Device { name, uma: true } => {
+                    let base = select_gpu(&all, target);
+                    Some(GpuStats {
+                        name: name.clone(),
+                        utilization_pct: base.as_ref().and_then(|b| b.utilization_pct),
+                        // GTT used is what a shared device actually consumes; the
+                        // amdgpu VRAM figures describe the BIOS carve-out only.
+                        vram_used_mb: base.as_ref().and_then(|b| b.shared_used_mb),
+                        vram_total_mb: Some(budget::uma_budget_mb(ram_total_mb, uma_override_mb)),
+                        shared_used_mb: None,
+                        shared: true,
+                    })
+                }
+                _ => select_gpu(&all, target),
+            }
         }
     };
     SystemStats {
@@ -127,7 +162,7 @@ mod tests {
     fn gather_with_no_providers_reports_cpu_ram_and_no_gpu() {
         let mut sys = System::new();
         let providers: Vec<Box<dyn GpuProvider>> = Vec::new();
-        let stats = gather(&mut sys, &providers, &Target::None);
+        let stats = gather(&mut sys, &providers, &Target::None, None);
         assert!(stats.gpu.is_none());
         assert!(stats.ram_total_mb > 0);
         assert!(stats.ram_used_mb <= stats.ram_total_mb);
@@ -148,6 +183,105 @@ mod tests {
             shared_used_mb: None,
             shared: false,
         }
+    }
+
+    /// A provider that reports a fixed list and counts how often it was asked.
+    struct FakeProvider {
+        gpus: Vec<GpuStats>,
+        probes: std::rc::Rc<std::cell::Cell<u32>>,
+    }
+
+    impl GpuProvider for FakeProvider {
+        fn probe(&self) -> Vec<GpuStats> {
+            self.probes.set(self.probes.get() + 1);
+            self.gpus.clone()
+        }
+    }
+
+    fn fake(gpus: Vec<GpuStats>) -> (Vec<Box<dyn GpuProvider>>, std::rc::Rc<std::cell::Cell<u32>>) {
+        let probes = std::rc::Rc::new(std::cell::Cell::new(0));
+        let providers: Vec<Box<dyn GpuProvider>> = vec![Box::new(FakeProvider { gpus, probes: probes.clone() })];
+        (providers, probes)
+    }
+
+    #[test]
+    fn gather_uma_target_without_a_provider_match_synthesises_a_row() {
+        // The Intel iGPU case: no provider reports it, and today the whole GPU row
+        // vanishes. The row must be synthesised from the target name alone.
+        let mut sys = System::new();
+        let (providers, _) = fake(vec![stat("NVIDIA GeForce RTX 3060")]);
+        let target = Target::Device { name: "Intel(R) UHD Graphics 770 (ADL-S GT1)".into(), uma: true };
+        let stats = gather(&mut sys, &providers, &target, None);
+        let gpu = stats.gpu.expect("a UMA target always yields a row");
+        assert_eq!(gpu.name, "Intel(R) UHD Graphics 770 (ADL-S GT1)");
+        assert_eq!(gpu.vram_total_mb, Some(budget::uma_budget_mb(stats.ram_total_mb, None)));
+        assert_eq!(gpu.vram_used_mb, None);
+        assert_eq!(gpu.utilization_pct, None);
+        assert_eq!(gpu.shared_used_mb, None);
+        assert!(gpu.shared);
+    }
+
+    #[test]
+    fn gather_uma_target_with_a_match_promotes_gtt_used_over_the_carve_out() {
+        // The AMD APU case: mem_info_vram_total is the BIOS carve-out and must be
+        // replaced by the budget, while busy% and GTT-used pass through.
+        let mut sys = System::new();
+        let apu = GpuStats {
+            name: "AMD".into(),
+            utilization_pct: Some(71),
+            vram_used_mb: Some(128),
+            vram_total_mb: Some(512), // carve-out
+            shared_used_mb: Some(6400),
+            shared: false,
+        };
+        let (providers, _) = fake(vec![apu]);
+        let target = Target::Device { name: "AMD Radeon 890M".into(), uma: true };
+        let stats = gather(&mut sys, &providers, &target, None);
+        let gpu = stats.gpu.expect("a UMA target always yields a row");
+        assert_eq!(gpu.name, "AMD Radeon 890M");
+        assert_eq!(gpu.vram_total_mb, Some(budget::uma_budget_mb(stats.ram_total_mb, None)));
+        assert_eq!(gpu.vram_used_mb, Some(6400), "GTT used, not the 128 MB carve-out use");
+        assert_eq!(gpu.utilization_pct, Some(71));
+        assert_eq!(gpu.shared_used_mb, None, "promoted into vram_used_mb, not duplicated");
+        assert!(gpu.shared);
+    }
+
+    #[test]
+    fn gather_uma_override_changes_only_the_total() {
+        let mut sys = System::new();
+        let (providers, _) = fake(vec![]);
+        let target = Target::Device { name: "Intel".into(), uma: true };
+        let stats = gather(&mut sys, &providers, &target, Some(6000));
+        let gpu = stats.gpu.expect("a UMA target always yields a row");
+        assert_eq!(gpu.vram_total_mb, Some(budget::uma_budget_mb(stats.ram_total_mb, Some(6000))));
+        assert_eq!(gpu.name, "Intel");
+        assert!(gpu.shared);
+    }
+
+    #[test]
+    fn gather_discrete_target_is_untouched_by_the_budget() {
+        // Regression guard: a discrete card must report exactly what the provider
+        // said, with shared: false, no matter what the budget would have been.
+        let mut sys = System::new();
+        let (providers, _) = fake(vec![stat("NVIDIA GeForce RTX 3060")]);
+        let target = Target::Device { name: "NVIDIA GeForce RTX 3060".into(), uma: false };
+        let stats = gather(&mut sys, &providers, &target, Some(6000));
+        let gpu = stats.gpu.expect("the provider reports this card");
+        assert_eq!(gpu.vram_total_mb, Some(200));
+        assert_eq!(gpu.vram_used_mb, Some(100));
+        assert_eq!(gpu.utilization_pct, Some(7));
+        assert!(!gpu.shared);
+    }
+
+    #[test]
+    fn gather_none_target_does_not_probe_providers() {
+        // The stats loop runs every second for the life of the app; enumerating
+        // NVML and read_dir-ing sysfs only to discard the result is waste.
+        let mut sys = System::new();
+        let (providers, probes) = fake(vec![stat("NVIDIA")]);
+        let stats = gather(&mut sys, &providers, &Target::None, None);
+        assert!(stats.gpu.is_none());
+        assert_eq!(probes.get(), 0);
     }
 
     #[test]
