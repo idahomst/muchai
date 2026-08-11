@@ -1635,20 +1635,25 @@ pub async fn add_url_lora(
     }
 }
 
-/// Change a LoRA's label and family. Its pool name — the engine tag, and the
-/// key stored in every gallery item — is deliberately immutable.
+/// Change a LoRA's label, family and base-model note. Its pool name — the engine
+/// tag, and the key stored in every gallery item — is deliberately immutable.
+///
+/// `base_model` is editable because Civitai only fills it at add-time: a LoRA
+/// added from a local file, or added before the field existed, otherwise had no
+/// way to be annotated short of deleting it and re-adding from the source URL.
 #[tauri::command]
 pub fn edit_lora(
     state: State<'_, AppState>,
     id: String,
     display_name: String,
     family: String,
+    base_model: String,
 ) -> Result<loras::LoraInfo, String> {
     let models_dir = {
         let cfg = state.config.lock().unwrap();
         PathBuf::from(&cfg.models_dir)
     };
-    loras::rename(&models_dir, &id, &display_name, &family)
+    loras::rename(&models_dir, &id, &display_name, &family, &base_model)
 }
 
 #[tauri::command]
