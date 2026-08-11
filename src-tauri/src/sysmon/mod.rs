@@ -1,4 +1,5 @@
 pub mod providers;
+pub mod budget;
 
 use crate::types::{GpuDevice, GpuSelection, GpuStats, SystemStats};
 use providers::NvmlProvider;
