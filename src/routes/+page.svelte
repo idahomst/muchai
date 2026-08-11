@@ -32,9 +32,11 @@
   let showAddLora = $state(false);
   let editing = $state<LibraryEntry | null>(null);
   let vramTotalMb = $state<number | null>(null);
+  let vramShared = $state(false);
   let ramTotalMb = $state<number | null>(null);
   sysStats.subscribe((s) => {
     vramTotalMb = s?.gpu?.vram_total_mb ?? null;
+    vramShared = s?.gpu?.shared ?? false;
     ramTotalMb = s?.ram_total_mb ?? null;
   });
 
@@ -172,7 +174,7 @@
 {/if}
 
 {#if showNew}
-  <NewModelDialog {vramTotalMb} {ramTotalMb} onClose={() => (showNew = false)} />
+  <NewModelDialog {vramTotalMb} {vramShared} {ramTotalMb} onClose={() => (showNew = false)} />
 {/if}
 {#if editing}
   <ModelEditor entry={editing} onClose={() => (editing = null)} />
