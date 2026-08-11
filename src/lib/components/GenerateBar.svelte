@@ -183,7 +183,7 @@
 {/if}
 
 {#if $genStatus.kind === "running" && lowVramAuto}
-  <div class="cpu-note" role="status">Low-VRAM mode auto-enabled — this model needs more memory than your GPU has, so generation will be slower.</div>
+  <div class="cpu-note" role="status">Low-VRAM mode auto-enabled — this model needs more memory than your selected device has, so generation will be slower.</div>
 {/if}
 
 {#if missingLoras.length > 0}

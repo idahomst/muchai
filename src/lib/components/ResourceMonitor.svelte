@@ -8,7 +8,9 @@
   // nearly full. Thresholds match the "green→amber" intent of the mockup.
   const meterClass = (f: number) => (f < 0.7 ? "lo" : f < 0.9 ? "mid" : "hi");
   // Computed once each so the meter's class and width stay provably in sync.
-  const vramFrac = $derived($sysStats?.gpu ? frac($sysStats.gpu.vram_used_mb, $sysStats.gpu.vram_total_mb) : 0);
+  const vramFrac = $derived(
+    $sysStats?.gpu ? frac($sysStats.gpu.vram_used_mb ?? 0, $sysStats.gpu.vram_total_mb ?? 0) : 0,
+  );
   const ramFrac = $derived($sysStats ? frac($sysStats.ram_used_mb, $sysStats.ram_total_mb) : 0);
 </script>
 
@@ -18,14 +20,23 @@
       <span class="stat" title="GPU">
         <span class="glyph" aria-hidden="true">🖥</span>{$sysStats.gpu.name}
       </span>
-      <span class="stat" title="VRAM used">
+      <span class="stat" title={$sysStats.gpu.shared ? "Memory used (shared with the system)" : "VRAM used"}>
         <span class="lbl">VRAM</span>
         <span class="meter"><i class={meterClass(vramFrac)} style="width:{vramFrac * 100}%"></i></span>
-        <span class="v"><span class="num mem">{gb($sysStats.gpu.vram_used_mb)}</span> / {gb($sysStats.gpu.vram_total_mb)} GB</span>
+        <span class="v">
+          <span class="num mem">{$sysStats.gpu.vram_used_mb === null ? "N/A" : gb($sysStats.gpu.vram_used_mb)}</span>
+          {$sysStats.gpu.shared ? "of" : "/"}
+          {$sysStats.gpu.vram_total_mb === null ? "N/A" : gb($sysStats.gpu.vram_total_mb)} GB{$sysStats.gpu.shared ? " shared" : ""}
+        </span>
       </span>
       <span class="stat" title="GPU utilization">
         <span class="lbl">GPU</span>
-        <span class="v"><span class="num pct">{$sysStats.gpu.utilization_pct}</span>%</span>
+        <!-- No trailing % on N/A: "N/A%" reads as a number that failed to load. -->
+        {#if $sysStats.gpu.utilization_pct === null}
+          <span class="v"><span class="num pct">N/A</span></span>
+        {:else}
+          <span class="v"><span class="num pct">{$sysStats.gpu.utilization_pct}</span>%</span>
+        {/if}
       </span>
     {:else}
       <span class="stat">No GPU stats</span>

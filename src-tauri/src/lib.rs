@@ -155,14 +155,19 @@ pub fn run() {
                 let mut sys = sysinfo::System::new();
                 loop {
                     // Re-read the selection each tick so changing the device in the
-                    // UI re-keys the monitor without restarting the thread.
-                    let target = {
+                    // UI re-keys the monitor without restarting the thread. The UMA
+                    // budget override comes from the same lock, so editing it in
+                    // Preferences takes effect within a tick.
+                    let (target, uma_override_mb) = {
                         let state = handle.state::<AppState>();
-                        let selection = state.config.lock().unwrap().gpu_device.clone();
+                        let (selection, uma_override_mb) = {
+                            let cfg = state.config.lock().unwrap();
+                            (cfg.gpu_device.clone(), cfg.uma_budget_mb)
+                        };
                         let devices = state.gpu_devices.lock().unwrap().clone().unwrap_or_default();
-                        sysmon::resolve_target(selection, &devices)
+                        (sysmon::resolve_target(selection, &devices), uma_override_mb)
                     };
-                    let stats = sysmon::gather(&mut sys, &providers, &target);
+                    let stats = sysmon::gather(&mut sys, &providers, &target, uma_override_mb);
                     let _ = handle.emit("system:stats", stats);
                     std::thread::sleep(std::time::Duration::from_millis(1000));
                 }
@@ -235,6 +240,7 @@ pub fn run() {
             commands::edit_model,
             commands::delete_model_entry,
             commands::disk_space,
+            commands::auto_uma_budget_mb,
             commands::check_catalog_space,
             commands::list_reclaimable,
             commands::trash_dir,

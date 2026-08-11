@@ -1,4 +1,5 @@
 pub mod providers;
+pub mod budget;
 
 use crate::types::{GpuDevice, GpuSelection, GpuStats, SystemStats};
 use providers::NvmlProvider;
@@ -29,8 +30,10 @@ pub fn default_providers(nvml: Option<nvml_wrapper::Nvml>) -> Vec<Box<dyn GpuPro
 pub enum Target {
     /// CPU selected, or no GPU available — hide the GPU section.
     None,
-    /// Report the GPU whose name matches this selected-device name.
-    Name(String),
+    /// Report the GPU matching this selected-device name. `uma` marks a
+    /// unified-memory device, whose memory total is derived from system RAM
+    /// rather than read from the device.
+    Device { name: String, uma: bool },
 }
 
 /// Map the saved selection + enumerated devices to a monitor `Target`, mirroring
@@ -48,11 +51,13 @@ pub fn resolve_target(selection: Option<GpuSelection>, devices: &[GpuDevice]) ->
             .expect("validate_gpu_selection guarantees the device exists");
         return match device.kind {
             DeviceKind::Cpu => Target::None,
-            _ => Target::Name(device.name.clone()),
+            // Only `Integrated` denotes a device whose memory comes from system
+            // RAM; every other non-CPU kind (Discrete, Other) has its own pool.
+            kind => Target::Device { name: device.name.clone(), uma: kind == DeviceKind::Integrated },
         };
     }
     match crate::devices::pick_default_device(devices) {
-        Some(d) => Target::Name(d.name.clone()),
+        Some(d) => Target::Device { name: d.name.clone(), uma: d.kind == DeviceKind::Integrated },
         None => Target::None,
     }
 }
@@ -68,23 +73,49 @@ pub fn name_matches(candidate: &str, target: &str) -> bool {
     !c.is_empty() && !t.is_empty() && (c.contains(&t) || t.contains(&c))
 }
 
-/// Pick the GPU matching `target` from an already-gathered list. For a `Name`
+/// Pick the GPU matching `target` from an already-gathered list. For a `Device`
 /// match the returned `name` is overwritten with the selected display name, so the
 /// monitor shows the familiar Vulkan name while the live numbers come from the
 /// provider.
+///
+/// For a non-UMA target, a vendor label (e.g. "Intel") is ambiguous when a
+/// vendor's cards are all reported under the same name: prefer the first match
+/// that actually publishes `vram_total_mb`, since that is the discrete card, and
+/// fall back to the first match if none does. A UMA target still takes the first
+/// match unconditionally — its base card is expected to publish nothing, and on an
+/// APU-plus-dGPU box the APU is `card0`. Substituting the memory budget for a UMA
+/// device remains `gather`'s job, not this one.
 pub fn select_gpu(gpus: &[GpuStats], target: &Target) -> Option<GpuStats> {
     match target {
         Target::None => None,
-        Target::Name(name) => gpus
-            .iter()
-            .find(|g| name_matches(&g.name, name))
-            .map(|g| GpuStats { name: name.clone(), ..g.clone() }),
+        Target::Device { name, uma } => {
+            let mut hits = gpus.iter().filter(|g| name_matches(&g.name, name));
+            let first = hits.next()?;
+            let pick = if *uma {
+                first
+            } else {
+                std::iter::once(first).chain(hits).find(|g| g.vram_total_mb.is_some()).unwrap_or(first)
+            };
+            Some(GpuStats { name: name.clone(), ..pick.clone() })
+        }
     }
 }
 
 /// Gather CPU/RAM via sysinfo, collect GPU stats from every provider, and pick the
 /// one matching `target`.
-pub fn gather(sys: &mut System, providers: &[Box<dyn GpuProvider>], target: &Target) -> SystemStats {
+///
+/// For a unified-memory target the row is *synthesised* rather than selected: the
+/// device has no VRAM pool to read, so its total comes from `budget::uma_budget_mb`
+/// (see `uma_override_mb`, the user's Preferences value). Whatever the provider did
+/// manage to read — busy%, GTT used — is carried across. This is the only place
+/// that knows whether a total came from the device or from the budget, which is
+/// what `GpuStats::shared` records.
+pub fn gather(
+    sys: &mut System,
+    providers: &[Box<dyn GpuProvider>],
+    target: &Target,
+    uma_override_mb: Option<u64>,
+) -> SystemStats {
     sys.refresh_cpu_usage();
     sys.refresh_memory();
     let cpu_pct = sys.global_cpu_usage();
@@ -99,7 +130,25 @@ pub fn gather(sys: &mut System, providers: &[Box<dyn GpuProvider>], target: &Tar
             for p in providers {
                 all.extend(p.probe());
             }
-            select_gpu(&all, target)
+            match target {
+                // A unified-memory device may match no provider at all (an Intel
+                // iGPU publishes nothing in sysfs; a DGX Spark has no provider
+                // here), so the row is built from the target rather than found.
+                Target::Device { name, uma: true } => {
+                    let base = select_gpu(&all, target);
+                    Some(GpuStats {
+                        name: name.clone(),
+                        utilization_pct: base.as_ref().and_then(|b| b.utilization_pct),
+                        // GTT used is what a shared device actually consumes; the
+                        // amdgpu VRAM figures describe the BIOS carve-out only.
+                        vram_used_mb: base.as_ref().and_then(|b| b.shared_used_mb),
+                        vram_total_mb: Some(budget::uma_budget_mb(ram_total_mb, uma_override_mb)),
+                        shared_used_mb: None,
+                        shared: true,
+                    })
+                }
+                _ => select_gpu(&all, target),
+            }
         }
     };
     SystemStats {
@@ -124,7 +173,7 @@ mod tests {
     fn gather_with_no_providers_reports_cpu_ram_and_no_gpu() {
         let mut sys = System::new();
         let providers: Vec<Box<dyn GpuProvider>> = Vec::new();
-        let stats = gather(&mut sys, &providers, &Target::None);
+        let stats = gather(&mut sys, &providers, &Target::None, None);
         assert!(stats.gpu.is_none());
         assert!(stats.ram_total_mb > 0);
         assert!(stats.ram_used_mb <= stats.ram_total_mb);
@@ -137,7 +186,113 @@ mod tests {
     }
 
     fn stat(name: &str) -> GpuStats {
-        GpuStats { name: name.into(), utilization_pct: 7, vram_used_mb: 100, vram_total_mb: 200 }
+        GpuStats {
+            name: name.into(),
+            utilization_pct: Some(7),
+            vram_used_mb: Some(100),
+            vram_total_mb: Some(200),
+            shared_used_mb: None,
+            shared: false,
+        }
+    }
+
+    /// A provider that reports a fixed list and counts how often it was asked.
+    struct FakeProvider {
+        gpus: Vec<GpuStats>,
+        probes: std::rc::Rc<std::cell::Cell<u32>>,
+    }
+
+    impl GpuProvider for FakeProvider {
+        fn probe(&self) -> Vec<GpuStats> {
+            self.probes.set(self.probes.get() + 1);
+            self.gpus.clone()
+        }
+    }
+
+    fn fake(gpus: Vec<GpuStats>) -> (Vec<Box<dyn GpuProvider>>, std::rc::Rc<std::cell::Cell<u32>>) {
+        let probes = std::rc::Rc::new(std::cell::Cell::new(0));
+        let providers: Vec<Box<dyn GpuProvider>> = vec![Box::new(FakeProvider { gpus, probes: probes.clone() })];
+        (providers, probes)
+    }
+
+    #[test]
+    fn gather_uma_target_without_a_provider_match_synthesises_a_row() {
+        // The Intel iGPU case: no provider reports it, and today the whole GPU row
+        // vanishes. The row must be synthesised from the target name alone.
+        let mut sys = System::new();
+        let (providers, _) = fake(vec![stat("NVIDIA GeForce RTX 3060")]);
+        let target = Target::Device { name: "Intel(R) UHD Graphics 770 (ADL-S GT1)".into(), uma: true };
+        let stats = gather(&mut sys, &providers, &target, None);
+        let gpu = stats.gpu.expect("a UMA target always yields a row");
+        assert_eq!(gpu.name, "Intel(R) UHD Graphics 770 (ADL-S GT1)");
+        assert_eq!(gpu.vram_total_mb, Some(budget::uma_budget_mb(stats.ram_total_mb, None)));
+        assert_eq!(gpu.vram_used_mb, None);
+        assert_eq!(gpu.utilization_pct, None);
+        assert_eq!(gpu.shared_used_mb, None);
+        assert!(gpu.shared);
+    }
+
+    #[test]
+    fn gather_uma_target_with_a_match_promotes_gtt_used_over_the_carve_out() {
+        // The AMD APU case: mem_info_vram_total is the BIOS carve-out and must be
+        // replaced by the budget, while busy% and GTT-used pass through.
+        let mut sys = System::new();
+        let apu = GpuStats {
+            name: "AMD".into(),
+            utilization_pct: Some(71),
+            vram_used_mb: Some(128),
+            vram_total_mb: Some(512), // carve-out
+            shared_used_mb: Some(6400),
+            shared: false,
+        };
+        let (providers, _) = fake(vec![apu]);
+        let target = Target::Device { name: "AMD Radeon 890M".into(), uma: true };
+        let stats = gather(&mut sys, &providers, &target, None);
+        let gpu = stats.gpu.expect("a UMA target always yields a row");
+        assert_eq!(gpu.name, "AMD Radeon 890M");
+        assert_eq!(gpu.vram_total_mb, Some(budget::uma_budget_mb(stats.ram_total_mb, None)));
+        assert_eq!(gpu.vram_used_mb, Some(6400), "GTT used, not the 128 MB carve-out use");
+        assert_eq!(gpu.utilization_pct, Some(71));
+        assert_eq!(gpu.shared_used_mb, None, "promoted into vram_used_mb, not duplicated");
+        assert!(gpu.shared);
+    }
+
+    #[test]
+    fn gather_uma_override_changes_only_the_total() {
+        let mut sys = System::new();
+        let (providers, _) = fake(vec![]);
+        let target = Target::Device { name: "Intel".into(), uma: true };
+        let stats = gather(&mut sys, &providers, &target, Some(6000));
+        let gpu = stats.gpu.expect("a UMA target always yields a row");
+        assert_eq!(gpu.vram_total_mb, Some(budget::uma_budget_mb(stats.ram_total_mb, Some(6000))));
+        assert_eq!(gpu.name, "Intel");
+        assert!(gpu.shared);
+    }
+
+    #[test]
+    fn gather_discrete_target_is_untouched_by_the_budget() {
+        // Regression guard: a discrete card must report exactly what the provider
+        // said, with shared: false, no matter what the budget would have been.
+        let mut sys = System::new();
+        let (providers, _) = fake(vec![stat("NVIDIA GeForce RTX 3060")]);
+        let target = Target::Device { name: "NVIDIA GeForce RTX 3060".into(), uma: false };
+        let stats = gather(&mut sys, &providers, &target, Some(6000));
+        let gpu = stats.gpu.expect("the provider reports this card");
+        assert_eq!(gpu.vram_total_mb, Some(200));
+        assert_eq!(gpu.vram_used_mb, Some(100));
+        assert_eq!(gpu.utilization_pct, Some(7));
+        assert!(!gpu.shared);
+    }
+
+    #[test]
+    fn gather_none_target_does_not_probe_providers() {
+        // The stats loop runs every second for the life of the app; enumerating
+        // NVML and read_dir-ing sysfs only to discard the result is waste.
+        let mut sys = System::new();
+        let (providers, probes) = fake(vec![stat("NVIDIA")]);
+        let stats = gather(&mut sys, &providers, &Target::None, None);
+        assert!(stats.gpu.is_none());
+        assert_eq!(probes.get(), 0);
     }
 
     #[test]
@@ -160,14 +315,23 @@ mod tests {
     fn resolve_target_valid_gpu_selection_keys_to_its_name() {
         let devices = vec![gpu_dev(0, "Intel", DeviceKind::Integrated), gpu_dev(1, "NVIDIA GeForce RTX 3060", DeviceKind::Discrete)];
         let sel = Some(GpuSelection { index: 1, name: "NVIDIA GeForce RTX 3060".into() });
-        assert_eq!(resolve_target(sel, &devices), Target::Name("NVIDIA GeForce RTX 3060".into()));
+        assert_eq!(resolve_target(sel, &devices), Target::Device { name: "NVIDIA GeForce RTX 3060".into(), uma: false });
+    }
+
+    #[test]
+    fn resolve_target_marks_an_integrated_selection_as_uma() {
+        // The uma flag is what makes gather substitute a budget; it comes from the
+        // engine banner's own "uma: 1" marker via DeviceKind::Integrated.
+        let devices = vec![gpu_dev(0, "Intel(R) UHD Graphics 770", DeviceKind::Integrated), gpu_dev(1, "NVIDIA", DeviceKind::Discrete)];
+        let sel = Some(GpuSelection { index: 0, name: "Intel(R) UHD Graphics 770".into() });
+        assert_eq!(resolve_target(sel, &devices), Target::Device { name: "Intel(R) UHD Graphics 770".into(), uma: true });
     }
 
     #[test]
     fn resolve_target_no_selection_keys_to_default_discrete_device() {
         // Mirrors resolve_backend: the default is the discrete GPU, not banner index 0.
         let devices = vec![gpu_dev(0, "Intel", DeviceKind::Integrated), gpu_dev(1, "NVIDIA", DeviceKind::Discrete), crate::devices::cpu_device()];
-        assert_eq!(resolve_target(None, &devices), Target::Name("NVIDIA".into()));
+        assert_eq!(resolve_target(None, &devices), Target::Device { name: "NVIDIA".into(), uma: false });
     }
 
     #[test]
@@ -182,7 +346,9 @@ mod tests {
     fn resolve_target_stale_selection_follows_gpu_presence() {
         let stale = Some(GpuSelection { index: 9, name: "Ghost".into() });
         let with_gpu = vec![gpu_dev(0, "Intel", DeviceKind::Integrated), crate::devices::cpu_device()];
-        assert_eq!(resolve_target(stale.clone(), &with_gpu), Target::Name("Intel".into()));
+        // Falling back to the default device must carry its uma flag too, or an
+        // integrated-only machine would lose its budget on a stale selection.
+        assert_eq!(resolve_target(stale.clone(), &with_gpu), Target::Device { name: "Intel".into(), uma: true });
         let cpu_only = vec![crate::devices::cpu_device()];
         assert_eq!(resolve_target(stale, &cpu_only), Target::None);
     }
@@ -195,18 +361,55 @@ mod tests {
     #[test]
     fn select_gpu_name_matches_and_overwrites_display_name() {
         let gpus = vec![stat("Intel"), stat("NVIDIA GeForce RTX 3060")];
-        let got = select_gpu(&gpus, &Target::Name("NVIDIA GeForce RTX 3060".into())).unwrap();
+        let target = Target::Device { name: "NVIDIA GeForce RTX 3060".into(), uma: false };
+        let got = select_gpu(&gpus, &target).unwrap();
         assert_eq!(got.name, "NVIDIA GeForce RTX 3060");
-        assert_eq!(got.vram_total_mb, 200);
+        assert_eq!(got.vram_total_mb, Some(200));
         // vendor-keyword provider name still matches the full selected name
         let amd = vec![stat("AMD")];
-        let got = select_gpu(&amd, &Target::Name("AMD Radeon RX 7900 XTX".into())).unwrap();
+        let target = Target::Device { name: "AMD Radeon RX 7900 XTX".into(), uma: false };
+        let got = select_gpu(&amd, &target).unwrap();
         assert_eq!(got.name, "AMD Radeon RX 7900 XTX"); // overwritten with the selected display name
     }
 
     #[test]
     fn select_gpu_name_no_match_or_empty_yields_none() {
-        assert_eq!(select_gpu(&[stat("Intel")], &Target::Name("NVIDIA".into())), None);
-        assert_eq!(select_gpu(&[], &Target::Name("NVIDIA".into())), None);
+        let target = Target::Device { name: "NVIDIA".into(), uma: false };
+        assert_eq!(select_gpu(&[stat("Intel")], &target), None);
+        assert_eq!(select_gpu(&[], &target), None);
+    }
+
+    /// A card that publishes no VRAM figures at all, distinct from `stat()`'s
+    /// fully-populated row — the iGPU-at-card0 case that shadows a discrete card
+    /// carrying the same vendor label.
+    fn stat_without_memory(name: &str) -> GpuStats {
+        GpuStats {
+            name: name.into(),
+            utilization_pct: None,
+            vram_used_mb: None,
+            vram_total_mb: None,
+            shared_used_mb: None,
+            shared: false,
+        }
+    }
+
+    #[test]
+    fn select_gpu_discrete_target_prefers_the_card_that_publishes_memory() {
+        // Two cards under the same vendor label ("Intel"), iGPU first (card0) and
+        // Arc second (card1) — the real shape read_drm_cards now produces.
+        let gpus = vec![stat_without_memory("Intel"), stat("Intel")];
+        let target = Target::Device { name: "Intel(R) Arc(TM) B580 Graphics".into(), uma: false };
+        let got = select_gpu(&gpus, &target).unwrap();
+        assert_eq!(got.vram_total_mb, Some(200));
+    }
+
+    #[test]
+    fn select_gpu_uma_target_still_takes_the_first_match() {
+        // A UMA target must not skip card0 looking for a pool — its base card is
+        // expected to publish nothing.
+        let gpus = vec![stat_without_memory("Intel"), stat("Intel")];
+        let target = Target::Device { name: "Intel(R) UHD Graphics 770".into(), uma: true };
+        let got = select_gpu(&gpus, &target).unwrap();
+        assert_eq!(got.vram_total_mb, None);
     }
 }

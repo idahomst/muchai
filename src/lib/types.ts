@@ -164,8 +164,9 @@ export interface GenDefaults {
 export interface ProgressUpdate { current_step: number; total_steps: number; }
 
 export interface GpuStats {
-  name: string; utilization_pct: number;
-  vram_used_mb: number; vram_total_mb: number;
+  name: string; utilization_pct: number | null;
+  vram_used_mb: number | null; vram_total_mb: number | null;
+  shared_used_mb: number | null; shared: boolean;
 }
 export interface SystemStats {
   gpu: GpuStats | null; cpu_pct: number;
@@ -286,6 +287,10 @@ export interface AppConfig {
   // re-badge on every launch. null = nothing seen yet. Unlike the two fields
   // above this one IS taken from the payload — dismissing the badge is a UI act.
   engine_seen_tag: string | null;
+  // Manual override for the unified-memory (shared VRAM) budget, in MB. Mirrors
+  // Rust AppConfig.uma_budget_mb (#[serde(default)] → null for old configs).
+  // null = auto (70% of RAM, floor/ceiling applied server-side).
+  uma_budget_mb: number | null;
 }
 
 // Values accepted by AppConfig.load_precision. The quantised entries must stay

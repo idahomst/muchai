@@ -9,7 +9,7 @@
   import { INSUFFICIENT_SPACE_PREFIX } from "../types";
   import type { RatedCatalogEntry, ReclaimableModel } from "../types";
 
-  let { vramTotalMb, ramTotalMb, onClose }: { vramTotalMb: number | null; ramTotalMb: number | null; onClose: () => void } = $props();
+  let { vramTotalMb, vramShared = false, ramTotalMb, onClose }: { vramTotalMb: number | null; vramShared?: boolean; ramTotalMb: number | null; onClose: () => void } = $props();
 
   type Tab = "catalog" | "url" | "local";
   let tab = $state<Tab>("catalog");
@@ -77,7 +77,9 @@
   // Show what fit is rated against: VRAM if a GPU is present, else RAM (CPU path).
   const fitLabel = $derived(
     vramTotalMb
-      ? `Your VRAM: ${+(vramTotalMb / 1024).toFixed(1)} GB`
+      ? vramShared
+        ? `Shared memory budget: ${+(vramTotalMb / 1024).toFixed(1)} GB`
+        : `Your VRAM: ${+(vramTotalMb / 1024).toFixed(1)} GB`
       : ramTotalMb
         ? `No GPU detected — fit vs. RAM: ${+(ramTotalMb / 1024).toFixed(1)} GB (CPU generation is slow)`
         : "Hardware unknown — fit not rated",

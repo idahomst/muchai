@@ -25,9 +25,11 @@ impl GpuProvider for NvmlProvider {
                 let mem = device.memory_info().ok()?;
                 Some(GpuStats {
                     name,
-                    utilization_pct: util.gpu,
-                    vram_used_mb: mem.used / 1024 / 1024,
-                    vram_total_mb: mem.total / 1024 / 1024,
+                    utilization_pct: Some(util.gpu),
+                    vram_used_mb: Some(mem.used / 1024 / 1024),
+                    vram_total_mb: Some(mem.total / 1024 / 1024),
+                    shared_used_mb: None,
+                    shared: false,
                 })
             })
             .collect()
@@ -38,8 +40,9 @@ impl GpuProvider for NvmlProvider {
 use std::path::{Path, PathBuf};
 
 /// AMD GPUs via Linux sysfs (`/sys/class/drm/cardN/device`). Reads
-/// `gpu_busy_percent` for utilization and `mem_info_vram_*` for VRAM. `root` is
-/// injectable for tests (defaults to `/sys`).
+/// `gpu_busy_percent` for utilization, `mem_info_vram_*` for VRAM, and
+/// `mem_info_gtt_used` (the pool an APU actually allocates from, distinct from its
+/// small BIOS VRAM carve-out). `root` is injectable for tests (defaults to `/sys`).
 #[cfg(target_os = "linux")]
 pub struct AmdSysfsProvider {
     pub root: PathBuf,
@@ -60,10 +63,11 @@ impl GpuProvider for AmdSysfsProvider {
 }
 
 /// Intel GPUs via Linux sysfs. Discrete Intel (Arc) may expose `mem_info_vram_*`;
-/// integrated GPUs expose neither VRAM nor a `gpu_busy_percent` in sysfs (those
-/// are `amdgpu`-specific attributes), so they are skipped. Util is not read here
-/// (the i915/xe drivers report utilization only via DRM fdinfo or the i915 PMU,
-/// not sysfs — out of scope for this sysfs provider) and reported as 0.
+/// an integrated GPU exposes neither those nor `gpu_busy_percent` (both are
+/// `amdgpu`-specific attributes), so it is reported with unknown memory and
+/// unknown utilization, and `sysmon::gather` supplies its budget. Util is not read
+/// here at all — the i915/xe drivers report it only via DRM fdinfo or the i915 PMU,
+/// which is out of scope for a sysfs provider.
 #[cfg(target_os = "linux")]
 pub struct IntelSysfsProvider {
     pub root: PathBuf,
@@ -84,8 +88,10 @@ impl GpuProvider for IntelSysfsProvider {
 }
 
 /// Scan `<root>/class/drm/card*/device` for cards whose PCI `vendor` id equals
-/// `want_vendor`, reading VRAM (required) and optionally `gpu_busy_percent`. Cards
-/// without VRAM info are skipped. Never panics.
+/// `want_vendor`, carrying whatever the driver publishes: `mem_info_vram_*` and
+/// `mem_info_gtt_used` when present, `gpu_busy_percent` when `read_busy`. A vendor
+/// match alone is enough to emit a card — an integrated GPU exposes none of those
+/// attributes, and dropping it would hide the device the user selected. Never panics.
 #[cfg(target_os = "linux")]
 fn read_drm_cards(root: &Path, want_vendor: &str, read_busy: bool, label: &str) -> Vec<GpuStats> {
     let drm = root.join("class/drm");
@@ -111,22 +117,19 @@ fn read_drm_cards(root: &Path, want_vendor: &str, read_busy: bool, label: &str) 
         if read_trim(&dev.join("vendor")).as_deref() != Some(want_vendor) {
             continue;
         }
-        let (Some(total), Some(used)) = (
-            read_u64(&dev.join("mem_info_vram_total")),
-            read_u64(&dev.join("mem_info_vram_used")),
-        ) else {
-            continue; // no VRAM info (e.g. integrated GPU) — nothing useful to show
-        };
+        let mb = |name: &str| read_u64(&dev.join(name)).map(|b| b / 1024 / 1024);
         let utilization_pct = if read_busy {
-            read_u64(&dev.join("gpu_busy_percent")).unwrap_or(0) as u32
+            read_u64(&dev.join("gpu_busy_percent")).map(|v| v as u32)
         } else {
-            0
+            None
         };
         out.push(GpuStats {
             name: label.to_string(),
             utilization_pct,
-            vram_used_mb: used / 1024 / 1024,
-            vram_total_mb: total / 1024 / 1024,
+            vram_used_mb: mb("mem_info_vram_used"),
+            vram_total_mb: mb("mem_info_vram_total"),
+            shared_used_mb: mb("mem_info_gtt_used"),
+            shared: false,
         });
     }
     out
@@ -172,14 +175,16 @@ mod sysfs_tests {
         let gpus = p.probe();
         assert_eq!(gpus.len(), 1);
         assert_eq!(gpus[0].name, "AMD");
-        assert_eq!(gpus[0].utilization_pct, 42);
-        assert_eq!(gpus[0].vram_used_mb, 512);
-        assert_eq!(gpus[0].vram_total_mb, 8192);
+        assert_eq!(gpus[0].utilization_pct, Some(42));
+        assert_eq!(gpus[0].vram_used_mb, Some(512));
+        assert_eq!(gpus[0].vram_total_mb, Some(8192));
         let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
-    fn amd_missing_busy_defaults_util_zero() {
+    fn amd_missing_busy_is_unknown() {
+        // No gpu_busy_percent file: utilization is unknown, not zero. Reporting 0
+        // would show a hard "GPU 0%" on a card that is busy.
         let root = fixture("amd-nobusy", &[
             ("vendor", "0x1002\n"),
             ("mem_info_vram_used", "0\n"),
@@ -188,7 +193,7 @@ mod sysfs_tests {
         let p = AmdSysfsProvider { root: root.clone() };
         let gpus = p.probe();
         assert_eq!(gpus.len(), 1);
-        assert_eq!(gpus[0].utilization_pct, 0);
+        assert_eq!(gpus[0].utilization_pct, None);
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -205,14 +210,43 @@ mod sysfs_tests {
     }
 
     #[test]
-    fn card_without_vram_is_skipped() {
-        // An integrated GPU exposes no mem_info_vram_* — nothing useful to show.
+    fn card_without_memory_attributes_is_still_reported() {
+        // An Intel integrated GPU publishes no mem_info_* at all. Dropping it would
+        // hide the very device the user selected; report it with unknown memory and
+        // let sysmon::gather supply the budget.
         let root = fixture("igpu", &[
+            ("vendor", "0x8086\n"),
+        ]);
+        let p = IntelSysfsProvider { root: root.clone() };
+        let gpus = p.probe();
+        assert_eq!(gpus.len(), 1);
+        assert_eq!(gpus[0].name, "Intel");
+        assert_eq!(gpus[0].vram_total_mb, None);
+        assert_eq!(gpus[0].vram_used_mb, None);
+        assert_eq!(gpus[0].shared_used_mb, None);
+        assert_eq!(gpus[0].utilization_pct, None);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn amd_apu_reports_gtt_used_beside_the_carve_out() {
+        // An APU does expose mem_info_vram_total, but it is the BIOS carve-out
+        // (512 MiB here), not the pool it allocates from. GTT used is the live
+        // figure; sysmon::gather is what decides to prefer it.
+        let root = fixture("apu", &[
             ("vendor", "0x1002\n"),
-            ("gpu_busy_percent", "10\n"),
+            ("gpu_busy_percent", "71\n"),
+            ("mem_info_vram_used", "134217728\n"),   // 128 MiB
+            ("mem_info_vram_total", "536870912\n"),  // 512 MiB carve-out
+            ("mem_info_gtt_used", "6710886400\n"),   // 6400 MiB
         ]);
         let p = AmdSysfsProvider { root: root.clone() };
-        assert!(p.probe().is_empty());
+        let gpus = p.probe();
+        assert_eq!(gpus.len(), 1);
+        assert_eq!(gpus[0].vram_total_mb, Some(512));
+        assert_eq!(gpus[0].vram_used_mb, Some(128));
+        assert_eq!(gpus[0].shared_used_mb, Some(6400));
+        assert_eq!(gpus[0].utilization_pct, Some(71));
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -220,7 +254,7 @@ mod sysfs_tests {
     fn intel_card_reports_vram_and_ignores_busy() {
         // Intel passes read_busy=false: a present gpu_busy_percent must be ignored
         // (sysfs busy% is amdgpu-specific; Intel util lives in fdinfo/PMU, not here)
-        // and reported as 0, with VRAM still parsed.
+        // and reported as unknown, with VRAM still parsed.
         let root = fixture("intel", &[
             ("vendor", "0x8086\n"),
             ("gpu_busy_percent", "99\n"),
@@ -231,9 +265,9 @@ mod sysfs_tests {
         let gpus = p.probe();
         assert_eq!(gpus.len(), 1);
         assert_eq!(gpus[0].name, "Intel");
-        assert_eq!(gpus[0].utilization_pct, 0);
-        assert_eq!(gpus[0].vram_used_mb, 512);
-        assert_eq!(gpus[0].vram_total_mb, 8192);
+        assert_eq!(gpus[0].utilization_pct, None);
+        assert_eq!(gpus[0].vram_used_mb, Some(512));
+        assert_eq!(gpus[0].vram_total_mb, Some(8192));
         let _ = fs::remove_dir_all(&root);
     }
 
