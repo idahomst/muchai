@@ -11,7 +11,7 @@ pub enum Suitability {
 }
 
 /// What the fit verdict was computed against. `Ram` means no usable GPU was
-/// found, so the entry was rated against system RAM (CPU/iGPU path).
+/// found, so the entry was rated against system RAM (CPU path).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RatingBasis {

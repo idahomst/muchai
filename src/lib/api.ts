@@ -8,8 +8,9 @@ export const listGpuDevices = () => invoke<GpuDevice[]>("list_gpu_devices");
 export const setSettings = (config: AppConfig) => invoke<void>("set_settings", { config });
 export const listHistory = () => invoke<GalleryItem[]>("list_history");
 /** Returns one item per produced image (batch_count may yield several).
- *  `deviceVramMb` is the selected GPU's total VRAM (from sysStats) so the
- *  backend can auto-engage Low-VRAM; null when unknown / running on CPU. */
+ *  `deviceVramMb` is the selected GPU's total VRAM (from sysStats, may be a
+ *  RAM-derived budget on a unified-memory device) so the backend can
+ *  auto-engage Low-VRAM; null when unknown / running on CPU. */
 export const generate = (request: GenerationRequest, deviceVramMb: number | null = null) =>
   invoke<GalleryItem[]>("generate", { request, deviceVramMb });
 /** Move a generated image (and its sidecar) to the OS trash. */
