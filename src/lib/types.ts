@@ -164,8 +164,9 @@ export interface GenDefaults {
 export interface ProgressUpdate { current_step: number; total_steps: number; }
 
 export interface GpuStats {
-  name: string; utilization_pct: number;
-  vram_used_mb: number; vram_total_mb: number;
+  name: string; utilization_pct: number | null;
+  vram_used_mb: number | null; vram_total_mb: number | null;
+  shared_used_mb: number | null; shared: boolean;
 }
 export interface SystemStats {
   gpu: GpuStats | null; cpu_pct: number;
