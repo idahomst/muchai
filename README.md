@@ -1,8 +1,9 @@
 # MuchAI
 
-**Make images from text, right on your own machine.**
+**Make and edit images, right on your own machine.**
 
-MuchAI is a local, offline text-to-image desktop app. It wraps
+MuchAI is a local, offline desktop app for generating images from text and
+editing the ones you already have. It wraps
 [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp) in a
 simple GUI: pick a model, type a prompt, press Generate. Nothing leaves your
 computer.
@@ -18,8 +19,7 @@ HuggingFace or Civitai wouldn’t be so easy, and that it places greater
 demands on users in terms of their knowledge of the models. However, a model 
 catalog could be helpful to get started.
 
-Support for LoRA and instruction-based editing has since landed. ControlNet is
-still planned ;)
+Support for LoRA and instruction-based editing has since landed.
 
 
 ## Features
@@ -28,10 +28,15 @@ still planned ;)
 - **Model library with curated downloads** — hardware-aware starter models rated
   for your VRAM, plus paste-a-URL for your own.
 - **Instruction editing** — drop in a photo, say what to change ("make the sky
-  stormy"), and get that change rather than a fresh picture. Edit the result
-  again to keep refining.
+  stormy"), and get that change rather than a fresh picture. The output size is
+  matched to your image, and you can edit the result again to keep refining.
+- **LoRA** — stack fine-tunes on a base model and dial each one's strength. Paste
+  a Civitai link and the name, base model and trigger words come with it.
 - **Live preview** — watch a rough draft form as it generates, so you can cancel
   early when the composition is wrong.
+- **In-app engine updates** — MuchAI checks for new stable-diffusion.cpp builds,
+  shows you what changed, and installs one on request. The pinned build it ships
+  with always stays available to fall back to.
 - **Runs on GPU or CPU** — Vulkan backend across NVIDIA / AMD / Intel, with a CPU
   fallback.
 - **Live resource monitor** — GPU / VRAM / CPU / RAM usage while you work.
