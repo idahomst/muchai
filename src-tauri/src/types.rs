@@ -422,6 +422,12 @@ pub struct AppConfig {
     /// so models larger than VRAM can run (slower). Old configs default to false.
     #[serde(default)]
     pub low_vram: bool,
+    /// Memory budget in MB to assume for a unified-memory device, overriding the
+    /// share of system RAM derived by `sysmon::budget`. `None` means auto; old
+    /// configs lack the key and get it. Ignored while a discrete GPU or the CPU is
+    /// selected. Out-of-range values are clamped when read, not when stored.
+    #[serde(default)]
+    pub uma_budget_mb: Option<u64>,
     /// Show a rough live draft of the image as it generates (engine
     /// `--preview proj`). Default ON; pre-feature configs lack the key and
     /// default to true via `default_true`.
