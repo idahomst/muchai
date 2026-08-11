@@ -275,12 +275,25 @@ pub struct GpuSelection {
     pub name: String,
 }
 
+/// Live stats for one GPU. Every number is optional because what a device exposes
+/// varies by vendor and driver: an Intel iGPU publishes no memory figures in sysfs
+/// at all, and no Linux driver but `amdgpu` publishes a busy percentage there.
+/// `None` means "not knowable", which the UI renders as `N/A` — distinct from a
+/// genuine zero.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GpuStats {
     pub name: String,
-    pub utilization_pct: u32,
-    pub vram_used_mb: u64,
-    pub vram_total_mb: u64,
+    pub utilization_pct: Option<u32>,
+    pub vram_used_mb: Option<u64>,
+    pub vram_total_mb: Option<u64>,
+    /// `amdgpu`'s `mem_info_gtt_used` — memory the driver has taken from system
+    /// RAM. On a unified-memory device this, not `vram_used_mb`, is the figure
+    /// worth showing; `sysmon::gather` promotes it.
+    pub shared_used_mb: Option<u64>,
+    /// True when `vram_total_mb` is a budget derived from system RAM rather than a
+    /// pool read from the device. Set by `sysmon::gather`, the only place that
+    /// knows which of the two it produced.
+    pub shared: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

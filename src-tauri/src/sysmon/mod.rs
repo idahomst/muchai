@@ -138,7 +138,14 @@ mod tests {
     }
 
     fn stat(name: &str) -> GpuStats {
-        GpuStats { name: name.into(), utilization_pct: 7, vram_used_mb: 100, vram_total_mb: 200 }
+        GpuStats {
+            name: name.into(),
+            utilization_pct: Some(7),
+            vram_used_mb: Some(100),
+            vram_total_mb: Some(200),
+            shared_used_mb: None,
+            shared: false,
+        }
     }
 
     #[test]
@@ -198,7 +205,7 @@ mod tests {
         let gpus = vec![stat("Intel"), stat("NVIDIA GeForce RTX 3060")];
         let got = select_gpu(&gpus, &Target::Name("NVIDIA GeForce RTX 3060".into())).unwrap();
         assert_eq!(got.name, "NVIDIA GeForce RTX 3060");
-        assert_eq!(got.vram_total_mb, 200);
+        assert_eq!(got.vram_total_mb, Some(200));
         // vendor-keyword provider name still matches the full selected name
         let amd = vec![stat("AMD")];
         let got = select_gpu(&amd, &Target::Name("AMD Radeon RX 7900 XTX".into())).unwrap();
