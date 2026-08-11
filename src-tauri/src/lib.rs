@@ -13,6 +13,7 @@ mod engine_release;
 mod fit;
 mod gallery;
 mod hf;
+mod imagedim;
 mod library;
 mod lora_detect;
 mod loras;
@@ -211,6 +212,8 @@ pub fn run() {
             commands::generate,
             commands::cancel_generation,
             commands::pick_model_file,
+            commands::pick_ref_image,
+            commands::pick_ref_image_dialog,
             commands::pick_gallery_dir,
             commands::open_path,
             commands::open_url,
@@ -237,6 +240,7 @@ pub fn run() {
             commands::trash_dir,
             commands::list_loras,
             commands::list_families,
+            commands::list_edit_families,
             commands::detect_lora_family,
             commands::pick_lora_file,
             commands::add_local_lora,
@@ -273,7 +277,7 @@ mod tests {
     fn populate(root: &Path) {
         std::fs::create_dir_all(root.join(".staging-master-797-5ef4a75")).unwrap();
         std::fs::write(root.join(".staging-master-797-5ef4a75/sd-cli"), b"half").unwrap();
-        std::fs::create_dir_all(root.join("master-782-b290693")).unwrap();
+        std::fs::create_dir_all(root.join("master-813-bfbef5b")).unwrap();
     }
 
     fn an_update(tag: &str) -> commands::EngineUpdate {
@@ -321,7 +325,7 @@ mod tests {
             !root.join(".staging-master-797-5ef4a75").exists(),
             "a staging directory is an incomplete install and is never worth keeping"
         );
-        assert!(root.join("master-782-b290693").exists(), "a finished install must survive");
+        assert!(root.join("master-813-bfbef5b").exists(), "a finished install must survive");
         let _ = std::fs::remove_dir_all(&root);
     }
 

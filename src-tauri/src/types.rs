@@ -16,6 +16,8 @@ pub struct ModelComponents {
     #[serde(default)]
     pub llm: Option<String>, // --llm
     #[serde(default)]
+    pub llm_vision: Option<String>, // --llm_vision
+    #[serde(default)]
     pub vae_format: Option<String>, // --vae-format
     #[serde(default)]
     pub prediction: Option<String>, // --prediction
@@ -101,15 +103,19 @@ impl Default for ModelRef {
 impl ModelRef {
     /// The weight files that make up this model, for size/estimation purposes.
     /// Single-file → just its path. Multi-file → diffusion model plus every SET,
-    /// non-blank optional component (`vae`/`clip_l`/`clip_g`/`t5xxl`/`llm`).
-    /// The `vae_format` / `prediction` fields are engine flags, not files, and
-    /// are excluded. Order: diffusion, vae, clip_l, clip_g, t5xxl, llm.
+    /// non-blank optional component (`vae`/`clip_l`/`clip_g`/`t5xxl`/`llm`/
+    /// `llm_vision`). The `vae_format` / `prediction` fields are engine flags,
+    /// not files, and are excluded. Order: diffusion, vae, clip_l, clip_g,
+    /// t5xxl, llm, llm_vision.
     pub fn component_paths(&self) -> Vec<String> {
         match self {
             ModelRef::SingleFile { path } => vec![path.clone()],
             ModelRef::MultiFile(c) => {
                 let mut paths = vec![c.diffusion_model.clone()];
-                for p in [&c.vae, &c.clip_l, &c.clip_g, &c.t5xxl, &c.llm].into_iter().flatten() {
+                for p in [&c.vae, &c.clip_l, &c.clip_g, &c.t5xxl, &c.llm, &c.llm_vision]
+                    .into_iter()
+                    .flatten()
+                {
                     if !p.trim().is_empty() {
                         paths.push(p.clone());
                     }
@@ -133,13 +139,14 @@ impl ModelRef {
 /// Component slots whose file no longer exists on disk. Empty = all good.
 /// Only *set* slots are checked; a `None` optional slot is never reported.
 pub fn missing_components(c: &ModelComponents) -> Vec<(ComponentRole, String)> {
-    let checks: [(ComponentRole, Option<&String>); 6] = [
+    let checks: [(ComponentRole, Option<&String>); 7] = [
         (ComponentRole::Diffusion, Some(&c.diffusion_model)),
         (ComponentRole::Vae, c.vae.as_ref()),
         (ComponentRole::ClipL, c.clip_l.as_ref()),
         (ComponentRole::ClipG, c.clip_g.as_ref()),
         (ComponentRole::T5xxl, c.t5xxl.as_ref()),
         (ComponentRole::Llm, c.llm.as_ref()),
+        (ComponentRole::LlmVision, c.llm_vision.as_ref()),
     ];
     let mut out = Vec::new();
     for (role, path) in checks {
@@ -193,6 +200,14 @@ pub struct GenerationRequest {
     /// engine command line is byte-identical to a pre-LoRA run.
     #[serde(default)]
     pub loras: Vec<LoraSelection>,
+    /// Reference images for instruction editing, in order, as absolute paths.
+    /// The user's *intent* — whether it is honoured is the caller's decision
+    /// (see `EngineOptions::ref_images`), because only the caller knows whether
+    /// the selected model belongs to an edit family. `#[serde(default)]` so
+    /// every pre-feature config and gallery sidecar still loads; empty means
+    /// the engine command line is byte-identical to a pre-edit run.
+    #[serde(default)]
+    pub ref_images: Vec<String>,
 }
 
 impl Default for GenerationRequest {
@@ -211,6 +226,7 @@ impl Default for GenerationRequest {
             output_format: OutputFormat::default(),
             model_id: None,
             loras: Vec::new(),
+            ref_images: Vec::new(),
         }
     }
 }
@@ -777,6 +793,7 @@ mod tests {
             vae: Some("/m/ae.safetensors".into()),
             clip_g: None,                 // unset → excluded
             llm: Some("   ".into()),      // blank → excluded
+            llm_vision: None,             // unset → excluded
             vae_format: Some("flux".into()), // NOT a file path → excluded
             prediction: Some("flux_flow".into()), // NOT a file path → excluded
         });
@@ -802,6 +819,18 @@ mod tests {
         }"#;
         let req: GenerationRequest = serde_json::from_str(json).unwrap();
         assert!(req.loras.is_empty());
+    }
+
+    #[test]
+    fn request_without_a_ref_images_key_deserializes_to_an_empty_list() {
+        let json = r#"{
+            "model": {"type":"single_file","path":"/m/x.safetensors"},
+            "prompt": "a cat", "negative_prompt": "", "steps": 20, "cfg_scale": 7.0,
+            "sampler": "euler_a", "width": 512, "height": 512, "seed": -1,
+            "batch_count": 1
+        }"#;
+        let req: GenerationRequest = serde_json::from_str(json).expect("old sidecars still load");
+        assert!(req.ref_images.is_empty());
     }
 
     #[test]

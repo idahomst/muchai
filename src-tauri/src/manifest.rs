@@ -29,6 +29,8 @@ pub struct ManifestComponents {
     pub t5xxl: Option<String>,
     #[serde(default)]
     pub llm: Option<String>,
+    #[serde(default)]
+    pub llm_vision: Option<String>,
 }
 
 /// Engine flags (not files).
@@ -67,6 +69,7 @@ impl ManifestComponents {
             ClipG => self.clip_g = Some(stored),
             T5xxl => self.t5xxl = Some(stored),
             Llm => self.llm = Some(stored),
+            LlmVision => self.llm_vision = Some(stored),
         }
     }
 }
@@ -110,7 +113,7 @@ impl ModelManifest {
     /// a plain single checkpoint that the engine loads with `-m`.
     fn is_single_file(&self) -> bool {
         let c = &self.components;
-        let no_companions = [&c.vae, &c.clip_l, &c.clip_g, &c.t5xxl, &c.llm]
+        let no_companions = [&c.vae, &c.clip_l, &c.clip_g, &c.t5xxl, &c.llm, &c.llm_vision]
             .into_iter()
             .all(|o| o.as_deref().map(|s| s.trim().is_empty()).unwrap_or(true));
         let no_flags = self.flags.vae_format.is_none() && self.flags.prediction.is_none();
@@ -135,6 +138,7 @@ impl ModelManifest {
             clip_g: opt(&c.clip_g),
             t5xxl: opt(&c.t5xxl),
             llm: opt(&c.llm),
+            llm_vision: opt(&c.llm_vision),
             vae_format: self.flags.vae_format.clone(),
             prediction: self.flags.prediction.clone(),
         }

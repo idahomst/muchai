@@ -359,6 +359,57 @@ pub fn cancel_generation(state: State<AppState>) {
     let _ = std::fs::remove_file(preview_path());
 }
 
+/// Whether this run's reference images may reach the engine, or why not.
+///
+/// Edit-capability is asked two ways, because one is not enough:
+///
+/// 1. `family` — the resolved manifest family. Sufficient, not authoritative:
+///    the two questions are OR-ed, so a family that is not an edit family does
+///    not veto a model that carries a vision tower. A user who hand-assembles
+///    an edit stack under family `custom` still gets their reference through.
+/// 2. The model itself carrying a `llm_vision` component. `family` is `None`
+///    for an ad-hoc request, and `ParamsPanel.load()` deliberately replays a
+///    gallery item as ad-hoc. Without this fallback a replayed edit would run
+///    as text-to-image and *succeed*, silently ignoring the reference — the
+///    worst failure mode available, since the output looks fine.
+///
+/// A vision tower is a sound signal: it is the component that makes reading a
+/// reference physically possible, and only an edit recipe assembles one.
+///
+/// A non-edit model is never an error: the user's reference is preserved and
+/// simply not passed, so switching to a text-to-image model to try a variation
+/// and switching back does not cost them the image they chose. Discarding a
+/// user's input to keep internal state tidy is the wrong trade — the same rule
+/// the LoRA selection follows.
+fn resolve_ref_images(
+    family: Option<&str>,
+    model: &ModelRef,
+    ref_images: &[String],
+) -> Result<bool, String> {
+    let has_vision_tower = match model {
+        ModelRef::MultiFile(c) => {
+            c.llm_vision.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false)
+        }
+        ModelRef::SingleFile { .. } => false,
+    };
+    let is_edit = family.map(recipes::is_edit_family).unwrap_or(false) || has_vision_tower;
+    if !is_edit {
+        return Ok(false);
+    }
+    if ref_images.is_empty() {
+        return Err(
+            "This model edits an existing image. Add a reference image above the instruction."
+                .to_string(),
+        );
+    }
+    for p in ref_images {
+        if !std::path::Path::new(p).exists() {
+            return Err(format!("The reference image is no longer at {p}. Choose it again."));
+        }
+    }
+    Ok(true)
+}
+
 #[tauri::command]
 pub async fn generate(
     app: AppHandle,
@@ -396,6 +447,13 @@ pub async fn generate(
     // warning and a wrong-looking-but-successful image.
     let lora_dir =
         loras::resolve_selection(std::path::Path::new(&cfg.models_dir), &request.loras)?;
+    // Reference images are decided here for the same reason: an edit model run
+    // without one produces a confident, unrelated image and no engine warning.
+    // The family is re-read from model.json alongside the components above.
+    let ref_family =
+        library::resolve_request_family(std::path::Path::new(&cfg.models_dir), &request);
+    let ref_images =
+        resolve_ref_images(ref_family.as_deref(), &request.model, &request.ref_images)?;
     // Validate the saved device against the enumerated list (cached) and map it
     // to a backend; a stale/absent selection falls back to the engine default
     // when a real GPU exists, or to the CPU backend when none does.
@@ -449,8 +507,8 @@ pub async fn generate(
     }
     // Load-time precision: only the diffusion model is ever re-quantised, so it
     // is measured on its own and the remaining components counted as fixed cost.
-    let diffusion_bytes =
-        crate::weights::memory_bytes(std::path::Path::new(request.model.diffusion_path()));
+    let diffusion_path = std::path::Path::new(request.model.diffusion_path());
+    let diffusion_bytes = crate::weights::memory_bytes(diffusion_path);
     let other_bytes = weights_bytes
         .zip(diffusion_bytes)
         .map(|(all, diffusion)| all.saturating_sub(diffusion));
@@ -460,12 +518,14 @@ pub async fn generate(
         other_bytes,
         device_vram_mb,
         is_cpu,
+        crate::weights::is_quantized(diffusion_path),
     );
     let engine_opts = crate::command_builder::EngineOptions {
         low_vram,
         preview_path: preview.as_ref().map(|p| p.to_string_lossy().into_owned()),
         weight_type,
         lora_dir,
+        ref_images,
     };
 
     // Run the (blocking) engine on a worker thread so the async command yields.
@@ -587,6 +647,76 @@ pub async fn pick_model_file(app: AppHandle, start_dir: Option<String>) -> Optio
         .add_filter("Models", &["safetensors", "gguf", "ckpt"]);
     // Open in the caller-supplied folder (e.g. the model's own dir when editing)
     // so the user isn't dumped in the process CWD. Ignore a missing/invalid dir.
+    if let Some(dir) = start_dir {
+        let p = PathBuf::from(&dir);
+        if p.is_dir() {
+            dialog = dialog.set_directory(&p);
+        }
+    }
+    let file = dialog.blocking_pick_file();
+    file.and_then(|f| f.into_path().ok()).map(|p| p.to_string_lossy().into_owned())
+}
+
+/// A reference image the user has chosen: where it is, how big it is, and the
+/// output size MuchAI will suggest for editing it.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RefImageInfo {
+    pub path: String,
+    pub width: u32,
+    pub height: u32,
+    pub suggested_width: u32,
+    pub suggested_height: u32,
+}
+
+/// Read a candidate reference image's header and describe it. Pure enough to
+/// test: no dialog, no app handle, no scope grant.
+///
+/// Only the first 1 MB is read, so pointing this at a 400 MB file is cheap.
+/// The cap bounds the read, not the open: `File::open` on a FIFO still blocks
+/// until a writer appears. That is acceptable here because the path comes from
+/// the user's own file picker or drop, not from anything remote.
+fn inspect_ref_image(path: &str) -> Result<RefImageInfo, String> {
+    use std::io::Read;
+    let f = std::fs::File::open(path).map_err(|e| format!("Could not read {path}: {e}"))?;
+    let mut head = Vec::new();
+    f.take(1024 * 1024)
+        .read_to_end(&mut head)
+        .map_err(|e| format!("Could not read {path}: {e}"))?;
+    let (width, height) = crate::imagedim::dimensions(&head)
+        .ok_or_else(|| "That file isn't an image MuchAI can read. Use a PNG, JPEG or WebP.".to_string())?;
+    let (suggested_width, suggested_height) = crate::imagedim::suggest_size(width, height);
+    Ok(RefImageInfo {
+        path: path.to_string(),
+        width,
+        height,
+        suggested_width,
+        suggested_height,
+    })
+}
+
+/// Inspect a reference image and grant the webview permission to display that
+/// one file.
+///
+/// `allow_file`, not `allow_directory`: a reference can live anywhere, and
+/// granting its folder would expose every other file in it — someone editing
+/// one holiday photo would hand the webview the whole album.
+#[tauri::command]
+pub async fn pick_ref_image(app: AppHandle, path: String) -> Result<RefImageInfo, String> {
+    let info = inspect_ref_image(&path)?;
+    let _ = app.asset_protocol_scope().allow_file(&info.path);
+    Ok(info)
+}
+
+/// The OS file dialog for choosing a reference image. `None` when cancelled.
+/// Inspection is a separate call so the ✎ button can reuse it with a path it
+/// already has.
+#[tauri::command]
+pub async fn pick_ref_image_dialog(app: AppHandle, start_dir: Option<String>) -> Option<String> {
+    use tauri_plugin_dialog::DialogExt;
+    let mut dialog = app
+        .dialog()
+        .file()
+        .add_filter("Images", &["png", "jpg", "jpeg", "webp"]);
     if let Some(dir) = start_dir {
         let p = PathBuf::from(&dir);
         if p.is_dir() {
@@ -1151,6 +1281,7 @@ pub fn edit_model(
         clip_g: opt(&components.clip_g),
         t5xxl: opt(&components.t5xxl),
         llm: opt(&components.llm),
+        llm_vision: opt(&components.llm_vision),
     };
 
     man.set_editable(name, family, flags, normalized, recommended_settings);
@@ -1290,6 +1421,14 @@ pub fn list_loras(state: State<AppState>) -> Vec<loras::LoraInfo> {
 #[tauri::command]
 pub fn list_families() -> Vec<String> {
     recipes::FAMILIES.iter().map(|s| s.to_string()).collect()
+}
+
+/// Families whose models take a reference image. The frontend decides whether
+/// to show the reference panel from this, rather than from a hardcoded copy
+/// that would drift the first time a second edit family is added.
+#[tauri::command]
+pub fn list_edit_families() -> Vec<String> {
+    recipes::EDIT_FAMILIES.iter().map(|s| s.to_string()).collect()
 }
 
 /// Base families a safetensors file's tensor names are consistent with. Empty
@@ -2134,12 +2273,12 @@ mod tests {
         let base = scratch("chlog");
         let root = base.join("engines");
         std::fs::create_dir_all(&root).unwrap();
-        let mut cfg = crate::config::default_config(); // Builtin → master-782-b290693
+        let mut cfg = crate::config::default_config(); // Builtin → master-813-bfbef5b
 
         let (from, to) = changelog_range(&cfg, &root, "master-797-5ef4a75".into()).unwrap();
         assert_eq!(
             from.as_deref(),
-            Some("b290693"),
+            Some("bfbef5b"),
             "the range starts at the running engine's commit, not its tag"
         );
         assert_eq!(to, "5ef4a75", "a tag has to be reduced too — /compare 404s on a tag name");
@@ -2337,7 +2476,7 @@ mod tests {
         let root = base.join("engines");
         std::fs::create_dir_all(&root).unwrap();
         let cfg_path = base.join("config.json");
-        let config = Mutex::new(crate::config::default_config()); // Builtin → master-782
+        let config = Mutex::new(crate::config::default_config()); // Builtin → master-813
 
         // A release with nothing we can run is "no update", not an error — and
         // it still counts as a check. GitHub answered; there was simply nothing
@@ -2350,10 +2489,10 @@ mod tests {
             "reaching GitHub and finding no usable asset is still a completed check"
         );
 
-        let up = record_check(&config, &cfg_path, &root, Ok(Some(a_release("master-797-5ef4a75", 45020326))))
+        let up = record_check(&config, &cfg_path, &root, Ok(Some(a_release("master-820-abc1234", 45020326))))
             .unwrap()
-            .expect("build 797 is newer than the built-in 782");
-        assert_eq!(up.tag, "master-797-5ef4a75");
+            .expect("build 820 is newer than the built-in 813");
+        assert_eq!(up.tag, "master-820-abc1234");
         assert_eq!(up.asset_size, 45020326, "the card sizes the download from this");
         assert_eq!(
             up.current_tag.as_deref(),
@@ -2937,5 +3076,111 @@ mod tests {
             api.contains(&format!("(\"{DOWNLOAD_PROGRESS_EVENT}\"")),
             "no listener for {DOWNLOAD_PROGRESS_EVENT} in api.ts"
         );
+    }
+
+    #[test]
+    fn inspecting_a_reference_image_reports_its_size_and_a_suggestion() {
+        let png = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/refimg/png_3000x2000.png");
+        let info = inspect_ref_image(png).expect("a real png inspects");
+        assert_eq!((info.width, info.height), (3000, 2000));
+        assert_eq!((info.suggested_width, info.suggested_height), (1248, 832));
+        assert_eq!(info.path, png, "the path is echoed back verbatim");
+    }
+
+    #[test]
+    fn a_missing_reference_image_is_an_error_not_a_panic() {
+        let err = inspect_ref_image("/nope/definitely-not-here.png").unwrap_err();
+        assert!(err.contains("read"), "the message names what failed: {err}");
+    }
+
+    #[test]
+    fn a_file_that_is_not_an_image_is_refused_by_content_not_by_extension() {
+        let txt = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/refimg/not_an_image.txt");
+        let err = inspect_ref_image(txt).unwrap_err();
+        assert!(
+            err.contains("PNG") && err.contains("JPEG") && err.contains("WebP"),
+            "the message must tell the user which formats work: {err}"
+        );
+    }
+
+    fn plain_model() -> ModelRef {
+        ModelRef::SingleFile { path: "/m/sd15.safetensors".into() }
+    }
+
+    fn model_with_vision_tower() -> ModelRef {
+        ModelRef::MultiFile(crate::types::ModelComponents {
+            diffusion_model: "/m/qwen-edit.gguf".into(),
+            llm: Some("/m/shared/qwen2.5-vl.gguf".into()),
+            llm_vision: Some("/m/shared/mmproj.gguf".into()),
+            ..Default::default()
+        })
+    }
+
+    /// A reference image that really exists on disk, in a directory of this
+    /// test's own. Returns the directory too, so the caller can remove it.
+    fn a_present_reference(name: &str) -> (PathBuf, Vec<String>) {
+        let dir = scratch(name);
+        let img = dir.join("cat.png");
+        std::fs::write(&img, b"x").unwrap();
+        (dir, vec![img.to_string_lossy().into_owned()])
+    }
+
+    #[test]
+    fn an_edit_family_with_a_present_reference_enables_the_flag() {
+        let (dir, refs) = a_present_reference("refpresent");
+        assert_eq!(resolve_ref_images(Some("qwen-image-edit"), &plain_model(), &refs), Ok(true));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_edit_family_without_a_reference_is_blocked_with_an_actionable_message() {
+        let err = resolve_ref_images(Some("qwen-image-edit"), &plain_model(), &[]).unwrap_err();
+        assert!(err.contains("edits an existing image"), "{err}");
+        assert!(err.contains("reference image"), "{err}");
+    }
+
+    #[test]
+    fn a_reference_that_has_moved_is_blocked_and_named() {
+        let refs = vec!["/gone/cat.png".to_string()];
+        let err = resolve_ref_images(Some("qwen-image-edit"), &plain_model(), &refs).unwrap_err();
+        assert!(err.contains("/gone/cat.png"), "the message names the file: {err}");
+        assert!(err.contains("Choose it again"), "{err}");
+    }
+
+    #[test]
+    fn a_non_edit_family_neither_errors_nor_passes_the_reference() {
+        // The reference does not even have to exist: it is never looked at.
+        let refs = vec!["/gone/cat.png".to_string()];
+        for family in [Some("qwen-image"), Some("flux2"), Some("sd15"), None] {
+            assert_eq!(
+                resolve_ref_images(family, &plain_model(), &refs),
+                Ok(false),
+                "{family:?} must silently ignore a reference, never reject it"
+            );
+            assert_eq!(resolve_ref_images(family, &plain_model(), &[]), Ok(false));
+        }
+    }
+
+    #[test]
+    fn a_replayed_edit_is_still_an_edit_even_without_a_family() {
+        // ParamsPanel.load() replays a gallery item as ad-hoc: model_id null,
+        // so no family. Without the vision-tower fallback this run would
+        // succeed and quietly ignore the reference.
+        let (dir, refs) = a_present_reference("refreplay");
+        assert_eq!(resolve_ref_images(None, &model_with_vision_tower(), &refs), Ok(true));
+        // And the empty case is still blocked, not silently downgraded.
+        let err = resolve_ref_images(None, &model_with_vision_tower(), &[]).unwrap_err();
+        assert!(err.contains("edits an existing image"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_blank_vision_tower_path_does_not_count_as_one() {
+        let model = ModelRef::MultiFile(crate::types::ModelComponents {
+            diffusion_model: "/m/x.gguf".into(),
+            llm_vision: Some("   ".into()),
+            ..Default::default()
+        });
+        assert_eq!(resolve_ref_images(None, &model, &["/gone/cat.png".to_string()]), Ok(false));
     }
 }

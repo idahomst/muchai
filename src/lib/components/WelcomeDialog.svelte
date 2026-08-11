@@ -25,6 +25,7 @@
         <li><strong>Describe your image</strong> in the Prompt box — the more specific, the better.</li>
         <li><strong>Press Generate</strong> and wait a few moments for your image.</li>
       </ol>
+      <p class="editnote">Already have a picture? Pick an editing model, drop the image in, and describe the change you want.</p>
       <p class="tipnote">Hover any setting's label anytime to learn what it does.</p>
     </div>
 
@@ -39,6 +40,7 @@
   .intro { margin:0 0 10px; font-size:13px; color:var(--text-muted); }
   .steps { margin:0; padding-left:1.2rem; display:flex; flex-direction:column; gap:.5rem;
     font-size:13px; line-height:1.4; }
+  .editnote { margin:12px 0 0; font-size:13px; line-height:1.4; color:var(--text-muted); }
   .tipnote { margin:12px 0 0; font-size:12px; color:var(--text-muted); padding:9px 12px;
     background:var(--accent-soft); border:1px solid var(--border); border-radius:var(--radius-sm); }
 </style>

@@ -1,16 +1,27 @@
 <script lang="ts">
-  import { request } from "../stores";
+  import { request, isEditingModel } from "../stores";
   import { HELP } from "../helpText";
+
+  // Legacy-mode component: `$:` and store auto-subscription, not runes.
+  // The label must agree with the panel above it, so both read the one store
+  // that mirrors the backend's gate rather than each deriving their own.
+  $: editing = $isEditingModel;
 </script>
 
 <div class="field">
   <div class="flabel">
-    <label for="prompt" title={HELP.prompt}>Prompt</label>
-    <button type="button" class="clear" title="Clear prompt"
+    <label for="prompt" title={editing ? HELP.instruction : HELP.prompt}>
+      {editing ? "Instruction" : "Prompt"}
+    </label>
+    <button type="button" class="clear"
+      title={editing ? "Clear instruction" : "Clear prompt"}
       disabled={!$request.prompt}
       on:click={() => ($request.prompt = "")}>Clear</button>
   </div>
-  <textarea id="prompt" rows="3" bind:value={$request.prompt} placeholder="a lovely cat, oil painting"></textarea>
+  <textarea id="prompt" rows="3" bind:value={$request.prompt}
+    placeholder={editing
+      ? 'make the cat blue · remove the person on the left · change the sign to say "OPEN"'
+      : "a lovely cat, oil painting"}></textarea>
 </div>
 <div class="field">
   <div class="flabel">

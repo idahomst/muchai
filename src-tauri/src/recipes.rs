@@ -7,7 +7,18 @@ use serde::{Deserialize, Serialize};
 /// the `custom` recipe is not a base family. Keep in sync with
 /// `family_defaults` below and with `catalog::validate`.
 pub const FAMILIES: &[&str] =
-    &["sd15", "sdxl", "sd3", "flux1", "flux2", "qwen-image", "z-image"];
+    &["sd15", "sdxl", "sd3", "flux1", "flux2", "qwen-image", "qwen-image-edit", "z-image"];
+
+/// Families whose models take a reference image and an instruction rather than
+/// a from-scratch prompt. A list rather than a suffix rule: `qwen-image-edit`
+/// has `qwen-image` as a prefix, and any prefix/suffix cleverness here ends up
+/// handing a reference image to a model that cannot use one.
+pub const EDIT_FAMILIES: &[&str] = &["qwen-image-edit"];
+
+/// True when models of this family are instruction editors.
+pub fn is_edit_family(family: &str) -> bool {
+    EDIT_FAMILIES.contains(&family)
+}
 
 /// A typed slot in a split model, each wired to one engine flag.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -19,6 +30,10 @@ pub enum ComponentRole {
     ClipG,
     T5xxl,
     Llm,
+    /// Vision tower (mmproj) of a vision-language text encoder — `--llm_vision`.
+    /// Belongs to the encoder, not to the diffusion model, which is why it
+    /// pools alongside the encoder rather than living in the model folder.
+    LlmVision,
 }
 
 /// One role's recognition rule within a recipe.
@@ -28,6 +43,15 @@ pub struct RoleSpec {
     pub required: bool,
     /// Case-insensitive substring matches on the filename, e.g. ["t5xxl", "t5-xxl"].
     pub patterns: Vec<&'static str>,
+    /// Case-insensitive substrings that disqualify a filename from this role
+    /// even when a pattern matches. `detect` resolves each role independently,
+    /// so without this one file can win two roles: `qwen_image_vae.safetensors`
+    /// matches the Qwen diffusion pattern `"qwen_image"` (10 chars) far more
+    /// strongly than the VAE pattern `"vae"` (3), and the mmproj matches the
+    /// encoder's `"qwen2.5"` exactly as well as the encoder itself does. Both
+    /// end with a component pointed at the wrong file and no missing-component
+    /// warning, because every path exists.
+    pub exclude: Vec<&'static str>,
 }
 
 /// A family-common downloadable part (VAE / encoder) reused across the family.
@@ -44,6 +68,12 @@ pub struct SharedComponent {
 #[derive(Debug, Clone)]
 pub struct ModelRecipe {
     pub family: &'static str,
+    /// Directory under `models_dir/shared/` this family's shared components
+    /// pool into. Equal to `family` for every family that owns its parts.
+    /// `qwen-image-edit` sets `"qwen-image"`: it uses the identical Qwen2.5-VL
+    /// encoder and VAE, and pooling under its own id would re-download 4.7 GB
+    /// the user already has. Pinned by `only_the_edit_family_pools_somewhere_else`.
+    pub pool_family: &'static str,
     pub name: &'static str,
     pub roles: Vec<RoleSpec>,
     pub vae_format: Option<&'static str>,
@@ -81,6 +111,9 @@ pub fn detect(recipe: &ModelRecipe, filenames: &[String]) -> DetectedComponents 
         let mut best: Option<(usize, &str)> = None; // (pattern length, filename)
         for name in filenames {
             let lower = name.to_lowercase();
+            if spec.exclude.iter().any(|x| lower.contains(&x.to_lowercase())) {
+                continue;
+            }
             let score = spec
                 .patterns
                 .iter()
@@ -102,6 +135,12 @@ pub fn detect(recipe: &ModelRecipe, filenames: &[String]) -> DetectedComponents 
 
 /// Pick the family that best explains this file set: most required roles matched,
 /// then most total roles matched. None if no recipe matches any required role.
+///
+/// `max_by_key` returns the *last* maximum, so a tie is settled by recipe order
+/// — which is not a meaningful ranking. Two recipes must therefore never be
+/// able to tie on the same file set; that is enforced in the recipes, by
+/// keeping each family's diffusion patterns narrow enough not to match another
+/// family's files. See the comment on `qwen-image-edit`'s Diffusion role.
 pub fn detect_best(filenames: &[String]) -> Option<(ModelRecipe, DetectedComponents)> {
     recipes()
         .into_iter()
@@ -115,7 +154,18 @@ pub fn detect_best(filenames: &[String]) -> Option<(ModelRecipe, DetectedCompone
 }
 
 fn role(role: ComponentRole, required: bool, patterns: &[&'static str]) -> RoleSpec {
-    RoleSpec { role, required, patterns: patterns.to_vec() }
+    RoleSpec { role, required, patterns: patterns.to_vec(), exclude: Vec::new() }
+}
+
+/// A role whose patterns are broad enough to reach a file that belongs to a
+/// different slot. See `RoleSpec::exclude`.
+fn role_not(
+    role: ComponentRole,
+    required: bool,
+    patterns: &[&'static str],
+    exclude: &[&'static str],
+) -> RoleSpec {
+    RoleSpec { role, required, patterns: patterns.to_vec(), exclude: exclude.to_vec() }
 }
 
 /// Built-in family recipes. `custom` is the manual-flow pseudo-family:
@@ -124,6 +174,7 @@ pub fn recipes() -> Vec<ModelRecipe> {
     vec![
         ModelRecipe {
             family: "flux1",
+            pool_family: "flux1",
             name: "FLUX.1 (dev / schnell / krea)",
             roles: vec![
                 role(ComponentRole::Diffusion, true, &["flux1", "flux-1", "flux"]),
@@ -156,6 +207,7 @@ pub fn recipes() -> Vec<ModelRecipe> {
         },
         ModelRecipe {
             family: "sd3",
+            pool_family: "sd3",
             name: "Stable Diffusion 3 / 3.5",
             roles: vec![
                 role(ComponentRole::Diffusion, true, &["sd3", "sd_3", "stable-diffusion-3"]),
@@ -200,10 +252,22 @@ pub fn recipes() -> Vec<ModelRecipe> {
         },
         ModelRecipe {
             family: "qwen-image",
+            pool_family: "qwen-image",
             name: "Qwen-Image",
             roles: vec![
-                role(ComponentRole::Diffusion, true, &["qwen-image", "qwen_image", "qwen"]),
-                role(ComponentRole::Llm, true, &["qwenvl", "qwen2.5", "qwen2_5", "qwen_2.5", "llm"]),
+                // `"qwen_image"` matches `qwen_image_vae.safetensors` more
+                // strongly than `"vae"` does, so without the exclusion the VAE
+                // becomes the diffusion model on any folder that holds both.
+                role_not(ComponentRole::Diffusion, true, &["qwen-image", "qwen_image", "qwen"], &["vae"]),
+                // The mmproj shares the encoder's name up to a suffix. This
+                // family has no vision slot, but the shared pool it reads from
+                // holds one for qwen-image-edit.
+                role_not(
+                    ComponentRole::Llm,
+                    true,
+                    &["qwenvl", "qwen2.5", "qwen2_5", "qwen_2.5", "llm"],
+                    &["mmproj", "llm_vision", "qwen2vl_vision"],
+                ),
                 role(ComponentRole::Vae, true, &["vae", "ae."]),
             ],
             vae_format: Some("auto"),
@@ -230,7 +294,81 @@ pub fn recipes() -> Vec<ModelRecipe> {
             ],
         },
         ModelRecipe {
+            family: "qwen-image-edit",
+            // Same Qwen2.5-VL encoder, same VAE as Qwen-Image — pool with it.
+            pool_family: "qwen-image",
+            name: "Qwen-Image-Edit",
+            roles: vec![
+                // Deliberately narrow: NOT "qwen-image"/"qwen". The plain
+                // Qwen-Image family already claims those, and since
+                // "qwen-image" is a prefix of "qwen-image-edit", a broad
+                // pattern here makes an ordinary text-to-image Qwen file set
+                // tie with — and then out-rank — its own family. Only a
+                // filename that actually says "edit" is an edit model.
+                role_not(
+                    ComponentRole::Diffusion,
+                    true,
+                    &["qwen-image-edit", "qwen_image_edit", "qwen-edit", "qwen_edit"],
+                    &["vae"],
+                ),
+                // Excluding the vision tower is what keeps `--llm` and
+                // `--llm_vision` from being handed the same file: the mmproj
+                // matches `"qwen2.5"` exactly as well as the encoder does, so
+                // the winner would otherwise be whichever `read_dir` returned
+                // first — and the real encoder would go unassigned.
+                role_not(
+                    ComponentRole::Llm,
+                    true,
+                    &["qwenvl", "qwen2.5", "qwen2_5", "qwen_2.5", "llm"],
+                    &["mmproj", "llm_vision", "qwen2vl_vision"],
+                ),
+                // Pattern order is irrelevant — `detect` takes the *longest*
+                // match, not the first. What matters is that the mmproj's own
+                // filename says so: the plain `"vision"` catch-all is here for
+                // repos that name the file that way, and would otherwise be all
+                // this role has to go on.
+                role(ComponentRole::LlmVision, true, &["mmproj", "llm_vision", "qwen2vl_vision", "vision"]),
+                role(ComponentRole::Vae, true, &["vae", "ae."]),
+            ],
+            vae_format: Some("auto"),
+            // No `flow_shift` here on purpose. leejet's docs pass
+            // `--flow-shift 3`, but an A/B at a fixed seed on engine
+            // `master-813-bfbef5b` (2026-08-10) produced visually
+            // indistinguishable images with and without it — `auto` already
+            // resolves to something equivalent for this family. Adding the
+            // field would mean a new `ModelComponents` slot, a flag-gate entry
+            // and a wider absent-component test, all to say nothing.
+            prediction: None,
+            shared: vec![
+                SharedComponent {
+                    // Byte-identical to the qwen-image entry above, and pooled
+                    // to the same path, so an existing install is reused rather
+                    // than re-fetched. Keep the two in sync.
+                    role: ComponentRole::Llm,
+                    url: "https://huggingface.co/mradermacher/Qwen2.5-VL-7B-Instruct-GGUF/resolve/main/Qwen2.5-VL-7B-Instruct.Q4_K_S.gguf",
+                    size_bytes: 4_457_767_936,
+                    filename: "Qwen2.5-VL-7B-Instruct.Q4_K_S.gguf",
+                },
+                SharedComponent {
+                    // The vision tower the plain qwen-image family has no use
+                    // for. BF16 because mmproj is small and quantising the
+                    // vision tower is where edit fidelity goes to die.
+                    role: ComponentRole::LlmVision,
+                    url: "https://huggingface.co/QuantStack/Qwen-Image-Edit-GGUF/resolve/main/mmproj/Qwen2.5-VL-7B-Instruct-mmproj-BF16.gguf",
+                    size_bytes: 1_354_163_040,
+                    filename: "Qwen2.5-VL-7B-Instruct-mmproj-BF16.gguf",
+                },
+                SharedComponent {
+                    role: ComponentRole::Vae,
+                    url: "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/vae/qwen_image_vae.safetensors",
+                    size_bytes: 253_806_246,
+                    filename: "qwen_image_vae.safetensors",
+                },
+            ],
+        },
+        ModelRecipe {
             family: "flux2",
+            pool_family: "flux2",
             name: "FLUX.2 (klein / dev)",
             roles: vec![
                 role(ComponentRole::Diffusion, true, &["flux2", "flux-2", "flux.2"]),
@@ -263,6 +401,7 @@ pub fn recipes() -> Vec<ModelRecipe> {
         },
         ModelRecipe {
             family: "z-image",
+            pool_family: "z-image",
             name: "Z-Image (Turbo)",
             roles: vec![
                 role(ComponentRole::Diffusion, true, &["z_image", "z-image", "zimage"]),
@@ -288,6 +427,7 @@ pub fn recipes() -> Vec<ModelRecipe> {
         },
         ModelRecipe {
             family: "custom",
+            pool_family: "custom",
             name: "Custom (assign files manually)",
             roles: vec![
                 role(ComponentRole::Diffusion, true, &[]),
@@ -346,6 +486,10 @@ pub fn family_defaults(family: &str, diffusion_filename: Option<&str>) -> Option
             }
         }
         "qwen-image" => Some(d(20, 2.5, Sampler::Euler, 1024, 1024)),
+        // Same sampler/steps/CFG as the base family. 1024×1024 is only the
+        // fallback: an edit run overrides width/height from the reference
+        // image's aspect ratio (see `imagedim::suggest_size`).
+        "qwen-image-edit" => Some(d(20, 2.5, Sampler::Euler, 1024, 1024)),
         "z-image" => Some(d(8, 1.0, Sampler::Euler, 1024, 1024)),
         "sdxl" => Some(d(28, 7.0, Sampler::EulerA, 1024, 1024)),
         "sd15" => Some(d(20, 7.0, Sampler::EulerA, 512, 512)),
@@ -546,6 +690,10 @@ mod tests {
         assert_eq!((qwen.steps, qwen.cfg_scale), (20, 2.5));
         assert_eq!(qwen.sampler, crate::types::Sampler::Euler);
         assert_eq!((qwen.width, qwen.height), (1024, 1024));
+        let edit = family_defaults("qwen-image-edit", None).unwrap();
+        assert_eq!((edit.steps, edit.cfg_scale), (20, 2.5));
+        assert_eq!(edit.sampler, crate::types::Sampler::Euler);
+        assert_eq!((edit.width, edit.height), (1024, 1024));
         let sdxl = family_defaults("sdxl", None).unwrap();
         assert_eq!((sdxl.steps, sdxl.sampler, (sdxl.width, sdxl.height)),
                    (28, crate::types::Sampler::EulerA, (1024, 1024)));
@@ -670,5 +818,127 @@ mod tests {
         // The two that have no recipe at all — the reason this list exists.
         assert!(FAMILIES.contains(&"sd15"));
         assert!(FAMILIES.contains(&"sdxl"));
+    }
+
+    #[test]
+    fn the_edit_family_list_matches_the_predicate() {
+        for f in EDIT_FAMILIES {
+            assert!(is_edit_family(f), "{f} is listed but the predicate rejects it");
+            assert!(FAMILIES.contains(f), "{f} must also be a real family");
+        }
+    }
+
+    #[test]
+    fn only_the_edit_families_can_take_a_reference_image() {
+        assert!(is_edit_family("qwen-image-edit"));
+        for f in ["sd15", "sdxl", "sd3", "flux1", "flux2", "qwen-image", "z-image", "custom", ""] {
+            assert!(!is_edit_family(f), "{f} is not an editing family");
+        }
+    }
+
+    #[test]
+    fn only_the_edit_family_pools_somewhere_else() {
+        for r in recipes() {
+            let expected = if r.family == "qwen-image-edit" { "qwen-image" } else { r.family };
+            assert_eq!(
+                r.pool_family, expected,
+                "{} pools its shared components under the wrong directory",
+                r.family
+            );
+        }
+    }
+
+    /// `qwen-image` is a prefix of `qwen-image-edit`, so the two recipes are one
+    /// careless pattern away from claiming each other's files. A plain
+    /// text-to-image Qwen set misdetected as an editor would demand an mmproj it
+    /// has no use for; an edit set misdetected as plain Qwen would drop the
+    /// vision tower and silently generate an unrelated picture. Pin both ways.
+    #[test]
+    fn qwen_edit_and_plain_qwen_do_not_claim_each_others_files() {
+        let plain = [
+            "qwen-image-2512-Q2_K.gguf".to_string(),
+            "Qwen2.5-VL-7B-Instruct.Q4_K_S.gguf".to_string(),
+            "qwen_image_vae.safetensors".to_string(),
+        ];
+        let (r, _) = detect_best(&plain).expect("a plain Qwen set is detectable");
+        assert_eq!(r.family, "qwen-image", "no mmproj in sight — this is not an editor");
+
+        let edit = [
+            "qwen-image-edit-2511-Q3_K_S.gguf".to_string(),
+            "Qwen2.5-VL-7B-Instruct.Q4_K_S.gguf".to_string(),
+            "Qwen2.5-VL-7B-Instruct-mmproj-BF16.gguf".to_string(),
+            "qwen_image_vae.safetensors".to_string(),
+        ];
+        let (r, d) = detect_best(&edit).expect("an edit set is detectable");
+        assert_eq!(r.family, "qwen-image-edit");
+        assert_eq!(
+            d.get(ComponentRole::LlmVision),
+            Some("Qwen2.5-VL-7B-Instruct-mmproj-BF16.gguf"),
+            "the mmproj must land in the vision slot, not the encoder's"
+        );
+    }
+
+    /// The mmproj matches the encoder's `"qwen2.5"` exactly as well as the
+    /// encoder itself does, and `detect` keeps the first file on a tie — so
+    /// before the exclusion this passed only because the encoder happened to be
+    /// listed first. `read_dir` gives no such guarantee. List the mmproj first.
+    #[test]
+    fn the_vision_tower_never_takes_the_encoder_slot_whatever_the_file_order() {
+        let edit = [
+            "Qwen2.5-VL-7B-Instruct-mmproj-BF16.gguf".to_string(),
+            "qwen-image-edit-2511-Q3_K_S.gguf".to_string(),
+            "Qwen2.5-VL-7B-Instruct.Q4_K_S.gguf".to_string(),
+            "qwen_image_vae.safetensors".to_string(),
+        ];
+        let (r, d) = detect_best(&edit).expect("an edit set is detectable");
+        assert_eq!(r.family, "qwen-image-edit");
+        assert_eq!(d.get(ComponentRole::Llm), Some("Qwen2.5-VL-7B-Instruct.Q4_K_S.gguf"));
+        assert_eq!(d.get(ComponentRole::LlmVision), Some("Qwen2.5-VL-7B-Instruct-mmproj-BF16.gguf"));
+    }
+
+    /// `qwen_image_vae.safetensors` matches the diffusion pattern `"qwen_image"`
+    /// (10 characters) far more strongly than the VAE's `"vae"` (3), so the VAE
+    /// used to win the diffusion slot outright — both flags pointed at a 0.25 GB
+    /// VAE and nothing reported a missing component, because every path existed.
+    #[test]
+    fn the_vae_never_takes_the_diffusion_slot() {
+        let plain = [
+            "qwen_image_vae.safetensors".to_string(),
+            "qwen-image-2512-Q2_K.gguf".to_string(),
+            "Qwen2.5-VL-7B-Instruct.Q4_K_S.gguf".to_string(),
+        ];
+        let (r, d) = detect_best(&plain).expect("a plain Qwen set is detectable");
+        assert_eq!(r.family, "qwen-image");
+        assert_eq!(d.get(ComponentRole::Diffusion), Some("qwen-image-2512-Q2_K.gguf"));
+        assert_eq!(d.get(ComponentRole::Vae), Some("qwen_image_vae.safetensors"));
+    }
+
+    /// A file can only be one component. `detect` resolves each role
+    /// independently, so nothing structural stops two roles from landing on the
+    /// same file — the generation then points two flags at one path while the
+    /// real component for the losing role goes unassigned, and no
+    /// missing-component warning fires because every path exists. Feed each
+    /// recipe one plausible filename per pattern and assert the assignment stays
+    /// one-to-one.
+    #[test]
+    fn no_recipe_gives_one_file_to_two_roles() {
+        for r in recipes() {
+            let files: Vec<String> = r
+                .roles
+                .iter()
+                .flat_map(|s| s.patterns.iter())
+                .map(|p| format!("{p}.gguf"))
+                .collect();
+            let d = detect(&r, &files);
+            let mut taken: Vec<&str> = Vec::new();
+            for (role, name) in &d.assignments {
+                assert!(
+                    !taken.contains(&name.as_str()),
+                    "{}: {name} fills {role:?} and an earlier role at the same time",
+                    r.family
+                );
+                taken.push(name);
+            }
+        }
     }
 }

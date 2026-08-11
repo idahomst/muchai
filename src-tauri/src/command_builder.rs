@@ -17,6 +17,12 @@ pub struct EngineOptions {
     /// `--lora-model-dir` and the prompt tags, because tags without a directory
     /// resolve against the engine's default path and silently apply nothing.
     pub lora_dir: Option<String>,
+    /// Whether `req.ref_images` may reach the engine. `true` only when the
+    /// caller has confirmed the resolved model belongs to an edit family and
+    /// every path exists. `false` drops the list entirely: a `--ref-image` on a
+    /// model that cannot consume one is not ignored by the engine, it changes
+    /// the run. Mirrors the `lora_dir` gate above.
+    pub ref_images: bool,
 }
 
 /// Tensor-name prefixes that identify diffusion-model weights.
@@ -63,6 +69,12 @@ fn prompt_with_loras(prompt: &str, loras: &[LoraSelection]) -> String {
     }
 }
 
+/// Whether this model carries a vision tower, i.e. whether the run will emit
+/// `--llm_vision`. See the graph-cut suppression in `build_args`.
+fn has_vision_tower(model: &ModelRef) -> bool {
+    matches!(model, ModelRef::MultiFile(c) if c.llm_vision.is_some())
+}
+
 /// Build the argument vector for stable-diffusion.cpp's CLI.
 /// Pure function (no I/O) so it is fully unit-testable.
 /// Flag spellings are confirmed against `fixtures/sd-help.txt`.
@@ -78,6 +90,9 @@ pub fn build_args(
     // Selections are honoured only alongside a pool directory (see EngineOptions).
     let loras: &[LoraSelection] =
         if opts.lora_dir.is_some() { req.loras.as_slice() } else { &[] };
+    // Same shape for reference images: intent lives on the request, permission
+    // lives on the options.
+    let ref_images: &[String] = if opts.ref_images { req.ref_images.as_slice() } else { &[] };
     let mut push = |flag: &str, val: String| {
         a.push(flag.to_string());
         a.push(val);
@@ -101,6 +116,9 @@ pub fn build_args(
             if let Some(v) = &c.llm {
                 push("--llm", v.clone());
             }
+            if let Some(v) = &c.llm_vision {
+                push("--llm_vision", v.clone());
+            }
             if let Some(v) = &c.vae_format {
                 push("--vae-format", v.clone());
             }
@@ -108,6 +126,9 @@ pub fn build_args(
                 push("--prediction", v.clone());
             }
         }
+    }
+    for r in ref_images {
+        push("--ref-image", r.clone());
     }
     push("-p", prompt_with_loras(&req.prompt, loras));
     if !req.negative_prompt.is_empty() {
@@ -141,6 +162,18 @@ pub fn build_args(
         a.push("--offload-to-cpu".into());
         a.push("--vae-tiling".into());
         a.push("--diffusion-fa".into());
+    }
+    // Graph-cut is part of the low-VRAM bundle, but only for runs with no vision
+    // tower: `master-813-bfbef5b` aborts (SIGABRT in `ggml_graph_cut::
+    // build_segment`, via `LLMRunner::encode_image`) when the planner tries to
+    // segment the vision tower's graph. Measured on an RTX 3060: it aborts with
+    // and without `--tensor-type-rules`, and both runs without graph-cut got
+    // past `get_learned_condition` — so graph-cut alone is the cause, and
+    // dropping it is what makes editing run at all. Keyed off the component and
+    // not off `ref_images` because the two are equivalent at this point:
+    // `resolve_ref_images` rejects a vision-tower model with no reference before
+    // anything spawns.
+    if opts.low_vram && !has_vision_tower(&req.model) {
         // Graph-cut segmented execution against a VRAM budget, plus
         // residency+prefetch streaming of layers (inert without --max-vram).
         // A negative budget makes the engine auto-detect free VRAM and spare
@@ -257,6 +290,7 @@ mod tests {
             clip_l: Some("/m/clip_l.safetensors".into()),
             clip_g: Some("/m/clip_g.safetensors".into()),
             llm: Some("/m/llm.safetensors".into()),
+            llm_vision: Some("/m/mmproj.safetensors".into()),
             vae: Some("/m/ae.safetensors".into()),
             vae_format: Some("flux".into()),
             prediction: Some("flux_flow".into()),
@@ -267,10 +301,25 @@ mod tests {
         assert_eq!(val_after(&args, "--clip_l"), Some("/m/clip_l.safetensors"));
         assert_eq!(val_after(&args, "--clip_g"), Some("/m/clip_g.safetensors"));
         assert_eq!(val_after(&args, "--llm"), Some("/m/llm.safetensors"));
+        assert_eq!(val_after(&args, "--llm_vision"), Some("/m/mmproj.safetensors"));
         assert_eq!(val_after(&args, "--vae"), Some("/m/ae.safetensors"));
         assert_eq!(val_after(&args, "--vae-format"), Some("flux"));
         assert_eq!(val_after(&args, "--prediction"), Some("flux_flow"));
         assert!(!args.iter().any(|x| x == "-m"), "multi-file must not emit -m");
+    }
+
+    #[test]
+    fn a_vision_tower_emits_llm_vision() {
+        use crate::types::ModelComponents;
+        let mut req = sample();
+        req.model = ModelRef::MultiFile(ModelComponents {
+            diffusion_model: "/m/qwen-edit.gguf".into(),
+            llm: Some("/m/shared/qwen2.5-vl.gguf".into()),
+            llm_vision: Some("/m/shared/mmproj.gguf".into()),
+            ..Default::default()
+        });
+        let args = build_args(&req, "/out/x.png", None, EngineOptions::default());
+        assert_eq!(val_after(&args, "--llm_vision"), Some("/m/shared/mmproj.gguf"));
     }
 
     #[test]
@@ -283,7 +332,7 @@ mod tests {
         });
         let args = build_args(&req, "/out/x.png", None, EngineOptions::default());
         assert_eq!(val_after(&args, "--diffusion-model"), Some("/m/d.safetensors"));
-        for flag in ["--vae", "--clip_l", "--clip_g", "--t5xxl", "--llm", "--vae-format", "--prediction"] {
+        for flag in ["--vae", "--clip_l", "--clip_g", "--t5xxl", "--llm", "--llm_vision", "--vae-format", "--prediction"] {
             assert!(!args.iter().any(|x| x == flag), "{flag} must be absent");
         }
     }
@@ -309,6 +358,28 @@ mod tests {
         let args = build_args(&sample(), "/out/x.png", None, EngineOptions { low_vram: true, ..Default::default() });
         assert_eq!(val_after(&args, "--max-vram"), Some("-1"));
         assert!(args.iter().any(|x| x == "--stream-layers"));
+    }
+
+    #[test]
+    fn a_vision_tower_keeps_the_offload_flags_but_loses_graph_cut() {
+        use crate::types::ModelComponents;
+        let mut req = sample();
+        req.model = ModelRef::MultiFile(ModelComponents {
+            diffusion_model: "/m/qwen-edit.gguf".into(),
+            llm: Some("/m/shared/qwen2.5-vl.gguf".into()),
+            llm_vision: Some("/m/shared/mmproj.gguf".into()),
+            ..Default::default()
+        });
+        let args =
+            build_args(&req, "/out/x.png", None, EngineOptions { low_vram: true, ..Default::default() });
+        // Offload is what lets a 16 GB stack run on a 12 GB card at all.
+        for flag in ["--offload-to-cpu", "--vae-tiling", "--diffusion-fa"] {
+            assert!(args.iter().any(|x| x == flag), "{flag} must survive");
+        }
+        // Graph-cut is what aborts on the vision tower's encode_image.
+        for flag in ["--max-vram", "--stream-layers"] {
+            assert!(!args.iter().any(|x| x == flag), "{flag} must be absent");
+        }
     }
 
     #[test]
@@ -456,5 +527,60 @@ mod tests {
         // immediately otherwise) and an override is a footgun. Pinned.
         let args = build_args(&with_loras(&[("a", 1.0)]), "/out/x.png", None, lora_opts());
         assert!(!args.iter().any(|x| x == "--lora-apply-mode"));
+    }
+
+    fn with_refs(paths: &[&str]) -> GenerationRequest {
+        let mut req = sample();
+        req.ref_images = paths.iter().map(|p| p.to_string()).collect();
+        req
+    }
+
+    fn ref_opts() -> EngineOptions {
+        EngineOptions { ref_images: true, ..Default::default() }
+    }
+
+    #[test]
+    fn a_reference_image_becomes_a_ref_image_flag() {
+        let args = build_args(&with_refs(&["/pics/cat.png"]), "/out/x.png", None, ref_opts());
+        assert_eq!(val_after(&args, "--ref-image"), Some("/pics/cat.png"));
+    }
+
+    #[test]
+    fn every_reference_image_gets_its_own_flag() {
+        let args = build_args(
+            &with_refs(&["/pics/a.png", "/pics/b.png"]),
+            "/out/x.png",
+            None,
+            ref_opts(),
+        );
+        let refs: Vec<&str> = args
+            .windows(2)
+            .filter(|w| w[0] == "--ref-image")
+            .map(|w| w[1].as_str())
+            .collect();
+        assert_eq!(refs, vec!["/pics/a.png", "/pics/b.png"], "order is preserved");
+    }
+
+    #[test]
+    fn reference_images_are_dropped_when_the_caller_did_not_enable_them() {
+        let args = build_args(&with_refs(&["/pics/cat.png"]), "/out/x.png", None, EngineOptions::default());
+        assert!(
+            !args.iter().any(|a| a == "--ref-image"),
+            "a ref image on a model that cannot edit must never reach the engine"
+        );
+        assert!(
+            !args.iter().any(|a| a == "/pics/cat.png"),
+            "and neither must its path"
+        );
+    }
+
+    #[test]
+    fn no_reference_image_produces_a_byte_identical_command() {
+        let baseline = build_args(&sample(), "/out/x.png", Some("vulkan1"), EngineOptions::default());
+        let enabled = build_args(&sample(), "/out/x.png", Some("vulkan1"), ref_opts());
+        assert_eq!(
+            baseline, enabled,
+            "enabling the gate with an empty list must not perturb an ordinary run"
+        );
     }
 }

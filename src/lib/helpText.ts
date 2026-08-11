@@ -5,6 +5,8 @@ export const HELP = {
   // PromptPanel
   prompt:
     "Describe the image you want — subject, style, colors, mood. Be specific, e.g. 'a red fox in a snowy forest, watercolor'.",
+  instruction:
+    "Say what to CHANGE about the image, not what the finished picture contains. 'Make the sky stormy' works; 'a house under a stormy sky' will redraw the whole scene.",
   negativePrompt:
     "Things you DON'T want in the image (e.g. 'blurry, text, extra fingers'). Optional. It only works on models that use guidance — Stable Diffusion (1.5 / XL) and Qwen-Image. The fast 'turbo' models (FLUX, Z-Image) ignore it, so you can leave it empty for those.",
   // SettingsPanel
@@ -27,6 +29,9 @@ export const HELP = {
   // LoraPanel
   lora:
     "Small add-on files that nudge a model toward a particular style, character, or subject — like a filter for the AI. Turn one on and slide its strength up or down. If a LoRA lists trigger words, click one to add it to your prompt.",
+  // RefImagePanel
+  refImage:
+    "The picture you want to change. Drop one here or choose a file, then describe the change you want — for example 'make the sky stormy'. MuchAI matches the output size to your image.",
   // ModelLibrary / DevicePicker
   model:
     "The AI model that turns your words into images. Download one to get started — different models produce different styles.",

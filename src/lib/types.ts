@@ -12,7 +12,7 @@ export type Sampler =
 
 // Wire values MUST match the Rust `ComponentRole` enum's serde snake_case form
 // (src-tauri/src/recipes.rs).
-export type ComponentRole = "diffusion" | "vae" | "clip_l" | "clip_g" | "t5xxl" | "llm";
+export type ComponentRole = "diffusion" | "vae" | "clip_l" | "clip_g" | "t5xxl" | "llm" | "llm_vision";
 
 export const ROLE_LABELS: Record<ComponentRole, string> = {
   diffusion: "Diffusion model",
@@ -21,6 +21,7 @@ export const ROLE_LABELS: Record<ComponentRole, string> = {
   clip_g: "CLIP-G text encoder",
   t5xxl: "T5-XXL text encoder",
   llm: "LLM text encoder",
+  llm_vision: "Vision tower (mmproj)",
 };
 
 // Engine enums, from src-tauri/fixtures/sd-help.txt. Empty = let engine auto-detect.
@@ -40,6 +41,7 @@ export interface ModelComponents {
   clip_g?: string | null;
   t5xxl?: string | null;
   llm?: string | null;
+  llm_vision?: string | null;
   vae_format?: string | null;
   prediction?: string | null;
 }
@@ -143,6 +145,10 @@ export interface GenerationRequest {
   // LoRAs applied to this run (mirrors Rust GenerationRequest.loras,
   // #[serde(default)] → [] for old configs and gallery sidecars).
   loras: LoraSelection[];
+  // Reference images for instruction editing, absolute paths (mirrors Rust
+  // GenerationRequest.ref_images, #[serde(default)] → [] for old configs and
+  // gallery sidecars). Whether they reach the engine is the backend's call.
+  ref_images: string[];
 }
 
 // Mirrors Rust `GenDefaults` (src-tauri/src/types.rs). Recommended per-family
@@ -299,7 +305,7 @@ export const defaultRequest = (): GenerationRequest => ({
   model: { type: "single_file", path: "" }, prompt: "", negative_prompt: "",
   steps: 20, cfg_scale: 7.0, sampler: "euler_a",
   width: 512, height: 512, seed: -1, batch_count: 1,
-  output_format: "png", model_id: null, loras: [],
+  output_format: "png", model_id: null, loras: [], ref_images: [],
 });
 
 export const SAMPLERS: { value: Sampler; label: string }[] = [
@@ -386,6 +392,15 @@ export interface SpaceCheck {
   required_bytes: number;
   free_bytes: number | null;
   ok: boolean;
+}
+
+/** A chosen reference image (mirrors Rust commands::RefImageInfo). */
+export interface RefImageInfo {
+  path: string;
+  width: number;
+  height: number;
+  suggested_width: number;
+  suggested_height: number;
 }
 
 /** Mirrors Rust `commands::ReclaimableModel`: an installed model and the bytes

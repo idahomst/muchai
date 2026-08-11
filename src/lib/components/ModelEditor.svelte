@@ -7,15 +7,18 @@
 
   let { entry, onClose }: { entry: LibraryEntry; onClose: () => void } = $props();
 
-  // Flatten the resolved model ref into six editable absolute-path slots.
+  // Flatten the resolved model ref into seven editable absolute-path slots.
   function slotsFrom(m: ModelRef) {
     if (m.type === "single_file") {
-      return { diffusion_model: m.path, vae: "", clip_l: "", clip_g: "", t5xxl: "", llm: "" };
+      return {
+        diffusion_model: m.path, vae: "", clip_l: "", clip_g: "", t5xxl: "", llm: "",
+        llm_vision: "",
+      };
     }
     return {
       diffusion_model: m.diffusion_model,
       vae: m.vae ?? "", clip_l: m.clip_l ?? "", clip_g: m.clip_g ?? "",
-      t5xxl: m.t5xxl ?? "", llm: m.llm ?? "",
+      t5xxl: m.t5xxl ?? "", llm: m.llm ?? "", llm_vision: m.llm_vision ?? "",
     };
   }
 
@@ -33,14 +36,15 @@
   let error = $state<string | null>(null);
   let confirmingDelete = $state(false);
 
-  const FAMILIES = ["sd15", "sdxl", "flux1", "flux2", "sd3", "qwen-image", "z-image", "custom"];
-  type SlotKey = "diffusion_model" | "vae" | "clip_l" | "clip_g" | "t5xxl" | "llm";
+  const FAMILIES = ["sd15", "sdxl", "flux1", "flux2", "sd3", "qwen-image", "qwen-image-edit", "z-image", "custom"];
+  type SlotKey = "diffusion_model" | "vae" | "clip_l" | "clip_g" | "t5xxl" | "llm" | "llm_vision";
   const OPTIONAL_ROLES: { key: SlotKey; label: string }[] = [
     { key: "vae", label: "VAE" },
     { key: "clip_l", label: "CLIP-L" },
     { key: "clip_g", label: "CLIP-G" },
     { key: "t5xxl", label: "T5-XXL" },
     { key: "llm", label: "LLM" },
+    { key: "llm_vision", label: "Vision tower (mmproj)" },
   ];
 
   // Parent folder of an absolute path (POSIX or Windows separator), or undefined.
@@ -71,6 +75,7 @@
         clip_g: slots.clip_g || null,
         t5xxl: slots.t5xxl || null,
         llm: slots.llm || null,
+        llm_vision: slots.llm_vision || null,
       };
       await editModel(entry.id, name, family, flags, components, overrideOn ? rec : null);
       await refreshLibrary();

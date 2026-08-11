@@ -2,7 +2,8 @@
   import { get } from "svelte/store";
   import { catalogEntries, addCatalogModel, addUrlModel, addLocalModel, pickModelFile, openExternal,
            diskSpace, checkCatalogSpace, listReclaimable, trashDir, deleteModelEntry, openFolder } from "../api";
-  import { settings, runDownload, downloadBusy, downloadProgress, downloadError, refreshLibrary, engineInstalling } from "../stores";
+  import { settings, runDownload, downloadBusy, downloadProgress, downloadError, refreshLibrary, engineInstalling,
+           catalogHighlightId } from "../stores";
   import { formatBytes, catalogTotalBytes } from "../modelFormat";
   import DownloadProgressBar from "./DownloadProgressBar.svelte";
   import { INSUFFICIENT_SPACE_PREFIX } from "../types";
@@ -86,6 +87,26 @@
   // stable, so catalog (curated) order is preserved within each suitability tier.
   const RANK: Record<string, number> = { recommended: 0, tight: 1, too_big: 2, unknown: 3 };
   const sorted = $derived([...catalog].sort((a, b) => RANK[a.suitability] - RANK[b.suitability]));
+
+  // A highlight set by "Edit this image" when no edit model is installed. Read
+  // once into local state and cleared, so re-opening the dialog normally does
+  // not resurrect it.
+  let highlightId = $state<string | null>(null);
+  $effect(() => {
+    const id = get(catalogHighlightId);
+    if (id === null) return;
+    highlightId = id;
+    catalogHighlightId.set(null);
+  });
+
+  // Scroll the highlighted row into view once the catalog has loaded. Guarded
+  // on the row existing: a highlight naming an entry this build no longer
+  // ships must be inert, not a crash.
+  $effect(() => {
+    if (!highlightId || catalog.length === 0) return;
+    const el = document.getElementById(`catrow-${highlightId}`);
+    el?.scrollIntoView({ block: "center" });
+  });
 
   // "Best fit" is scarce — only the top 1–2 recommended picks earn it, and only
   // when we actually have a hardware budget to rate against.
@@ -214,10 +235,17 @@
           <p class="vramnote">
             {fitLabel}{#if freeBytes !== null} · Disk free: {formatBytes(freeBytes)}{/if}
           </p>
+          {#if highlightId}
+            <p class="hint">
+              Editing an existing image needs a model trained for it. This one takes a
+              picture plus an instruction like “make the sky stormy”.
+            </p>
+          {/if}
           <div class="catlist">
             {#each sorted as e (e.id)}
               {@const f = compactFit(e)}
-              <div class="catrow" class:dim={e.suitability === "too_big"}>
+              <div class="catrow" id="catrow-{e.id}" class:dim={e.suitability === "too_big"}
+                   class:highlight={e.id === highlightId}>
                 <div class="catmain">
                   <div class="catname">
                     {e.name}
@@ -309,4 +337,8 @@
   .rconfirm { font-size: 11.5px; color: var(--text-muted); }
   .tnote { font-size: 11.5px; color: var(--warn); margin: 0; }
   .bfoot { display: flex; justify-content: flex-end; margin-top: 4px; }
+
+  .highlight { outline:2px solid var(--accent); outline-offset:2px;
+    border-radius:var(--radius-sm); }
+  .hint { margin:0 0 10px; font-size:12px; line-height:1.45; color:var(--text-muted); }
 </style>
