@@ -78,15 +78,26 @@ pub fn name_matches(candidate: &str, target: &str) -> bool {
 /// monitor shows the familiar Vulkan name while the live numbers come from the
 /// provider.
 ///
-/// Deliberately blind to `target`'s `uma` flag: matching is by name only, and
-/// substituting the memory budget for a UMA device is `gather`'s job, not this one.
+/// For a non-UMA target, a vendor label (e.g. "Intel") is ambiguous when a
+/// vendor's cards are all reported under the same name: prefer the first match
+/// that actually publishes `vram_total_mb`, since that is the discrete card, and
+/// fall back to the first match if none does. A UMA target still takes the first
+/// match unconditionally — its base card is expected to publish nothing, and on an
+/// APU-plus-dGPU box the APU is `card0`. Substituting the memory budget for a UMA
+/// device remains `gather`'s job, not this one.
 pub fn select_gpu(gpus: &[GpuStats], target: &Target) -> Option<GpuStats> {
     match target {
         Target::None => None,
-        Target::Device { name, .. } => gpus
-            .iter()
-            .find(|g| name_matches(&g.name, name))
-            .map(|g| GpuStats { name: name.clone(), ..g.clone() }),
+        Target::Device { name, uma } => {
+            let mut hits = gpus.iter().filter(|g| name_matches(&g.name, name));
+            let first = hits.next()?;
+            let pick = if *uma {
+                first
+            } else {
+                std::iter::once(first).chain(hits).find(|g| g.vram_total_mb.is_some()).unwrap_or(first)
+            };
+            Some(GpuStats { name: name.clone(), ..pick.clone() })
+        }
     }
 }
 
@@ -366,5 +377,39 @@ mod tests {
         let target = Target::Device { name: "NVIDIA".into(), uma: false };
         assert_eq!(select_gpu(&[stat("Intel")], &target), None);
         assert_eq!(select_gpu(&[], &target), None);
+    }
+
+    /// A card that publishes no VRAM figures at all, distinct from `stat()`'s
+    /// fully-populated row — the iGPU-at-card0 case that shadows a discrete card
+    /// carrying the same vendor label.
+    fn stat_without_memory(name: &str) -> GpuStats {
+        GpuStats {
+            name: name.into(),
+            utilization_pct: None,
+            vram_used_mb: None,
+            vram_total_mb: None,
+            shared_used_mb: None,
+            shared: false,
+        }
+    }
+
+    #[test]
+    fn select_gpu_discrete_target_prefers_the_card_that_publishes_memory() {
+        // Two cards under the same vendor label ("Intel"), iGPU first (card0) and
+        // Arc second (card1) — the real shape read_drm_cards now produces.
+        let gpus = vec![stat_without_memory("Intel"), stat("Intel")];
+        let target = Target::Device { name: "Intel(R) Arc(TM) B580 Graphics".into(), uma: false };
+        let got = select_gpu(&gpus, &target).unwrap();
+        assert_eq!(got.vram_total_mb, Some(200));
+    }
+
+    #[test]
+    fn select_gpu_uma_target_still_takes_the_first_match() {
+        // A UMA target must not skip card0 looking for a pool — its base card is
+        // expected to publish nothing.
+        let gpus = vec![stat_without_memory("Intel"), stat("Intel")];
+        let target = Target::Device { name: "Intel(R) UHD Graphics 770".into(), uma: true };
+        let got = select_gpu(&gpus, &target).unwrap();
+        assert_eq!(got.vram_total_mb, None);
     }
 }
