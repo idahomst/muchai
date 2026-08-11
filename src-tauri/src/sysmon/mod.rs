@@ -30,8 +30,10 @@ pub fn default_providers(nvml: Option<nvml_wrapper::Nvml>) -> Vec<Box<dyn GpuPro
 pub enum Target {
     /// CPU selected, or no GPU available — hide the GPU section.
     None,
-    /// Report the GPU whose name matches this selected-device name.
-    Name(String),
+    /// Report the GPU matching this selected-device name. `uma` marks a
+    /// unified-memory device, whose memory total is derived from system RAM
+    /// rather than read from the device.
+    Device { name: String, uma: bool },
 }
 
 /// Map the saved selection + enumerated devices to a monitor `Target`, mirroring
@@ -49,11 +51,11 @@ pub fn resolve_target(selection: Option<GpuSelection>, devices: &[GpuDevice]) ->
             .expect("validate_gpu_selection guarantees the device exists");
         return match device.kind {
             DeviceKind::Cpu => Target::None,
-            _ => Target::Name(device.name.clone()),
+            kind => Target::Device { name: device.name.clone(), uma: kind == DeviceKind::Integrated },
         };
     }
     match crate::devices::pick_default_device(devices) {
-        Some(d) => Target::Name(d.name.clone()),
+        Some(d) => Target::Device { name: d.name.clone(), uma: d.kind == DeviceKind::Integrated },
         None => Target::None,
     }
 }
@@ -69,14 +71,14 @@ pub fn name_matches(candidate: &str, target: &str) -> bool {
     !c.is_empty() && !t.is_empty() && (c.contains(&t) || t.contains(&c))
 }
 
-/// Pick the GPU matching `target` from an already-gathered list. For a `Name`
+/// Pick the GPU matching `target` from an already-gathered list. For a `Device`
 /// match the returned `name` is overwritten with the selected display name, so the
 /// monitor shows the familiar Vulkan name while the live numbers come from the
 /// provider.
 pub fn select_gpu(gpus: &[GpuStats], target: &Target) -> Option<GpuStats> {
     match target {
         Target::None => None,
-        Target::Name(name) => gpus
+        Target::Device { name, .. } => gpus
             .iter()
             .find(|g| name_matches(&g.name, name))
             .map(|g| GpuStats { name: name.clone(), ..g.clone() }),
@@ -168,14 +170,23 @@ mod tests {
     fn resolve_target_valid_gpu_selection_keys_to_its_name() {
         let devices = vec![gpu_dev(0, "Intel", DeviceKind::Integrated), gpu_dev(1, "NVIDIA GeForce RTX 3060", DeviceKind::Discrete)];
         let sel = Some(GpuSelection { index: 1, name: "NVIDIA GeForce RTX 3060".into() });
-        assert_eq!(resolve_target(sel, &devices), Target::Name("NVIDIA GeForce RTX 3060".into()));
+        assert_eq!(resolve_target(sel, &devices), Target::Device { name: "NVIDIA GeForce RTX 3060".into(), uma: false });
+    }
+
+    #[test]
+    fn resolve_target_marks_an_integrated_selection_as_uma() {
+        // The uma flag is what makes gather substitute a budget; it comes from the
+        // engine banner's own "uma: 1" marker via DeviceKind::Integrated.
+        let devices = vec![gpu_dev(0, "Intel(R) UHD Graphics 770", DeviceKind::Integrated), gpu_dev(1, "NVIDIA", DeviceKind::Discrete)];
+        let sel = Some(GpuSelection { index: 0, name: "Intel(R) UHD Graphics 770".into() });
+        assert_eq!(resolve_target(sel, &devices), Target::Device { name: "Intel(R) UHD Graphics 770".into(), uma: true });
     }
 
     #[test]
     fn resolve_target_no_selection_keys_to_default_discrete_device() {
         // Mirrors resolve_backend: the default is the discrete GPU, not banner index 0.
         let devices = vec![gpu_dev(0, "Intel", DeviceKind::Integrated), gpu_dev(1, "NVIDIA", DeviceKind::Discrete), crate::devices::cpu_device()];
-        assert_eq!(resolve_target(None, &devices), Target::Name("NVIDIA".into()));
+        assert_eq!(resolve_target(None, &devices), Target::Device { name: "NVIDIA".into(), uma: false });
     }
 
     #[test]
@@ -190,7 +201,9 @@ mod tests {
     fn resolve_target_stale_selection_follows_gpu_presence() {
         let stale = Some(GpuSelection { index: 9, name: "Ghost".into() });
         let with_gpu = vec![gpu_dev(0, "Intel", DeviceKind::Integrated), crate::devices::cpu_device()];
-        assert_eq!(resolve_target(stale.clone(), &with_gpu), Target::Name("Intel".into()));
+        // Falling back to the default device must carry its uma flag too, or an
+        // integrated-only machine would lose its budget on a stale selection.
+        assert_eq!(resolve_target(stale.clone(), &with_gpu), Target::Device { name: "Intel".into(), uma: true });
         let cpu_only = vec![crate::devices::cpu_device()];
         assert_eq!(resolve_target(stale, &cpu_only), Target::None);
     }
@@ -203,18 +216,21 @@ mod tests {
     #[test]
     fn select_gpu_name_matches_and_overwrites_display_name() {
         let gpus = vec![stat("Intel"), stat("NVIDIA GeForce RTX 3060")];
-        let got = select_gpu(&gpus, &Target::Name("NVIDIA GeForce RTX 3060".into())).unwrap();
+        let target = Target::Device { name: "NVIDIA GeForce RTX 3060".into(), uma: false };
+        let got = select_gpu(&gpus, &target).unwrap();
         assert_eq!(got.name, "NVIDIA GeForce RTX 3060");
         assert_eq!(got.vram_total_mb, Some(200));
         // vendor-keyword provider name still matches the full selected name
         let amd = vec![stat("AMD")];
-        let got = select_gpu(&amd, &Target::Name("AMD Radeon RX 7900 XTX".into())).unwrap();
+        let target = Target::Device { name: "AMD Radeon RX 7900 XTX".into(), uma: false };
+        let got = select_gpu(&amd, &target).unwrap();
         assert_eq!(got.name, "AMD Radeon RX 7900 XTX"); // overwritten with the selected display name
     }
 
     #[test]
     fn select_gpu_name_no_match_or_empty_yields_none() {
-        assert_eq!(select_gpu(&[stat("Intel")], &Target::Name("NVIDIA".into())), None);
-        assert_eq!(select_gpu(&[], &Target::Name("NVIDIA".into())), None);
+        let target = Target::Device { name: "NVIDIA".into(), uma: false };
+        assert_eq!(select_gpu(&[stat("Intel")], &target), None);
+        assert_eq!(select_gpu(&[], &target), None);
     }
 }
