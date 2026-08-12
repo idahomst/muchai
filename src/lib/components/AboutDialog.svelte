@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { version } from "../../../package.json";
   import { APP_TAGLINE, CREDITS } from "../about";
   import { openExternal, engineStatus } from "../api";
   import type { EngineStatus } from "../types";
+  const version = __APP_VERSION__;
 
   let { onclose }: { onclose: () => void } = $props();
   let closeBtn = $state<HTMLButtonElement>();
