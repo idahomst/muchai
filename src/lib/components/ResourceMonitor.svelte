@@ -1,6 +1,6 @@
 <script lang="ts">
   import { sysStats } from "../stores";
-  import { version } from "../../../package.json";
+  const version = __APP_VERSION__;
   let { onAbout }: { onAbout: () => void } = $props();
   const gb = (v: number) => (v / 1024).toFixed(1);
   const frac = (used: number, total: number) => (total > 0 ? used / total : 0);
