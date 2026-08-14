@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { GETTING_STARTED } from "../helpText";
+
   let { onclose }: { onclose: () => void } = $props();
   let gotItBtn = $state<HTMLButtonElement>();
 
@@ -21,12 +23,12 @@
     <div class="modal-body">
       <p class="intro">Make images from text in three steps:</p>
       <ol class="steps">
-        <li><strong>Download a model</strong> — the AI that creates images. Use the <em>Download…</em> button under "Model".</li>
-        <li><strong>Describe your image</strong> in the Prompt box — the more specific, the better.</li>
-        <li><strong>Press Generate</strong> and wait a few moments for your image.</li>
+        {#each GETTING_STARTED as step}
+          <li><strong>{step.title}</strong> — {step.body}</li>
+        {/each}
       </ol>
       <p class="editnote">Already have a picture? Pick an editing model, drop the image in, and describe the change you want.</p>
-      <p class="tipnote">Hover any setting's label anytime to learn what it does.</p>
+      <p class="tipnote">Click the <span aria-hidden="true">ⓘ</span> next to any setting to learn what it does — or press <kbd>F1</kbd> for help anytime.</p>
     </div>
 
     <div class="modal-foot">
@@ -43,4 +45,6 @@
   .editnote { margin:12px 0 0; font-size:13px; line-height:1.4; color:var(--text-muted); }
   .tipnote { margin:12px 0 0; font-size:12px; color:var(--text-muted); padding:9px 12px;
     background:var(--accent-soft); border:1px solid var(--border); border-radius:var(--radius-sm); }
+  kbd { font-family:var(--mono); font-size:11px; padding:1px 5px; border-radius:4px;
+    background:var(--card); border:1px solid var(--border); }
 </style>

@@ -5,6 +5,7 @@
   import { recommendedSettings } from "../api";
   import { HELP } from "../helpText";
   import NumberStepper from "./NumberStepper.svelte";
+  import InfoHint from "./InfoHint.svelte";
 
   // Recommended settings for the current model (null → family has no preset,
   // so the button is hidden). Re-fetched only when the selected model id
@@ -52,47 +53,50 @@
   }
 </script>
 
+<!-- The ⓘ is a sibling of each <label>, never a child: a button inside a label
+     activates the label's control on click, so nesting it would bump the
+     stepper every time someone asked what the setting means. -->
 <div class="rowpair">
   <div class="field">
-    <label class="flabel" for="steps" title={HELP.steps}>Steps</label>
+    <span class="lbl-wrap"><label class="flabel" for="steps">Steps</label><InfoHint text={HELP.steps} label="About steps" /></span>
     <NumberStepper id="steps" ariaLabel="Steps" min={1} max={150} step={1} bind:value={$request.steps} />
   </div>
   <div class="field">
-    <label class="flabel" for="cfg" title={HELP.cfg}>CFG</label>
+    <span class="lbl-wrap"><label class="flabel" for="cfg">CFG</label><InfoHint text={HELP.cfg} label="About CFG" /></span>
     <NumberStepper id="cfg" ariaLabel="CFG" min={1} max={30} step={0.5} bind:value={$request.cfg_scale} />
   </div>
 </div>
 <div class="rowpair">
   <div class="field">
-    <label class="flabel" for="width" title={HELP.width}>Width</label>
+    <span class="lbl-wrap"><label class="flabel" for="width">Width</label><InfoHint text={HELP.width} label="About width" /></span>
     <NumberStepper id="width" ariaLabel="Width" min={64} max={2048} step={64} bind:value={$request.width} />
   </div>
   <div class="field">
-    <label class="flabel" for="height" title={HELP.height}>Height</label>
+    <span class="lbl-wrap"><label class="flabel" for="height">Height</label><InfoHint text={HELP.height} label="About height" /></span>
     <NumberStepper id="height" ariaLabel="Height" min={64} max={2048} step={64} bind:value={$request.height} />
   </div>
 </div>
 <div class="rowpair">
   <div class="field">
-    <label class="flabel" for="sampler" title={HELP.sampler}>Sampler</label>
+    <span class="lbl-wrap"><label class="flabel" for="sampler">Sampler</label><InfoHint text={HELP.sampler} label="About the sampler" /></span>
     <select id="sampler" class="select" bind:value={$request.sampler}>
       {#each SAMPLERS as s}<option value={s.value}>{s.label}</option>{/each}
     </select>
   </div>
   <div class="field">
-    <label class="flabel" for="batch" title={HELP.batch}>Batch</label>
+    <span class="lbl-wrap"><label class="flabel" for="batch">Batch</label><InfoHint text={HELP.batch} label="About batch" /></span>
     <NumberStepper id="batch" ariaLabel="Batch" min={1} max={8} step={1} bind:value={$request.batch_count} />
   </div>
 </div>
 <div class="rowpair">
   <div class="field">
-    <label class="flabel" for="format" title={HELP.format}>Format</label>
+    <span class="lbl-wrap"><label class="flabel" for="format">Format</label><InfoHint text={HELP.format} label="About the format" /></span>
     <select id="format" class="select" bind:value={$request.output_format}>
       {#each FORMATS as f}<option value={f.value}>{f.label}</option>{/each}
     </select>
   </div>
   <div class="field">
-    <label class="flabel" for="seed" title={HELP.seed}>Seed (-1 = random)</label>
+    <span class="lbl-wrap"><label class="flabel" for="seed">Seed (-1 = random)</label><InfoHint text={HELP.seed} label="About the seed" /></span>
     <div class="num">
       <input class="val" id="seed" type="number" aria-label="Seed" bind:value={$request.seed} on:change={onSeedCommit} />
       <button type="button" class="stp" title="Randomize seed" aria-label="Randomize seed" on:click={randomizeSeed}>⟳</button>
@@ -107,8 +111,11 @@
 <style>
   .rowpair { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:16px; }
   .field { display:flex; flex-direction:column; min-width:0; }
+  /* The gap between label and control now lives on the wrapper, so the ⓘ sits
+     on the label's baseline instead of below it. */
+  .lbl-wrap { display:flex; align-items:center; gap:.1rem; margin-bottom:6px; }
   .flabel { font-size:11px; letter-spacing:.03em; text-transform:uppercase; font-weight:600;
-    color:var(--text-muted); margin-bottom:6px; cursor:default; }
+    color:var(--text-muted); cursor:default; }
   .select { width:100%; background:var(--card); border:1px solid var(--border);
     border-radius:var(--radius-sm); color:var(--text); font:inherit; font-size:13px;
     padding:9px 11px; cursor:pointer; }

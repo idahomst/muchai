@@ -5,6 +5,7 @@
   import { editLora, deleteLora, listFamilies } from "../api";
   import type { LoraInfo, LibraryEntry } from "../types";
   import { HELP } from "../helpText";
+  import InfoHint from "./InfoHint.svelte";
 
   let { onAdd }: { onAdd: () => void } = $props();
 
@@ -175,7 +176,7 @@
 </script>
 
 <div class="head">
-  <p class="section" title={HELP.lora}>LoRAs</p>
+  <span class="sec-wrap"><p class="section">LoRAs</p><InfoHint text={HELP.lora} label="About LoRAs" /></span>
   <button class="addbtn" type="button" onclick={onAdd}>+ Add</button>
 </div>
 
@@ -297,6 +298,9 @@
 
 <style>
   .head { display:flex; align-items:baseline; gap:8px; }
+  /* Own wrapper so the head's 8px gap doesn't strand the ⓘ away from the word
+     it belongs to. */
+  .sec-wrap { display:flex; align-items:baseline; gap:.1rem; }
   .section { font-size:10.5px; letter-spacing:.05em; text-transform:uppercase;
     font-weight:600; color:var(--text-muted); margin:0 0 12px; }
   .addbtn { margin-left:auto; background:transparent; border:none; color:var(--accent);

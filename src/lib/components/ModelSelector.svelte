@@ -2,6 +2,8 @@
   import { library, request, selectedModelId, modelNotice, sysStats, revealModelPicker } from "../stores";
   import { rateLibrary } from "../api";
   import { familyBadge, quantBadge } from "../modelFormat";
+  import { HELP } from "../helpText";
+  import InfoHint from "./InfoHint.svelte";
   import type { LibraryEntry, LibraryFit } from "../types";
 
   let { onNew, onEdit, onDelete }:
@@ -126,7 +128,7 @@
 </script>
 
 <div class="selector-root" bind:this={rootEl}>
-  <div class="label">Model</div>
+  <div class="label">Model<InfoHint text={HELP.model} label="About models" /></div>
 
   <button class="selector" class:open onclick={toggle} aria-haspopup="listbox" aria-expanded={open}>
     <span class="diamond" aria-hidden="true">◆</span>
@@ -186,7 +188,7 @@
 
 <style>
   .selector-root { position: relative; display: flex; flex-direction: column; gap: 8px; }
-  .label { font-size: 12px; color: var(--text-muted); }
+  .label { font-size: 12px; color: var(--text-muted); display: flex; align-items: center; gap: .1rem; }
 
   .selector { display: flex; align-items: center; gap: 10px; width: 100%; height: 44px;
     padding: 0 12px; border-radius: var(--radius); cursor: pointer;
