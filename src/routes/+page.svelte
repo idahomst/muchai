@@ -24,10 +24,16 @@
   import PreferencesDialog from "$lib/components/PreferencesDialog.svelte";
   import AboutDialog from "$lib/components/AboutDialog.svelte";
   import HelpDialog from "$lib/components/HelpDialog.svelte";
+  import GuideDialog from "$lib/components/GuideDialog.svelte";
   import { applyTheme } from "$lib/theme";
+  import type { GuideId } from "$lib/guides";
 
   let showWelcome = $state(false);
   let showHelp = $state(false);
+  // Which guide the reader is showing, or null when it is closed. Owned here
+  // rather than inside the reader so a cross-link between the two guides and an
+  // opening click from Help go through the same one path.
+  let guide = $state<GuideId | null>(null);
   let showPrefs = $state(false);
   let showAbout = $state(false);
   let showNew = $state(false);
@@ -65,7 +71,7 @@
     if (e.key !== "F1") return;
     e.preventDefault();
     if (showHelp) { showHelp = false; return; }
-    if (showWelcome || showPrefs || showAbout || showNew || showAddLora || editing) return;
+    if (showWelcome || showPrefs || showAbout || showNew || showAddLora || editing || guide) return;
     showHelp = true;
   }
 
@@ -180,8 +186,16 @@
   <WelcomeDialog onclose={dismissWelcome} />
 {/if}
 
+<!-- The reader replaces Help rather than stacking on it, and closing it puts
+     Help back — so a guide reads as a step inside Help, not a second sheet. -->
 {#if showHelp}
-  <HelpDialog onclose={() => (showHelp = false)} />
+  <HelpDialog onclose={() => (showHelp = false)}
+    onguide={(id) => { guide = id; showHelp = false; }} />
+{/if}
+
+{#if guide}
+  <GuideDialog id={guide} onclose={() => { guide = null; showHelp = true; }}
+    onnavigate={(id) => (guide = id)} />
 {/if}
 
 {#if showPrefs}
