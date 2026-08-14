@@ -46,7 +46,7 @@ export type Step = { title: string; body: string };
 export const GETTING_STARTED: Step[] = [
   {
     title: "Download a model",
-    body: 'the AI that creates images. Use the Download… button under "Model".',
+    body: 'the AI that creates images. Open the "Model" box and click ＋ Add…',
   },
   {
     title: "Describe your image",
