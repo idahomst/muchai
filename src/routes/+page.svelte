@@ -23,9 +23,11 @@
   import WelcomeDialog from "$lib/components/WelcomeDialog.svelte";
   import PreferencesDialog from "$lib/components/PreferencesDialog.svelte";
   import AboutDialog from "$lib/components/AboutDialog.svelte";
+  import HelpDialog from "$lib/components/HelpDialog.svelte";
   import { applyTheme } from "$lib/theme";
 
   let showWelcome = $state(false);
+  let showHelp = $state(false);
   let showPrefs = $state(false);
   let showAbout = $state(false);
   let showNew = $state(false);
@@ -54,6 +56,17 @@
     } catch {
       settings.set(cur);
     }
+  }
+
+  // F1 opens Help from anywhere, and closes it again. It never stacks on top of
+  // another dialog: those are modal, and a Help sheet over them would leave two
+  // Escape targets and no clear owner of the focus.
+  function onkeydown(e: KeyboardEvent) {
+    if (e.key !== "F1") return;
+    e.preventDefault();
+    if (showHelp) { showHelp = false; return; }
+    if (showWelcome || showPrefs || showAbout || showNew || showAddLora || editing) return;
+    showHelp = true;
   }
 
   onMount(() => {
@@ -111,12 +124,14 @@
   });
 </script>
 
+<svelte:window {onkeydown} />
+
 <main class="app">
   <aside class="controls">
     <header class="panel-head">
       <h1 class="brand">Much<span class="ai">AI</span></h1>
       <div class="hdr-actions">
-        <button class="iconbtn" aria-label="Help" title="Help" onclick={() => (showWelcome = true)}>?</button>
+        <button class="iconbtn" aria-label="Help" title="Help (F1)" onclick={() => (showHelp = true)}>?</button>
         <button class="iconbtn" aria-label="Preferences"
           title={$engineUpdateTag ? "Preferences — engine update available" : "Preferences"}
           onclick={() => (showPrefs = true)}>⚙{#if $engineUpdateTag}<span class="dot" aria-hidden="true"></span>{/if}</button>
@@ -163,6 +178,10 @@
 
 {#if showWelcome}
   <WelcomeDialog onclose={dismissWelcome} />
+{/if}
+
+{#if showHelp}
+  <HelpDialog onclose={() => (showHelp = false)} />
 {/if}
 
 {#if showPrefs}

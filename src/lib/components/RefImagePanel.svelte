@@ -5,6 +5,7 @@
   import { pickRefImage, pickRefImageDialog, imageSrc } from "../api";
   import type { RefImageInfo } from "../types";
   import { HELP } from "../helpText";
+  import InfoHint from "./InfoHint.svelte";
 
   let refs = $state<string[]>([]);
   request.subscribe((r) => (refs = r.ref_images));
@@ -100,7 +101,8 @@
 
 {#if canEdit}
   <div class="head">
-    <p class="section" title={HELP.refImage}>Image to edit</p>
+    <p class="section">Image to edit</p>
+    <InfoHint text={HELP.refImage} label="About the image to edit" />
     {#if current}
       <button class="clear" type="button" onclick={clear}>Clear</button>
     {/if}

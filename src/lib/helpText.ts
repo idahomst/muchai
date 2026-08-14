@@ -38,3 +38,34 @@ export const HELP = {
   device:
     "The hardware that runs the AI. A graphics card (GPU) is much faster than CPU. 'Default' lets MuchAI choose for you.",
 } as const;
+
+export type Step = { title: string; body: string };
+
+// The three steps of a first image. Shown by the welcome dialog on first run
+// and by Help (F1) forever after — one copy so the two can never drift.
+export const GETTING_STARTED: Step[] = [
+  {
+    title: "Download a model",
+    body: 'the AI that creates images. Use the Download… button under "Model".',
+  },
+  {
+    title: "Describe your image",
+    body: "in the Prompt box — the more specific, the better.",
+  },
+  {
+    title: "Press Generate",
+    body: "and wait a few moments for your image.",
+  },
+];
+
+export type Shortcut = { keys: string; what: string };
+
+// Plain "Ctrl", not "⌘": MuchAI is Linux-only. Keep this list honest — it is
+// the only place these shortcuts are advertised, and nothing enforces that a
+// row here still matches its handler.
+export const SHORTCUTS: Shortcut[] = [
+  { keys: "Ctrl ↵", what: "Generate" },
+  { keys: "Ctrl M", what: "Open the model picker" },
+  { keys: "F1", what: "This help" },
+  { keys: "Esc", what: "Close a dialog" },
+];

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { request, isEditingModel } from "../stores";
   import { HELP } from "../helpText";
+  import InfoHint from "./InfoHint.svelte";
 
   // Legacy-mode component: `$:` and store auto-subscription, not runes.
   // The label must agree with the panel above it, so both read the one store
@@ -10,9 +11,11 @@
 
 <div class="field">
   <div class="flabel">
-    <label for="prompt" title={editing ? HELP.instruction : HELP.prompt}>
-      {editing ? "Instruction" : "Prompt"}
-    </label>
+    <label for="prompt">{editing ? "Instruction" : "Prompt"}</label>
+    <!-- An instruction and a prompt are not the same thing; the hint has to
+         follow the label rather than describe only one of them. -->
+    <InfoHint text={editing ? HELP.instruction : HELP.prompt}
+      label={editing ? "About the instruction" : "About the prompt"} />
     <button type="button" class="clear"
       title={editing ? "Clear instruction" : "Clear prompt"}
       disabled={!$request.prompt}
@@ -25,7 +28,8 @@
 </div>
 <div class="field">
   <div class="flabel">
-    <label for="neg" title={HELP.negativePrompt}>Negative prompt</label>
+    <label for="neg">Negative prompt</label>
+    <InfoHint text={HELP.negativePrompt} label="About the negative prompt" />
     <button type="button" class="clear" title="Clear negative prompt"
       disabled={!$request.negative_prompt}
       on:click={() => ($request.negative_prompt = "")}>Clear</button>
