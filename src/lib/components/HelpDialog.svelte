@@ -1,7 +1,8 @@
 <script lang="ts">
   import { GETTING_STARTED, SHORTCUTS } from "../helpText";
+  import { GUIDES, type GuideId } from "../guides";
 
-  let { onclose }: { onclose: () => void } = $props();
+  let { onclose, onguide }: { onclose: () => void; onguide: (id: GuideId) => void } = $props();
   let closeBtn = $state<HTMLButtonElement>();
 
   $effect(() => { closeBtn?.focus(); });
@@ -27,6 +28,16 @@
           <li><strong>{step.title}</strong> — {step.body}</li>
         {/each}
       </ol>
+
+      <p class="section-hdr">Guides</p>
+      <div class="guides">
+        {#each GUIDES as g}
+          <button class="guide" onclick={() => onguide(g.id)}>
+            <span class="g-title">{g.title}</span>
+            <span class="g-blurb">{g.blurb}</span>
+          </button>
+        {/each}
+      </div>
 
       <p class="section-hdr">Keyboard shortcuts</p>
       <dl class="keys">
@@ -60,6 +71,13 @@
   kbd { font-family:var(--mono); font-size:11px; padding:2px 6px; border-radius:4px;
     background:var(--card); border:1px solid var(--border); color:var(--text-muted);
     white-space:nowrap; }
+  .guides { display:flex; flex-direction:column; gap:6px; }
+  .guide { display:flex; flex-direction:column; gap:2px; text-align:left;
+    font:inherit; cursor:pointer; padding:9px 11px; border-radius:var(--radius-sm);
+    background:var(--card); border:1px solid var(--border); color:var(--text); }
+  .guide:hover { background:var(--card-hover); border-color:var(--border-strong); }
+  .g-title { font-size:13px; font-weight:600; }
+  .g-blurb { font-size:11.5px; color:var(--text-muted); }
   .tipnote { margin:18px 0 0; font-size:12px; color:var(--text-muted); padding:9px 12px;
     background:var(--accent-soft); border:1px solid var(--border); border-radius:var(--radius-sm); }
 </style>

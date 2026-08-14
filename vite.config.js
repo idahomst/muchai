@@ -27,6 +27,14 @@ export default defineConfig(async () => ({
   server: {
     port: 1420,
     strictPort: true,
+    // The guides are imported straight out of docs/ with ?raw. SvelteKit builds
+    // its own fs.allow list (src/, .svelte-kit/, node_modules/) and the project
+    // root is not on it, so the dev server would 404 them — the same trap
+    // package.json fell into above. Vite resolves each entry against the project
+    // root, and mergeConfig concatenates rather than replaces, so this survives
+    // alongside SvelteKit's generated list. A build inlines the imports and
+    // never consults this.
+    fs: { allow: ["docs"] },
     // Bind loopback only (never the LAN) unless TAURI_DEV_HOST is explicitly set
     // for mobile/remote dev. This is a dev-only server; `tauri build` bundles the
     // frontend and opens no port.

@@ -49,6 +49,15 @@ Support for LoRA and instruction-based editing has since landed.
 | ![Main window, light theme](docs/screenshots/main-light.png)<br>Main window (light theme) | ![Add a model](docs/screenshots/add-model.png)<br>Add a model from the curated catalog or a URL |
 | ![Edit a model](docs/screenshots/edit-model.png)<br>Edit a model's components and defaults | ![Preferences](docs/screenshots/preferences.png)<br>Preferences |
 
+## Guides
+
+- **[Making your first picture](docs/guide-basics.md)** — a walkthrough for
+  someone who has never used an image generator. Start here.
+- **[Getting more out of MuchAI](docs/guide-advanced.md)** — model families,
+  quantization, fitting a model in memory, LoRAs, editing, devices.
+
+Both ship inside the app as well: press <kbd>F1</kbd> and pick one.
+
 ## Requirements
 
 - Linux x86_64.
