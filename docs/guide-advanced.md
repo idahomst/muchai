@@ -257,9 +257,17 @@ across several folders; MuchAI scans all of them. Disk pressure is handled from
 the Add-a-model dialog, which offers to reclaim space by deleting installed
 models when a download will not fit.
 
-Every generated image is written alongside a **`.json` sidecar with the same
-name**, holding the full parameter set — prompt, seed, sampler, model, LoRAs and
-their strengths. That sidecar is what the **Load** button reads. The parameters
-are *not* embedded in the image file itself, which has one consequence worth
-knowing: copy a `.png` somewhere without its `.json` and the settings are gone.
-Deleting from within MuchAI moves both to the system Trash together.
+Your settings are recorded twice, in two different places, and the difference
+matters.
+
+The engine embeds a `parameters` text chunk in the image itself — the same
+convention other generators use, so a PNG dropped into another tool will
+generally give up its prompt and settings. MuchAI *also* writes a **`.json`
+sidecar with the same name**, holding the full request: prompt, seed, sampler,
+model, LoRAs and their strengths.
+
+The **Load** button reads the sidecar, not the embedded chunk. So a `.png`
+copied somewhere without its `.json` keeps a record other tools can read, but
+MuchAI itself can no longer restore those settings from it. Deleting from within
+MuchAI moves both files to the system Trash together, which is why deleting
+there is safer than deleting in a file manager.
