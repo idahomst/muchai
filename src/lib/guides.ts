@@ -8,6 +8,11 @@ import advanced from "../../docs/guide-advanced.md?raw";
 // build hashes and moves them. Eager so a guide renders in one pass with no
 // per-image await, keyed by bare filename to match how the markdown writes it
 // ("screenshots/foo.png", relative to docs/, which is what GitHub needs too).
+//
+// The glob covers the whole directory, not just the files the guides cite, so
+// adding an image to a guide needs no change here. The cost is that the
+// README-only shots ride along — about 1.3 MB in a bundle that installs
+// alongside multi-gigabyte models.
 const shots: Record<string, string> = Object.fromEntries(
   Object.entries(
     import.meta.glob("../../docs/screenshots/*.png", {
