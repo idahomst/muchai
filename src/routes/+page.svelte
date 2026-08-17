@@ -146,11 +146,7 @@
     </header>
 
     <div class="panel-selector">
-      <ModelSelector
-        onNew={() => (showNew = true)}
-        onEdit={(e) => (editing = e)}
-        onDelete={(e) => (editing = e)}
-      />
+      <ModelSelector onNew={() => (showNew = true)} onEdit={(e) => (editing = e)} />
       {#if $modelNotice}
         <div class="model-notice" role="status">
           <span>{$modelNotice}</span>
