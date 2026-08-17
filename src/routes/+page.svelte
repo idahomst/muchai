@@ -7,9 +7,10 @@
   import NewModelDialog from "$lib/components/NewModelDialog.svelte";
   import ModelEditor from "$lib/components/ModelEditor.svelte";
   import AddLoraDialog from "$lib/components/AddLoraDialog.svelte";
+  import LoraEditor from "$lib/components/LoraEditor.svelte";
   import DownloadStatus from "$lib/components/DownloadStatus.svelte";
   import EngineInstallStatus from "$lib/components/EngineInstallStatus.svelte";
-  import type { LibraryEntry } from "$lib/types";
+  import type { LibraryEntry, LoraInfo } from "$lib/types";
   import RefImagePanel from "$lib/components/RefImagePanel.svelte";
   import PromptPanel from "$lib/components/PromptPanel.svelte";
   import SettingsPanel from "$lib/components/SettingsPanel.svelte";
@@ -39,6 +40,7 @@
   let showNew = $state(false);
   let showAddLora = $state(false);
   let editing = $state<LibraryEntry | null>(null);
+  let editingLora = $state<LoraInfo | null>(null);
   let vramTotalMb = $state<number | null>(null);
   let vramShared = $state(false);
   let ramTotalMb = $state<number | null>(null);
@@ -71,7 +73,7 @@
     if (e.key !== "F1") return;
     e.preventDefault();
     if (showHelp) { showHelp = false; return; }
-    if (showWelcome || showPrefs || showAbout || showNew || showAddLora || editing || guide) return;
+    if (showWelcome || showPrefs || showAbout || showNew || showAddLora || editing || editingLora || guide) return;
     showHelp = true;
   }
 
@@ -162,7 +164,7 @@
       <p class="section">Parameters</p>
       <SettingsPanel />
       <div class="divider"></div>
-      <LoraPanel onAdd={() => (showAddLora = true)} />
+      <LoraPanel onAdd={() => (showAddLora = true)} onEdit={(l) => (editingLora = l)} />
     </div>
 
     <div class="panel-foot">
@@ -210,6 +212,9 @@
 {/if}
 {#if showAddLora}
   <AddLoraDialog onClose={() => (showAddLora = false)} />
+{/if}
+{#if editingLora}
+  <LoraEditor lora={editingLora} onClose={() => (editingLora = null)} />
 {/if}
 
 <!-- Persistent download status when the New-model dialog is closed but a

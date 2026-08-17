@@ -1,14 +1,13 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import { get } from "svelte/store";
-  import { loras, library, request, selectedModelId, refreshLoras } from "../stores";
-  import { editLora, deleteLora, listFamilies } from "../api";
+  import { loras, library, request, selectedModelId } from "../stores";
   import type { LoraInfo, LibraryEntry } from "../types";
   import { mismatched } from "../loraFit";
   import { HELP } from "../helpText";
   import InfoHint from "./InfoHint.svelte";
 
-  let { onAdd }: { onAdd: () => void } = $props();
+  let { onAdd, onEdit }: { onAdd: () => void; onEdit: (lora: LoraInfo) => void } = $props();
 
   let entries = $state<LoraInfo[]>([]);
   loras.subscribe((v) => (entries = v));
@@ -21,13 +20,6 @@
 
   let selected = $state<{ name: string; weight: number }[]>([]);
   request.subscribe((r) => (selected = r.loras));
-
-  // Family strings come from the recipe list, so the dropdown always matches
-  // what the rest of the app calls a family.
-  let families = $state<string[]>([]);
-  $effect(() => {
-    listFamilies().then((fs) => (families = fs)).catch(() => (families = []));
-  });
 
   const modelFamily = $derived(lib.find((e) => e.id === selId)?.family ?? "");
 
@@ -116,54 +108,6 @@
   const selectedMismatches = $derived(
     entries.filter((l) => isOn(l.name) && mismatched(l, modelFamily)).map((l) => l.display_name),
   );
-
-  // Row-level editor: rename, change family, delete. One inline form rather
-  // than a popup menu, since rename and change-family are the same form.
-  let editingId = $state<string | null>(null);
-  let editName = $state("");
-  let editFamily = $state("");
-  let editBaseModel = $state("");
-  let confirmingDelete = $state(false);
-  let busy = $state(false);
-  let error = $state<string | null>(null);
-
-  function openEditor(l: LoraInfo) {
-    editingId = editingId === l.id ? null : l.id;
-    editName = l.display_name;
-    editFamily = l.family;
-    editBaseModel = l.base_model;
-    confirmingDelete = false;
-    error = null;
-  }
-  async function saveEdit(l: LoraInfo) {
-    busy = true;
-    error = null;
-    try {
-      await editLora(l.id, editName, editFamily, editBaseModel);
-      await refreshLoras();
-      editingId = null;
-    } catch (e) {
-      error = String(e);
-    } finally {
-      busy = false;
-    }
-  }
-  async function doDelete(l: LoraInfo) {
-    busy = true;
-    error = null;
-    try {
-      await deleteLora(l.id);
-      // Drop it from the current run too, or the next generate would fail
-      // pre-flight on a LoRA that no longer exists.
-      request.update((r) => ({ ...r, loras: r.loras.filter((s) => s.name !== l.name) }));
-      await refreshLoras();
-      editingId = null;
-    } catch (e) {
-      error = String(e);
-    } finally {
-      busy = false;
-    }
-  }
 </script>
 
 <div class="head">
@@ -222,7 +166,8 @@
             oninput={(e) => setWeight(l.name, Number(e.currentTarget.value))}
           />
           <span class="weight">{weightOf(l.name).toFixed(2)}</span>
-          <button class="iconbtn" type="button" aria-label="Manage {l.display_name}" onclick={() => openEditor(l)}>⋯</button>
+          <button class="iconbtn" type="button" title="Edit {l.display_name}"
+            aria-label="Edit {l.display_name}" onclick={() => onEdit(l)}>✎</button>
         </div>
 
         {#if l.broken}
@@ -247,40 +192,6 @@
             {/each}
           </div>
           {/if}
-        {/if}
-
-        {#if editingId === l.id}
-          <div class="editor">
-            <input class="text" bind:value={editName} aria-label="LoRA name" />
-            <select class="select" bind:value={editFamily} aria-label="Base family">
-              <option value="">Unknown</option>
-              {#each families as f}<option value={f}>{f}</option>{/each}
-            </select>
-            <!-- Free text on purpose. It is a note to yourself, shown verbatim
-                 and never matched against anything, so anything that helps you
-                 recognise the right base model is a valid value. Civitai fills
-                 it at add-time; a local file or an older entry starts empty. -->
-            <input
-              class="text"
-              bind:value={editBaseModel}
-              aria-label="Base model note"
-              placeholder="Base model — e.g. Flux.2 Klein 4B" />
-            <!-- The pool filename is the engine's identity for this LoRA and is
-                 immutable. Showing it here is how the user finds out an add was
-                 auto-suffixed after a name collision. -->
-            <p class="poolname">Stored as <code>{l.name}.safetensors</code></p>
-            <div class="editrow">
-              {#if confirmingDelete}
-                <span class="warn">Remove “{l.display_name}”?</span>
-                <button class="btn danger" disabled={busy} onclick={() => doDelete(l)}>Confirm</button>
-                <button class="btn" disabled={busy} onclick={() => (confirmingDelete = false)}>Cancel</button>
-              {:else}
-                <button class="btn" disabled={busy} onclick={() => saveEdit(l)}>Save</button>
-                <button class="btn danger" disabled={busy} onclick={() => (confirmingDelete = true)}>Remove…</button>
-              {/if}
-            </div>
-            {#if error}<p class="err">{error}</p>{/if}
-          </div>
         {/if}
       </li>
     {/each}
@@ -330,18 +241,4 @@
   /* Already in the prompt — clicking is a deliberate no-op, so say so visually
      rather than letting the click look broken. */
   .chip.used { border-color:var(--accent); color:var(--accent); }
-  .editor { display:flex; flex-direction:column; gap:6px; margin:8px 0 0 22px; }
-  .text, .select { width:100%; background:var(--card); border:1px solid var(--border);
-    border-radius:var(--radius-sm); color:var(--text); font:inherit; font-size:12.5px; padding:6px 9px; }
-  .text:focus, .select:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
-  .poolname { margin:0; font-size:10.5px; color:var(--text-muted); overflow-wrap:anywhere; }
-  .poolname code { font-family:var(--mono, ui-monospace, monospace); font-size:10.5px; }
-  .editrow { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
-  .warn { font-size:11.5px; color:var(--warn); flex:1 1 100%; }
-  .btn { background:var(--card); border:1px solid var(--border); color:var(--text-muted);
-    border-radius:var(--radius-sm); font:inherit; font-size:12px; padding:5px 10px; cursor:pointer; }
-  .btn:hover:not(:disabled) { background:var(--card-hover); color:var(--text); border-color:var(--border-strong); }
-  .btn:disabled { opacity:.5; cursor:default; }
-  .btn.danger { color:var(--danger-soft); }
-  .err { margin:0; font-size:11.5px; color:var(--danger-soft); overflow-wrap:anywhere; }
 </style>
