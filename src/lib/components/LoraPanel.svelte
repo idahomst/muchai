@@ -4,6 +4,7 @@
   import { loras, library, request, selectedModelId, refreshLoras } from "../stores";
   import { editLora, deleteLora, listFamilies } from "../api";
   import type { LoraInfo, LibraryEntry } from "../types";
+  import { mismatched } from "../loraFit";
   import { HELP } from "../helpText";
   import InfoHint from "./InfoHint.svelte";
 
@@ -29,16 +30,6 @@
   });
 
   const modelFamily = $derived(lib.find((e) => e.id === selId)?.family ?? "");
-
-  // Every LoRA is always listed. Family is a hint, never a filter: it is too
-  // coarse to decide compatibility (a klein-4B and a klein-9B LoRA are both
-  // `flux2` yet only one will load), and it is itself guessed — a model
-  // mislabelled by the filename heuristic used to hide every LoRA the user had,
-  // with no way to override it. So the picker shows what it knows and the user
-  // makes the call.
-  function mismatched(l: LoraInfo): boolean {
-    return modelFamily !== "" && l.family !== "" && l.family !== modelFamily;
-  }
 
   function isOn(name: string): boolean {
     return selected.some((s) => s.name === name);
@@ -123,7 +114,7 @@
   // guessed family. Selections that look wrong are flagged in the list and in
   // the strip below instead, and the run is left to the user.
   const selectedMismatches = $derived(
-    entries.filter((l) => isOn(l.name) && mismatched(l)).map((l) => l.display_name),
+    entries.filter((l) => isOn(l.name) && mismatched(l, modelFamily)).map((l) => l.display_name),
   );
 
   // Row-level editor: rename, change family, delete. One inline form rather
@@ -212,7 +203,7 @@
               onchange={() => toggle(l)}
             />
             <span class="label" title={l.display_name}>{l.display_name}</span>
-            {#if mismatched(l)}
+            {#if mismatched(l, modelFamily)}
               <!-- A hint, not a veto: the checkbox stays live. -->
               <span
                 class="badge"
