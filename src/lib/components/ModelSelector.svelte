@@ -4,10 +4,11 @@
   import { familyBadge, quantBadge } from "../modelFormat";
   import { HELP } from "../helpText";
   import InfoHint from "./InfoHint.svelte";
+  import PickerPopover from "./PickerPopover.svelte";
   import type { LibraryEntry, LibraryFit } from "../types";
 
-  let { onNew, onEdit, onDelete }:
-    { onNew: () => void; onEdit: (entry: LibraryEntry) => void; onDelete: (entry: LibraryEntry) => void } = $props();
+  let { onNew, onEdit }:
+    { onNew: () => void; onEdit: (entry: LibraryEntry) => void } = $props();
 
   let entries = $state<LibraryEntry[]>([]);
   library.subscribe((v) => (entries = v));
@@ -19,14 +20,10 @@
   sysStats.subscribe((s) => (vramTotalMb = s?.gpu?.vram_total_mb ?? null));
 
   let open = $state(false);
-  let filter = $state("");
+  let anchorEl = $state<HTMLButtonElement>();
   let fits = $state<Record<string, LibraryFit>>({});
-  let rootEl: HTMLDivElement;
 
   const selected = $derived(entries.find((e) => e.id === selId) ?? null);
-  const filtered = $derived(
-    entries.filter((e) => e.name.toLowerCase().includes(filter.trim().toLowerCase())),
-  );
 
   // Fetch per-model VRAM fit whenever the library or detected VRAM changes.
   // (vram_total_mb is stable after detection, so this does not spin on stats.)
@@ -59,7 +56,7 @@
     return `${glyph} ${gb} GB`;
   }
 
-  function toggle() { open = !open; if (open) filter = ""; }
+  function toggle() { open = !open; }
   function close() { open = false; }
 
   // "Edit this image" picked a model on the user's behalf when several were
@@ -77,31 +74,12 @@
     close();
   }
 
-  let filterEl: HTMLInputElement | undefined = $state();
-  let highlight = $state(0);
-
-  // Keep the highlight index in range as filtering shrinks the list.
-  $effect(() => { if (highlight > filtered.length - 1) highlight = Math.max(0, filtered.length - 1); });
-
-  // On open: focus the filter and start the highlight on the selected row.
-  $effect(() => {
-    if (!open) return;
-    const i = filtered.findIndex((e) => e.id === selId);
-    highlight = i >= 0 ? i : 0;
-    queueMicrotask(() => filterEl?.focus());
-  });
-
-  // Scroll the keyboard-highlighted row into view.
-  $effect(() => {
-    if (!open) return;
-    void highlight;
-    (rootEl?.querySelector(".row.active") as HTMLElement | null)?.scrollIntoView({ block: "nearest" });
-  });
-
-  function onFilterKey(e: KeyboardEvent) {
-    if (e.key === "ArrowDown") { e.preventDefault(); highlight = Math.min(highlight + 1, filtered.length - 1); }
-    else if (e.key === "ArrowUp") { e.preventDefault(); highlight = Math.max(highlight - 1, 0); }
-    else if (e.key === "Enter") { e.preventDefault(); const en = filtered[highlight]; if (en) select(en); }
+  // ✎ never touches selectedModelId. Editing a model used to mean selecting it
+  // first — changing the active model was a side effect of wanting to rename
+  // one. The popover closes first so the modal is never stacked on it.
+  function edit(entry: LibraryEntry) {
+    close();
+    onEdit(entry);
   }
 
   // Global Ctrl/Cmd+M toggles the selector.
@@ -112,130 +90,108 @@
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   });
-
-  // Non-modal popover: close on outside pointerdown / Escape while open.
-  $effect(() => {
-    if (!open) return;
-    const onDown = (e: PointerEvent) => { if (rootEl && !rootEl.contains(e.target as Node)) close(); };
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
-    document.addEventListener("pointerdown", onDown, true);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("pointerdown", onDown, true);
-      document.removeEventListener("keydown", onKey);
-    };
-  });
 </script>
 
-<div class="selector-root" bind:this={rootEl}>
+<div class="selector-root">
   <div class="label">Model<InfoHint text={HELP.model} label="About models" /></div>
 
-  <button class="selector" class:open onclick={toggle} aria-haspopup="listbox" aria-expanded={open}>
+  <button class="selector" class:open bind:this={anchorEl} onclick={toggle}
+    aria-haspopup="listbox" aria-expanded={open}>
     <span class="diamond" aria-hidden="true">◆</span>
-    {#if selected}
-      <span class="sel-name">{selected.broken ? "⚠ " : ""}{selected.name}</span>
-      {#if quantBadge(selected)}<span class="chip">{quantBadge(selected)}</span>{/if}
-      <span class="chip fam">{familyBadge(selected)}</span>
-    {:else}
-      <span class="sel-name placeholder">No model selected</span>
-    {/if}
+    <!-- Name on its own line, badges beneath it. On one line the badge group is
+         nowrap and cannot shrink, so the name absorbed the whole deficit. -->
+    <span class="trigger-text">
+      {#if selected}
+        <span class="sel-name" title={selected.name}>{selected.broken ? "⚠ " : ""}{selected.name}</span>
+        <span class="sel-meta">
+          {#if quantBadge(selected)}<span class="chip">{quantBadge(selected)}</span>{/if}
+          <span class="chip fam">{familyBadge(selected)}</span>
+        </span>
+      {:else}
+        <span class="sel-name placeholder">No model selected</span>
+      {/if}
+    </span>
     <span class="caret" aria-hidden="true">⌄</span>
   </button>
 
   {#if open}
-    <div class="popover">
-      <div class="search">
-        <span class="mag" aria-hidden="true">⌕</span>
-        <input class="filter" aria-label="Filter models" placeholder="Filter models…" bind:value={filter} bind:this={filterEl} onkeydown={onFilterKey} />
-      </div>
+    <PickerPopover
+      anchor={anchorEl}
+      placeholder="Filter models…"
+      items={entries}
+      key={(e) => e.id}
+      match={(e, q) => e.name.toLowerCase().includes(q)}
+      selected={(e) => e.id === selId}
+      onclose={close}
+      onchoose={select}
+    >
+      {#snippet row(entry: LibraryEntry)}
+        <span class="rname" class:dim={entry.broken || fitClass(entry.id) === "bad"}
+          >{entry.broken ? "⚠ " : ""}{entry.name}</span>
+        <span class="rmeta">
+          {#if quantBadge(entry)}<span class="chip">{quantBadge(entry)}</span>{/if}
+          <span class="chip fam">{familyBadge(entry)}</span>
+          {#if fitLabel(entry.id)}<span class="vram {fitClass(entry.id)}">{fitLabel(entry.id)}</span>{/if}
+          <span class="check">{entry.id === selId ? "✓" : ""}</span>
+        </span>
+      {/snippet}
 
-      <div class="list" role="listbox" tabindex="-1" aria-activedescendant={filtered[highlight] ? "ms-" + filtered[highlight].id : undefined}>
-        {#if filtered.length === 0}
-          <p class="empty">{entries.length === 0 ? "No models yet — add one below." : "No matches."}</p>
-        {:else}
-          {#each filtered as entry, idx (entry.id)}
-            <button
-              class="row"
-              class:selected={entry.id === selId}
-              class:bad-row={fitClass(entry.id) === "bad" || entry.broken}
-              class:active={idx === highlight}
-              id={"ms-" + entry.id}
-              role="option"
-              aria-selected={entry.id === selId}
-              onclick={() => select(entry)}
-              onmouseenter={() => (highlight = idx)}
-            >
-              <span class="rname">{entry.broken ? "⚠ " : ""}{entry.name}</span>
-              <span class="rmeta">
-                {#if quantBadge(entry)}<span class="chip">{quantBadge(entry)}</span>{/if}
-                <span class="chip fam">{familyBadge(entry)}</span>
-                {#if fitLabel(entry.id)}<span class="vram {fitClass(entry.id)}">{fitLabel(entry.id)}</span>{/if}
-                <span class="check">{entry.id === selId ? "✓" : ""}</span>
-              </span>
-            </button>
-          {/each}
-        {/if}
-      </div>
+      {#snippet action(entry: LibraryEntry)}
+        <button class="rowedit" type="button" title="Edit {entry.name}"
+          aria-label="Edit {entry.name}" onclick={() => edit(entry)}>✎</button>
+      {/snippet}
 
-      <div class="foot">
+      {#snippet empty()}
+        {entries.length === 0 ? "No models yet — add one below." : "No matches."}
+      {/snippet}
+
+      {#snippet footer()}
         <button class="fbtn add" onclick={() => { close(); onNew(); }}>＋ Add…</button>
-        <button class="fbtn" disabled={!selected} onclick={() => { if (selected) { close(); onEdit(selected); } }}>Edit…</button>
-        <button class="fbtn del" disabled={!selected} onclick={() => { if (selected) { close(); onDelete(selected); } }}>Delete…</button>
-      </div>
-    </div>
+      {/snippet}
+    </PickerPopover>
   {/if}
 </div>
 
 <style>
-  .selector-root { position: relative; display: flex; flex-direction: column; gap: 8px; }
+  .selector-root { display: flex; flex-direction: column; gap: 8px; }
   .label { font-size: 12px; color: var(--text-muted); display: flex; align-items: center; gap: .1rem; }
 
-  .selector { display: flex; align-items: center; gap: 10px; width: 100%; height: 44px;
-    padding: 0 12px; border-radius: var(--radius); cursor: pointer;
+  .selector { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 52px;
+    padding: 8px 12px; border-radius: var(--radius); cursor: pointer;
     background: var(--card); border: 1px solid var(--border); color: var(--text); text-align: left; }
   .selector:hover { background: var(--card-hover); border-color: var(--border-strong); }
   .selector.open { border-color: var(--border-strong); }
-  .diamond { color: var(--accent); font-size: 11px; line-height: 1; }
-  .sel-name { font-size: 14px; font-weight: 550; flex: 0 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .diamond { flex: 0 0 auto; color: var(--accent); font-size: 11px; line-height: 1; }
+  .trigger-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+  .sel-name { font-size: 14px; font-weight: 550; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .sel-name.placeholder { color: var(--text-muted); font-weight: 400; }
+  .sel-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .caret { flex: 0 0 auto; font-size: 12px; color: var(--text-faint); }
+
   .chip { font-size: 10.5px; font-weight: 600; letter-spacing: .02em; padding: 2px 7px;
     border-radius: 5px; white-space: nowrap; background: var(--card-hover); color: var(--text-muted); }
   .chip.fam { color: var(--accent); background: var(--accent-soft); }
-  .caret { margin-left: auto; font-size: 12px; color: var(--text-faint); }
 
-  .popover { position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 30;
-    border-radius: var(--radius); overflow: hidden; background: var(--surface);
-    border: 1px solid var(--border-strong); box-shadow: 0 16px 40px var(--overlay), 0 2px 8px var(--overlay-soft); }
-  .search { display: flex; align-items: center; gap: 8px; padding: 9px 11px; border-bottom: 1px solid var(--border); }
-  .mag { font-size: 13px; color: var(--text-muted); }
-  .filter { flex: 1; background: none; border: none; color: var(--text); font: inherit; font-size: 13px; padding: 0; outline: none; }
-  .filter::placeholder { color: var(--text-muted); }
-
-  .list { padding: 6px; max-height: 320px; overflow-y: auto; }
-  .row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px;
-    border-radius: var(--radius-sm); cursor: pointer; position: relative;
-    background: transparent; border: none; color: var(--text); text-align: left; }
-  .row + .row { margin-top: 2px; }
-  .row:hover { background: var(--card-hover); }
-  .row.active { background: var(--card-hover); box-shadow: inset 0 0 0 1px var(--border-strong); }
-  .row.selected { background: var(--accent-soft); }
-  .row.selected::before { content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px;
-    border-radius: 0 3px 3px 0; background: var(--accent); }
-  .rname { font-size: 13.5px; font-weight: 550; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .rmeta { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+  /* Rows live inside PickerPopover's DOM but are authored here, so these
+     scoped rules still apply. flex:1 1 auto + min-width:0 is the fix: without
+     it the nowrap .rmeta group wins and the name truncates to one character. */
+  .rname { flex: 1 1 auto; min-width: 0; font-size: 13.5px; font-weight: 550;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rname.dim { opacity: .55; }
+  .rmeta { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
   .vram { font-size: 11px; font-weight: 600; min-width: 56px; text-align: right; white-space: nowrap; }
   .vram.ok { color: var(--success); }
   .vram.warn { color: var(--warn); }
   .vram.bad { color: var(--danger); }
-  .row.bad-row .rname { opacity: .55; }
   .check { color: var(--accent); font-size: 13px; width: 14px; text-align: center; }
-  .empty { font-size: 13px; color: var(--text-muted); margin: 6px 8px; }
 
-  .foot { display: flex; align-items: center; gap: 4px; padding: 7px; border-top: 1px solid var(--border); }
+  .rowedit { flex: 0 0 auto; width: 26px; height: 26px; margin-right: 6px; border-radius: 6px;
+    display: grid; place-items: center; color: var(--text-faint); cursor: pointer;
+    font: inherit; font-size: 12px; background: transparent; border: 1px solid transparent; }
+  .rowedit:hover { background: var(--card); color: var(--text); border-color: var(--border-strong); }
+
   .fbtn { flex: 1; text-align: center; font-size: 12px; font-weight: 550; padding: 7px 8px;
     border-radius: var(--radius-sm); cursor: pointer; background: transparent; border: none; color: var(--text-muted); }
   .fbtn:hover { background: var(--card-hover); color: var(--text); }
-  .fbtn:disabled { opacity: .5; cursor: default; }
   .fbtn.add { color: var(--accent); }
-  .fbtn.del:hover { color: var(--danger); }
 </style>
