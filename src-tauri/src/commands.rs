@@ -1090,6 +1090,53 @@ async fn fill_required_components(
     Ok(())
 }
 
+/// What pasting this URL would produce, answered before a byte is fetched.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct UrlAddPlan {
+    pub filename: String,
+    pub family: String,
+    /// The recipe's display name, or the family id when it has no recipe.
+    pub family_name: String,
+    pub edits_images: bool,
+    /// Required roles the diffusion file alone will not cover, each already
+    /// marked with whether the shared pool can supply it for free.
+    pub rows: Vec<completion::CompletionRow>,
+}
+
+/// Pure half of `plan_url_add`: everything is derived from the filename in the
+/// URL and from what is already in the pool. No network access.
+fn url_add_plan(url: &str, models_dir: &Path) -> Result<UrlAddPlan, String> {
+    if !url.starts_with("https://") {
+        return Err("URL must be https".into());
+    }
+    let filename = downloader::derive_filename(None, url);
+    let family = infer_single_file_family(&filename);
+    let mut components = manifest::ManifestComponents::default();
+    components.set_role(ComponentRole::Diffusion, filename.clone());
+    let rows = completion::plan_completion(&family, &components, models_dir);
+    let family_name =
+        recipes::recipe_for(&family).map(|r| r.name.to_string()).unwrap_or_else(|| family.clone());
+    Ok(UrlAddPlan {
+        filename,
+        family_name,
+        edits_images: recipes::is_edit_family(&family),
+        family,
+        rows,
+    })
+}
+
+/// Preview a URL add: what family MuchAI recognises, whether it edits images,
+/// and which companion files it would have to fetch. Shown while Cancel is
+/// still available — after the download it would be theatre.
+#[tauri::command]
+pub fn plan_url_add(state: State<'_, AppState>, url: String) -> Result<UrlAddPlan, String> {
+    let models_dir = {
+        let cfg = state.config.lock().unwrap();
+        PathBuf::from(&cfg.models_dir)
+    };
+    url_add_plan(&url, &models_dir)
+}
+
 /// Download a single user-supplied URL into its own `models_dir/<id>/` folder,
 /// infer its family from the filename, and write a manifest. Mirrors
 /// `add_catalog_model`'s download/error-cleanup shape for the one file the user
@@ -2855,6 +2902,58 @@ mod tests {
         // The base families keep their own files.
         assert_eq!(infer_single_file_family("flux1-dev-Q4_K_S.gguf"), "flux1");
         assert_eq!(infer_single_file_family("qwen-image-Q4.gguf"), "qwen-image");
+    }
+
+    /// The exact URL the user pasted. Everything here is known from the
+    /// filename and the pool — no network, no download.
+    #[test]
+    fn a_pasted_kontext_url_is_recognised_before_anything_downloads() {
+        let root = scratch("urlplan");
+        let pool = root.join("shared").join("flux1");
+        std::fs::create_dir_all(&pool).unwrap();
+        for f in ["clip_l.safetensors", "t5xxl_fp8_e4m3fn.safetensors", "ae.safetensors"] {
+            std::fs::write(pool.join(f), b"x").unwrap();
+        }
+        let plan = url_add_plan(
+            "https://huggingface.co/unsloth/FLUX.1-Kontext-dev-GGUF/resolve/main/flux1-kontext-dev-Q5_K_M.gguf?download=true",
+            &root,
+        )
+        .unwrap();
+        assert_eq!(plan.filename, "flux1-kontext-dev-Q5_K_M.gguf");
+        assert_eq!(plan.family, "flux1-kontext");
+        assert_eq!(plan.family_name, "FLUX.1 Kontext (edits images)");
+        assert!(plan.edits_images);
+        assert_eq!(plan.rows.len(), 3, "clip_l, t5xxl, vae");
+        assert!(plan.rows.iter().all(|r| r.have), "the flux1 pool already has all three");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_empty_pool_makes_the_plan_name_every_download() {
+        let root = scratch("urlplanempty");
+        let plan = url_add_plan("https://e/flux1-kontext-dev-Q5_K_M.gguf", &root).unwrap();
+        assert_eq!(plan.rows.len(), 3);
+        assert!(plan.rows.iter().all(|r| !r.have && r.fillable));
+        let total: u64 = plan.rows.iter().map(|r| r.size_bytes).sum();
+        assert_eq!(total, 4_893_934_904 + 246_144_152 + 335_304_388);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_single_file_family_has_nothing_to_plan() {
+        let root = scratch("urlplansd15");
+        let plan = url_add_plan("https://e/v1-5-pruned-emaonly.safetensors", &root).unwrap();
+        assert_eq!(plan.family, "sd15");
+        assert!(!plan.edits_images);
+        assert!(plan.rows.is_empty(), "sd15 has no recipe and needs no companions");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_non_https_url_is_refused_by_the_planner_too() {
+        let root = scratch("urlplanhttp");
+        assert!(url_add_plan("http://e/x.gguf", &root).is_err());
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// A URL-added FLUX.1 model used to arrive with no engine flags at all, so
