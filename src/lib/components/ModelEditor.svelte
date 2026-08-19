@@ -1,11 +1,11 @@
 <script lang="ts">
   import { untrack } from "svelte";
-  import { completeModel, editModel, deleteModelEntry, pickModelFile, listFamilies } from "../api";
+  import { completeModel, editModel, deleteModelEntry, pickModelFile, listFamilies, listRecipes } from "../api";
   import { refreshLibrary, editFamilies, runDownload, downloadBusy, downloadProgress, downloadError } from "../stores";
   import { formatBytes } from "../modelFormat";
   import DownloadProgressBar from "./DownloadProgressBar.svelte";
   import { VAE_FORMATS, PREDICTIONS, SAMPLERS, ROLE_LABELS } from "../types";
-  import type { LibraryEntry, ManifestFlags, ModelComponents, GenDefaults, ModelRef, Sampler } from "../types";
+  import type { LibraryEntry, ManifestFlags, ModelComponents, GenDefaults, ModelRef, Sampler, RecipeInfo } from "../types";
 
   let { entry, onClose }: { entry: LibraryEntry; onClose: () => void } = $props();
 
@@ -48,6 +48,23 @@
       .then((fs) => (families = fs.includes(entry.family) ? fs : [...fs, entry.family]))
       .catch(() => {});
   });
+
+  // Retagging a model by hand is the other half of the repair: a model added
+  // before its family had a recipe carries no engine flags at all, and for
+  // FLUX.1 that means running with no `--vae-format flux`. Changing the family
+  // fills them in visibly, in the selects below, so the choice stays the user's
+  // — and only when both are still Default, so an explicit one is never lost.
+  let recipeList = $state<RecipeInfo[]>([]);
+  $effect(() => {
+    listRecipes().then((r) => (recipeList = r)).catch(() => {});
+  });
+  function seedFlags(e: Event & { currentTarget: HTMLSelectElement }) {
+    if (vaeFormat !== "" || prediction !== "") return;
+    const r = recipeList.find((x) => x.family === e.currentTarget.value);
+    if (!r) return;
+    vaeFormat = r.vae_format ?? "";
+    prediction = r.prediction ?? "";
+  }
 
   // Tri-state, exactly as stored: null means "whatever the family says". Kept as
   // an override rather than a plain boolean so that changing the family above
@@ -180,7 +197,7 @@
       </div>
       <div class="dlg-field">
         <p class="microlabel">Family</p>
-        <select class="dlg-select" bind:value={family}>
+        <select class="dlg-select" bind:value={family} onchange={seedFlags}>
           {#each families as f}<option value={f}>{f}</option>{/each}
         </select>
       </div>
