@@ -106,6 +106,7 @@
         <span class="sel-meta">
           {#if quantBadge(selected)}<span class="chip">{quantBadge(selected)}</span>{/if}
           <span class="chip fam">{familyBadge(selected)}</span>
+          {#if selected.incomplete.length > 0}<span class="chip todo" title="Missing required components — open ✎ to complete">incomplete</span>{/if}
         </span>
       {:else}
         <span class="sel-name placeholder">No model selected</span>
@@ -131,6 +132,7 @@
         <span class="rmeta">
           {#if quantBadge(entry)}<span class="chip">{quantBadge(entry)}</span>{/if}
           <span class="chip fam">{familyBadge(entry)}</span>
+          {#if entry.incomplete.length > 0}<span class="chip todo" title="Missing required components — open ✎ to complete">incomplete</span>{/if}
           {#if fitLabel(entry.id)}<span class="vram {fitClass(entry.id)}">{fitLabel(entry.id)}</span>{/if}
           <span class="check">{entry.id === selId ? "✓" : ""}</span>
         </span>
@@ -171,6 +173,7 @@
   .chip { font-size: 10.5px; font-weight: 600; letter-spacing: .02em; padding: 2px 7px;
     border-radius: 5px; white-space: nowrap; background: var(--card-hover); color: var(--text-muted); }
   .chip.fam { color: var(--accent); background: var(--accent-soft); }
+  .chip.todo { color: var(--warn); background: var(--card-hover); }
 
   /* Rows live inside PickerPopover's DOM but are authored here, so these
      scoped rules still apply. flex:1 1 auto + min-width:0 is the fix: without
