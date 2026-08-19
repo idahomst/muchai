@@ -961,6 +961,7 @@ pub async fn add_catalog_model(
         components,
         flags,
         recommended_settings: None,
+        edits_images: None,
     };
     manifest::save_to(&model_dir, &man).map_err(|e| e.to_string())?;
 
@@ -1053,6 +1054,7 @@ pub async fn add_url_model(
         components,
         flags: manifest::ManifestFlags::default(),
         recommended_settings: None,
+        edits_images: None,
     };
     manifest::save_to(&model_dir, &man).map_err(|e| e.to_string())?;
     Ok(library::entry_from_manifest(&model_dir, &man))
@@ -1247,13 +1249,15 @@ pub fn add_local_model(
         components,
         flags: manifest::ManifestFlags::default(),
         recommended_settings: None,
+        edits_images: None,
     };
     manifest::save_to(&model_dir, &man).map_err(|e| e.to_string())?;
     Ok(library::entry_from_manifest(&model_dir, &man))
 }
 
 /// Save the full editable surface of a model's manifest: name, family, engine
-/// flags, component paths, and the optional recommended-settings override.
+/// flags, component paths, the optional recommended-settings override, and the
+/// optional edit-capability override (`None` = let the family decide).
 /// Component paths arrive absolute from the UI and are relativized against the
 /// model folder (in-folder files become relative; pooled/external stay absolute).
 #[tauri::command]
@@ -1265,6 +1269,7 @@ pub fn edit_model(
     flags: manifest::ManifestFlags,
     components: manifest::ManifestComponents,
     recommended_settings: Option<types::GenDefaults>,
+    edits_images: Option<bool>,
 ) -> Result<library::LibraryEntry, String> {
     let models_dir = {
         let cfg = state.config.lock().unwrap();
@@ -1290,7 +1295,7 @@ pub fn edit_model(
         llm_vision: opt(&components.llm_vision),
     };
 
-    man.set_editable(name, family, flags, normalized, recommended_settings);
+    man.set_editable(name, family, flags, normalized, recommended_settings, edits_images);
     manifest::save_to(&model_dir, &man).map_err(|e| e.to_string())?;
     Ok(library::entry_from_manifest(&model_dir, &man))
 }

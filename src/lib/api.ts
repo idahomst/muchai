@@ -86,7 +86,17 @@ export const editModel = (
   flags: ManifestFlags,
   components: ModelComponents,
   recommendedSettings: GenDefaults | null,
-) => invoke<LibraryEntry>("edit_model", { id, name, family, flags, components, recommendedSettings });
+  editsImages: boolean | null,
+) =>
+  invoke<LibraryEntry>("edit_model", {
+    id,
+    name,
+    family,
+    flags,
+    components,
+    recommendedSettings,
+    editsImages,
+  });
 
 export const deleteModelEntry = (id: string) =>
   invoke<void>("delete_model_entry", { id });

@@ -64,6 +64,9 @@ export type LibraryEntry = {
   model: ModelRef;
   flags: ManifestFlags;
   recommended_settings: GenDefaults | null;
+  /** Per-model override of the recipe's edit capability: true forces "takes a
+   *  reference image", false forces "doesn't", null defers to the family. */
+  edits_images: boolean | null;
   broken: boolean;
 };
 

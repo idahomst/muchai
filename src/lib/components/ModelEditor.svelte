@@ -77,7 +77,15 @@
         llm: slots.llm || null,
         llm_vision: slots.llm_vision || null,
       };
-      await editModel(entry.id, name, family, flags, components, overrideOn ? rec : null);
+      await editModel(
+        entry.id,
+        name,
+        family,
+        flags,
+        components,
+        overrideOn ? rec : null,
+        entry.edits_images,
+      );
       await refreshLibrary();
       onClose();
     } catch (e) { error = String(e); } finally { busy = false; }

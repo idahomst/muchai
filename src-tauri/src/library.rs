@@ -16,6 +16,10 @@ pub struct LibraryEntry {
     /// Per-model recommended-settings override from the manifest (None = fall
     /// back to the family default). Exposed so the editor can pre-load it.
     pub recommended_settings: Option<crate::types::GenDefaults>,
+    /// Per-model edit-capability override from the manifest (None = the family
+    /// decides). The frontend needs it to mirror `resolve_ref_images` without
+    /// re-reading model.json.
+    pub edits_images: Option<bool>,
     /// True when one or more SET component files are missing on disk.
     pub broken: bool,
 }
@@ -56,6 +60,7 @@ pub fn entry_from_manifest(model_dir: &Path, m: &ModelManifest) -> LibraryEntry 
         model: m.to_model_ref(model_dir),
         flags: m.flags.clone(),
         recommended_settings: m.recommended_settings,
+        edits_images: m.edits_images,
         broken,
     }
 }
@@ -115,6 +120,7 @@ mod tests {
             components: ManifestComponents { diffusion_model: diffusion_rel.into(), ..Default::default() },
             flags: ManifestFlags::default(),
             recommended_settings: None,
+            edits_images: None,
         };
         manifest::save_to(&dir, &m).unwrap();
     }
@@ -231,6 +237,7 @@ mod tests {
             },
             flags: ManifestFlags::default(),
             recommended_settings: None,
+            edits_images: None,
         };
         manifest::save_to(&dir, &m).unwrap();
 
@@ -299,6 +306,7 @@ mod tests {
             components: ManifestComponents { diffusion_model: "diff.gguf".into(), ..Default::default() },
             flags: ManifestFlags::default(),
             recommended_settings: None,
+            edits_images: None,
         };
         manifest::save_to(&dir, &m).unwrap();
 
