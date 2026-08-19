@@ -1439,7 +1439,7 @@ pub fn list_families() -> Vec<String> {
 /// that would drift the first time a second edit family is added.
 #[tauri::command]
 pub fn list_edit_families() -> Vec<String> {
-    recipes::EDIT_FAMILIES.iter().map(|s| s.to_string()).collect()
+    recipes::edit_families()
 }
 
 /// Base families a safetensors file's tensor names are consistent with. Empty

@@ -9,15 +9,21 @@ use serde::{Deserialize, Serialize};
 pub const FAMILIES: &[&str] =
     &["sd15", "sdxl", "sd3", "flux1", "flux2", "qwen-image", "qwen-image-edit", "z-image"];
 
-/// Families whose models take a reference image and an instruction rather than
-/// a from-scratch prompt. A list rather than a suffix rule: `qwen-image-edit`
-/// has `qwen-image` as a prefix, and any prefix/suffix cleverness here ends up
-/// handing a reference image to a model that cannot use one.
-pub const EDIT_FAMILIES: &[&str] = &["qwen-image-edit"];
-
-/// True when models of this family are instruction editors.
+/// True when models of this family are instruction editors — read off the
+/// family's own recipe. `sd15` and `sdxl` have no recipe and are not editors,
+/// which is the correct answer for both.
 pub fn is_edit_family(family: &str) -> bool {
-    EDIT_FAMILIES.contains(&family)
+    recipe_for(family).map(|r| r.edits_images).unwrap_or(false)
+}
+
+/// Every family whose models take a reference image. Derived from `recipes()`,
+/// so adding an edit family is one edit, not two.
+pub fn edit_families() -> Vec<String> {
+    recipes()
+        .into_iter()
+        .filter(|r| r.edits_images)
+        .map(|r| r.family.to_string())
+        .collect()
 }
 
 /// A typed slot in a split model, each wired to one engine flag.
@@ -75,6 +81,11 @@ pub struct ModelRecipe {
     /// the user already has. Pinned by `only_the_edit_family_pools_somewhere_else`.
     pub pool_family: &'static str,
     pub name: &'static str,
+    /// True when models of this family take a reference image and an
+    /// instruction rather than a from-scratch prompt. On the recipe rather than
+    /// in a side list because a family that cannot answer this question has not
+    /// finished being defined.
+    pub edits_images: bool,
     pub roles: Vec<RoleSpec>,
     pub vae_format: Option<&'static str>,
     pub prediction: Option<&'static str>,
@@ -176,6 +187,7 @@ pub fn recipes() -> Vec<ModelRecipe> {
             family: "flux1",
             pool_family: "flux1",
             name: "FLUX.1 (dev / schnell / krea)",
+            edits_images: false,
             roles: vec![
                 role(ComponentRole::Diffusion, true, &["flux1", "flux-1", "flux"]),
                 role(ComponentRole::T5xxl, true, &["t5xxl", "t5-xxl", "t5"]),
@@ -209,6 +221,7 @@ pub fn recipes() -> Vec<ModelRecipe> {
             family: "sd3",
             pool_family: "sd3",
             name: "Stable Diffusion 3 / 3.5",
+            edits_images: false,
             roles: vec![
                 role(ComponentRole::Diffusion, true, &["sd3", "sd_3", "stable-diffusion-3"]),
                 role(ComponentRole::ClipL, true, &["clip_l", "clip-l"]),
@@ -254,6 +267,7 @@ pub fn recipes() -> Vec<ModelRecipe> {
             family: "qwen-image",
             pool_family: "qwen-image",
             name: "Qwen-Image",
+            edits_images: false,
             roles: vec![
                 // `"qwen_image"` matches `qwen_image_vae.safetensors` more
                 // strongly than `"vae"` does, so without the exclusion the VAE
@@ -298,6 +312,7 @@ pub fn recipes() -> Vec<ModelRecipe> {
             // Same Qwen2.5-VL encoder, same VAE as Qwen-Image — pool with it.
             pool_family: "qwen-image",
             name: "Qwen-Image-Edit",
+            edits_images: true,
             roles: vec![
                 // Deliberately narrow: NOT "qwen-image"/"qwen". The plain
                 // Qwen-Image family already claims those, and since
@@ -370,6 +385,7 @@ pub fn recipes() -> Vec<ModelRecipe> {
             family: "flux2",
             pool_family: "flux2",
             name: "FLUX.2 (klein / dev)",
+            edits_images: false,
             roles: vec![
                 role(ComponentRole::Diffusion, true, &["flux2", "flux-2", "flux.2"]),
                 role(ComponentRole::Llm, true, &["qwen3", "qwen", "llm"]),
@@ -403,6 +419,7 @@ pub fn recipes() -> Vec<ModelRecipe> {
             family: "z-image",
             pool_family: "z-image",
             name: "Z-Image (Turbo)",
+            edits_images: false,
             roles: vec![
                 role(ComponentRole::Diffusion, true, &["z_image", "z-image", "zimage"]),
                 role(ComponentRole::Llm, true, &["qwen3", "qwen", "llm"]),
@@ -429,6 +446,7 @@ pub fn recipes() -> Vec<ModelRecipe> {
             family: "custom",
             pool_family: "custom",
             name: "Custom (assign files manually)",
+            edits_images: false,
             roles: vec![
                 role(ComponentRole::Diffusion, true, &[]),
                 role(ComponentRole::Vae, false, &[]),
@@ -820,11 +838,28 @@ mod tests {
         assert!(FAMILIES.contains(&"sdxl"));
     }
 
+    /// The whole point of moving the flag onto the recipe: there is no second
+    /// place to update, so the predicate and the recipes cannot disagree.
+    #[test]
+    fn edit_capability_is_read_from_the_recipe_not_a_side_list() {
+        for r in recipes() {
+            assert_eq!(
+                is_edit_family(r.family),
+                r.edits_images,
+                "{} disagrees with its own recipe",
+                r.family
+            );
+        }
+        assert!(edit_families().contains(&"qwen-image-edit".to_string()));
+    }
+
     #[test]
     fn the_edit_family_list_matches_the_predicate() {
-        for f in EDIT_FAMILIES {
-            assert!(is_edit_family(f), "{f} is listed but the predicate rejects it");
-            assert!(FAMILIES.contains(f), "{f} must also be a real family");
+        let listed = edit_families();
+        assert!(!listed.is_empty(), "some family must be able to edit");
+        for f in listed {
+            assert!(is_edit_family(&f), "{f} is listed but the predicate rejects it");
+            assert!(FAMILIES.contains(&f.as_str()), "{f} must also be a real family");
         }
     }
 
