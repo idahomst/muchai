@@ -25,23 +25,30 @@ export const editFamilies = writable<string[]>([]);
 /** Whether the run that would start right now takes a reference image.
  *
  *  This must mirror `resolve_ref_images` in the backend exactly, because that
- *  is what actually decides. It asks two questions, and so does this: is the
- *  selected model's family an edit family, *or* does the model carry a vision
- *  tower? The second is what covers a replayed gallery item — `ParamsPanel`
- *  loads it as ad-hoc (`model_id: null`), so it has no family at all, and a
- *  family-only test would hide the reference panel while the backend went
- *  right on demanding an image.
+ *  is what actually decides. Four rules, in order:
  *
- *  Keyed off `request.model_id` rather than `selectedModelId` for the same
- *  reason: `model_id` is the field the backend re-resolves the family from. */
+ *  1. The model's own `edits_images` override, which decides in both directions.
+ *  2. Its family, from `listEditFamilies()`.
+ *  3. A vision tower, which only an edit stack assembles.
+ *  4. An ad-hoc request already carrying references — a replayed gallery item
+ *     (`ParamsPanel` sets `model_id: null`) has no family and no manifest, and
+ *     a replayed Kontext run has no vision tower either. Without this rule it
+ *     would generate from scratch and silently ignore the reference.
+ *
+ *  Keyed off `request.model_id` rather than `selectedModelId` because
+ *  `model_id` is the field the backend re-resolves the manifest from. */
 export const isEditingModel = derived(
   [request, library, editFamilies],
   ([$request, $library, $editFamilies]) => {
     const id = $request.model_id;
-    const family = id ? $library.find((e) => e.id === id)?.family : undefined;
+    const entry = id ? $library.find((e) => e.id === id) : undefined;
     const hasVisionTower =
       $request.model.type === "multi_file" && ($request.model.llm_vision ?? "").trim() !== "";
-    return (family !== undefined && $editFamilies.includes(family)) || hasVisionTower;
+    if (entry?.edits_images != null) return entry.edits_images;
+    if (entry !== undefined && $editFamilies.includes(entry.family)) return true;
+    if (hasVisionTower) return true;
+    // No manifest to consult: the references are the only evidence left.
+    return entry === undefined && $request.ref_images.length > 0;
   },
 );
 

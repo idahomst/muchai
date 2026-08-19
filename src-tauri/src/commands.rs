@@ -5,8 +5,8 @@ use crate::types::{
 use crate::recipes::{self, ComponentRole};
 use crate::types::ModelRef;
 use crate::{
-    catalog, config, downloader, engine_install, engine_release, fit, gallery, hf, library, loras,
-    manifest, models, types,
+    catalog, completion, config, downloader, engine_install, engine_release, fit, gallery, hf,
+    library, loras, manifest, models, types,
 };
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -381,8 +381,18 @@ pub fn cancel_generation(state: State<AppState>) {
 /// and switching back does not cost them the image they chose. Discarding a
 /// user's input to keep internal state tidy is the wrong trade — the same rule
 /// the LoRA selection follows.
+///
+/// An ad-hoc request carries no family and no manifest, so the first two layers
+/// cannot speak for it. A replayed gallery item is exactly that (`ParamsPanel`
+/// sets `model_id: null` to keep the frozen ModelRef), and a replayed Kontext
+/// run has no vision tower either — it would generate from scratch and ignore
+/// the reference, which is the failure mode that looks like success. So a
+/// non-empty `ref_images` on an ad-hoc request is itself the evidence: there is
+/// no other way that list gets populated. A mismatched model then fails loudly
+/// at the engine, which beats a wrong picture that looks right.
 fn resolve_ref_images(
     family: Option<&str>,
+    edits_override: Option<bool>,
     model: &ModelRef,
     ref_images: &[String],
 ) -> Result<bool, String> {
@@ -392,7 +402,9 @@ fn resolve_ref_images(
         }
         ModelRef::SingleFile { .. } => false,
     };
-    let is_edit = family.map(recipes::is_edit_family).unwrap_or(false) || has_vision_tower;
+    let ad_hoc_with_refs = family.is_none() && edits_override.is_none() && !ref_images.is_empty();
+    let is_edit =
+        recipes::edits_images(edits_override, family, has_vision_tower) || ad_hoc_with_refs;
     if !is_edit {
         return Ok(false);
     }
@@ -449,11 +461,16 @@ pub async fn generate(
         loras::resolve_selection(std::path::Path::new(&cfg.models_dir), &request.loras)?;
     // Reference images are decided here for the same reason: an edit model run
     // without one produces a confident, unrelated image and no engine warning.
-    // The family is re-read from model.json alongside the components above.
-    let ref_family =
-        library::resolve_request_family(std::path::Path::new(&cfg.models_dir), &request);
-    let ref_images =
-        resolve_ref_images(ref_family.as_deref(), &request.model, &request.ref_images)?;
+    // The family and the per-model override are re-read from model.json
+    // alongside the components above.
+    let facts =
+        library::resolve_request_edit_facts(std::path::Path::new(&cfg.models_dir), &request);
+    let ref_images = resolve_ref_images(
+        facts.family.as_deref(),
+        facts.edits_images,
+        &request.model,
+        &request.ref_images,
+    )?;
     // Validate the saved device against the enumerated list (cached) and map it
     // to a backend; a stale/absent selection falls back to the engine default
     // when a real GPU exists, or to the CPU backend when none does.
@@ -785,6 +802,12 @@ fn infer_single_file_family(filename: &str) -> String {
     // and hit "flux" instead. That mislabelled model then hid every flux2 LoRA.
     let squashed: String = lower.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
     for (needle, family) in [
+        // Both edit variants must be tested before the base family whose name
+        // is a prefix of theirs, or "flux"/"qwen" claims them first and the
+        // model silently loses its edit capability.
+        ("kontext", "flux1-kontext"),
+        ("qwenimageedit", "qwen-image-edit"),
+        ("qwenedit", "qwen-image-edit"),
         ("flux2", "flux2"),
         ("flux", "flux1"),
         ("qwen", "qwen-image"),
@@ -955,16 +978,170 @@ pub async fn add_catalog_model(
         components,
         flags,
         recommended_settings: None,
+        edits_images: None,
     };
     manifest::save_to(&model_dir, &man).map_err(|e| e.to_string())?;
 
     Ok(library::entry_from_manifest(&model_dir, &man))
 }
 
+/// Fill every required role a model is missing that its recipe can supply.
+/// A component already in `shared/<pool_family>/` is wired into the manifest
+/// and never re-downloaded; anything absent is fetched into the pool. Mutates
+/// `man` in place — the caller saves it.
+///
+/// Roles no `SharedComponent` covers (in practice the diffusion model itself)
+/// are left alone rather than guessed at. They stay visible in the entry's
+/// `incomplete` list, which is where the user is offered a file picker.
+///
+/// One routine, two callers (`add_url_model` and `complete_model`) so that an
+/// add and a repair cannot drift apart.
+async fn fill_required_components(
+    app: &AppHandle,
+    models_dir: &Path,
+    hf_token: String,
+    civitai_token: String,
+    cancel: Arc<AtomicBool>,
+    model_dir: &Path,
+    man: &mut manifest::ModelManifest,
+) -> Result<(), String> {
+    let rows = completion::plan_completion(&man.family, &man.components, models_dir);
+    let Some(recipe) = recipes::recipe_for(&man.family) else {
+        return Ok(());
+    };
+    let pool = models_dir.join("shared").join(recipe.pool_family);
+
+    // role, url, destination in the pool, already-on-disk
+    let mut fill: Vec<(ComponentRole, String, PathBuf, bool)> = Vec::new();
+    for row in rows {
+        let (Some(filename), true) = (row.filename.clone(), row.fillable) else {
+            continue; // nothing can supply this role automatically
+        };
+        let url = match recipe.shared.iter().find(|s| s.role == row.role) {
+            Some(s) => s.url.to_string(),
+            None => continue,
+        };
+        fill.push((row.role, url, pool.join(filename), row.have));
+    }
+
+    let pending: Vec<(String, PathBuf)> = fill
+        .iter()
+        .filter(|(_, _, _, have)| !have)
+        .map(|(_, url, dest, _)| (url.clone(), dest.clone()))
+        .collect();
+
+    if !pending.is_empty() {
+        // The UI triggers at most one download at a time; this reset assumes
+        // that single-flight invariant, the same way add_catalog_model does.
+        cancel.store(false, Ordering::SeqCst);
+        let app2 = app.clone();
+        let file_count = pending.len() as u32;
+        tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+            for (i, (url, dest)) in pending.iter().enumerate() {
+                let token = token_for_url(url, &hf_token, &civitai_token);
+                let name =
+                    dest.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+                // Same ~4 MiB throttle as every other download here: a multi-GB
+                // fetch would otherwise emit ~100k IPC events.
+                let mut last_emit: u64 = 0;
+                let app3 = app2.clone();
+                downloader::download_to(
+                    url,
+                    &token,
+                    dest,
+                    move |downloaded, total| {
+                        if downloaded.saturating_sub(last_emit) >= 4 << 20
+                            || Some(downloaded) == total
+                        {
+                            last_emit = downloaded;
+                            let _ = app3.emit(
+                                "model:download:progress",
+                                DownloadProgress {
+                                    downloaded,
+                                    total,
+                                    file_index: Some(i as u32),
+                                    file_count: Some(file_count),
+                                    file_name: Some(name.clone()),
+                                },
+                            );
+                        }
+                    },
+                    &cancel,
+                )
+                .map_err(|e| e.message())?;
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|e| e.to_string())??;
+    }
+
+    // Wire every fillable role in — including the ones that were already
+    // pooled, which is the entire point of asking before downloading.
+    for (role, _url, dest, _have) in fill {
+        man.components.set_role(role, manifest::relativize(model_dir, &dest.to_string_lossy()));
+    }
+    // A model added before its family had a recipe carries no engine flags at
+    // all, which for FLUX.1 means no `--vae-format flux`. Seed them only when
+    // both are unset, so an explicit choice in the editor is never overwritten.
+    if man.flags.vae_format.is_none() && man.flags.prediction.is_none() {
+        man.flags = flags_for_family(&man.family);
+    }
+    Ok(())
+}
+
+/// What pasting this URL would produce, answered before a byte is fetched.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct UrlAddPlan {
+    pub filename: String,
+    pub family: String,
+    /// The recipe's display name, or the family id when it has no recipe.
+    pub family_name: String,
+    pub edits_images: bool,
+    /// Required roles the diffusion file alone will not cover, each already
+    /// marked with whether the shared pool can supply it for free.
+    pub rows: Vec<completion::CompletionRow>,
+}
+
+/// Pure half of `plan_url_add`: everything is derived from the filename in the
+/// URL and from what is already in the pool. No network access.
+fn url_add_plan(url: &str, models_dir: &Path) -> Result<UrlAddPlan, String> {
+    if !url.starts_with("https://") {
+        return Err("URL must be https".into());
+    }
+    let filename = downloader::derive_filename(None, url);
+    let family = infer_single_file_family(&filename);
+    let mut components = manifest::ManifestComponents::default();
+    components.set_role(ComponentRole::Diffusion, filename.clone());
+    let rows = completion::plan_completion(&family, &components, models_dir);
+    let family_name =
+        recipes::recipe_for(&family).map(|r| r.name.to_string()).unwrap_or_else(|| family.clone());
+    Ok(UrlAddPlan {
+        filename,
+        family_name,
+        edits_images: recipes::is_edit_family(&family),
+        family,
+        rows,
+    })
+}
+
+/// Preview a URL add: what family MuchAI recognises, whether it edits images,
+/// and which companion files it would have to fetch. Shown while Cancel is
+/// still available — after the download it would be theatre.
+#[tauri::command]
+pub fn plan_url_add(state: State<'_, AppState>, url: String) -> Result<UrlAddPlan, String> {
+    let models_dir = {
+        let cfg = state.config.lock().unwrap();
+        PathBuf::from(&cfg.models_dir)
+    };
+    url_add_plan(&url, &models_dir)
+}
+
 /// Download a single user-supplied URL into its own `models_dir/<id>/` folder,
 /// infer its family from the filename, and write a manifest. Mirrors
-/// `add_catalog_model`'s download/error-cleanup shape but for one file with no
-/// pooled/shared components.
+/// `add_catalog_model`'s download/error-cleanup shape for the one file the user
+/// named; whatever else the inferred family requires is then filled in from the
+/// shared pool by `fill_required_components`.
 #[tauri::command]
 pub async fn add_url_model(
     app: AppHandle,
@@ -979,6 +1156,9 @@ pub async fn add_url_model(
         let cfg = state.config.lock().unwrap();
         (PathBuf::from(&cfg.models_dir), cfg.hf_token.clone().unwrap_or_default(), cfg.civitai_token.clone().unwrap_or_default())
     };
+    // Second copies for the completion pass below; the first pair is moved into
+    // the diffusion download's blocking closure.
+    let (hf_token2, civitai_token2) = (hf_token.clone(), civitai_token.clone());
     if models_dir.as_os_str().is_empty() {
         return Err("models directory is not set".into());
     }
@@ -1035,19 +1215,71 @@ pub async fn add_url_model(
     let family = infer_single_file_family(&filename);
     let mut components = manifest::ManifestComponents::default();
     components.set_role(
-        crate::recipes::ComponentRole::Diffusion,
+        ComponentRole::Diffusion,
         manifest::relativize(&model_dir, &dest.to_string_lossy()),
     );
-    let man = manifest::ModelManifest {
+    let mut man = manifest::ModelManifest {
         schema_version: manifest::MANIFEST_SCHEMA_VERSION,
         id: id.clone(),
         name: if name.trim().is_empty() { filename.clone() } else { name },
-        family,
+        family: family.clone(),
         source: manifest::ManifestSource::Url { url },
         components,
-        flags: manifest::ManifestFlags::default(),
+        // Seeded from the recipe, like a catalog install: a FLUX.1 model with
+        // no `--vae-format flux` generates noise, and the family knows.
+        flags: flags_for_family(&family),
         recommended_settings: None,
+        edits_images: None,
     };
+    // Fill in whatever the family needs and the pool can supply. A failure here
+    // is deliberately not fatal: the diffusion model is already on disk (often
+    // several GB of it), and destroying that download because a companion file
+    // could not be fetched is the wrong trade. The entry is saved as-is, shows
+    // as incomplete, and offers "Complete this model".
+    let _ = fill_required_components(
+        &app,
+        &models_dir,
+        hf_token2,
+        civitai_token2,
+        state.download_cancel.clone(),
+        &model_dir,
+        &mut man,
+    )
+    .await;
+    manifest::save_to(&model_dir, &man).map_err(|e| e.to_string())?;
+    Ok(library::entry_from_manifest(&model_dir, &man))
+}
+
+/// Fill an existing model's unfilled required components from its family
+/// recipe, reusing anything already in the shared pool. Returns the refreshed
+/// entry — whose `incomplete` list names anything that still could not be
+/// filled automatically, which the editor turns into a file picker.
+///
+/// Unlike the add path, a failure here IS returned: the user pressed a button
+/// and is owed the reason.
+#[tauri::command]
+pub async fn complete_model(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<library::LibraryEntry, String> {
+    let (models_dir, hf_token, civitai_token) = {
+        let cfg = state.config.lock().unwrap();
+        (PathBuf::from(&cfg.models_dir), cfg.hf_token.clone().unwrap_or_default(), cfg.civitai_token.clone().unwrap_or_default())
+    };
+    let model_dir =
+        safe_model_dir(&models_dir, &id).ok_or_else(|| "invalid model id".to_string())?;
+    let mut man = manifest::load_from(&model_dir)?;
+    fill_required_components(
+        &app,
+        &models_dir,
+        hf_token,
+        civitai_token,
+        state.download_cancel.clone(),
+        &model_dir,
+        &mut man,
+    )
+    .await?;
     manifest::save_to(&model_dir, &man).map_err(|e| e.to_string())?;
     Ok(library::entry_from_manifest(&model_dir, &man))
 }
@@ -1241,13 +1473,15 @@ pub fn add_local_model(
         components,
         flags: manifest::ManifestFlags::default(),
         recommended_settings: None,
+        edits_images: None,
     };
     manifest::save_to(&model_dir, &man).map_err(|e| e.to_string())?;
     Ok(library::entry_from_manifest(&model_dir, &man))
 }
 
 /// Save the full editable surface of a model's manifest: name, family, engine
-/// flags, component paths, and the optional recommended-settings override.
+/// flags, component paths, the optional recommended-settings override, and the
+/// optional edit-capability override (`None` = let the family decide).
 /// Component paths arrive absolute from the UI and are relativized against the
 /// model folder (in-folder files become relative; pooled/external stay absolute).
 #[tauri::command]
@@ -1259,6 +1493,7 @@ pub fn edit_model(
     flags: manifest::ManifestFlags,
     components: manifest::ManifestComponents,
     recommended_settings: Option<types::GenDefaults>,
+    edits_images: Option<bool>,
 ) -> Result<library::LibraryEntry, String> {
     let models_dir = {
         let cfg = state.config.lock().unwrap();
@@ -1284,7 +1519,7 @@ pub fn edit_model(
         llm_vision: opt(&components.llm_vision),
     };
 
-    man.set_editable(name, family, flags, normalized, recommended_settings);
+    man.set_editable(name, family, flags, normalized, recommended_settings, edits_images);
     manifest::save_to(&model_dir, &man).map_err(|e| e.to_string())?;
     Ok(library::entry_from_manifest(&model_dir, &man))
 }
@@ -1439,7 +1674,7 @@ pub fn list_families() -> Vec<String> {
 /// that would drift the first time a second edit family is added.
 #[tauri::command]
 pub fn list_edit_families() -> Vec<String> {
-    recipes::EDIT_FAMILIES.iter().map(|s| s.to_string()).collect()
+    recipes::edit_families()
 }
 
 /// Base families a safetensors file's tensor names are consistent with. Empty
@@ -2651,6 +2886,87 @@ mod tests {
         assert_eq!(infer_single_file_family("z-image-turbo-Q2_K.gguf"), "z-image");
     }
 
+    /// The needle list is ordered, and both of these families are named as a
+    /// suffix of a family that would otherwise claim them first. This is the
+    /// same class of bug as the flux2 regression above.
+    #[test]
+    fn an_edit_variant_is_not_filed_under_its_base_family() {
+        // The real file the user downloaded.
+        assert_eq!(infer_single_file_family("flux1-kontext-dev-Q5_K_M.gguf"), "flux1-kontext");
+        assert_eq!(infer_single_file_family("flux-kontext-dev-fp8.safetensors"), "flux1-kontext");
+        assert_eq!(
+            infer_single_file_family("Qwen-Image-Edit-2511-Q3_K_S.gguf"),
+            "qwen-image-edit"
+        );
+        assert_eq!(infer_single_file_family("qwen_image_edit_2509.safetensors"), "qwen-image-edit");
+        // The base families keep their own files.
+        assert_eq!(infer_single_file_family("flux1-dev-Q4_K_S.gguf"), "flux1");
+        assert_eq!(infer_single_file_family("qwen-image-Q4.gguf"), "qwen-image");
+    }
+
+    /// The exact URL the user pasted. Everything here is known from the
+    /// filename and the pool — no network, no download.
+    #[test]
+    fn a_pasted_kontext_url_is_recognised_before_anything_downloads() {
+        let root = scratch("urlplan");
+        let pool = root.join("shared").join("flux1");
+        std::fs::create_dir_all(&pool).unwrap();
+        for f in ["clip_l.safetensors", "t5xxl_fp8_e4m3fn.safetensors", "ae.safetensors"] {
+            std::fs::write(pool.join(f), b"x").unwrap();
+        }
+        let plan = url_add_plan(
+            "https://huggingface.co/unsloth/FLUX.1-Kontext-dev-GGUF/resolve/main/flux1-kontext-dev-Q5_K_M.gguf?download=true",
+            &root,
+        )
+        .unwrap();
+        assert_eq!(plan.filename, "flux1-kontext-dev-Q5_K_M.gguf");
+        assert_eq!(plan.family, "flux1-kontext");
+        assert_eq!(plan.family_name, "FLUX.1 Kontext (edits images)");
+        assert!(plan.edits_images);
+        assert_eq!(plan.rows.len(), 3, "clip_l, t5xxl, vae");
+        assert!(plan.rows.iter().all(|r| r.have), "the flux1 pool already has all three");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_empty_pool_makes_the_plan_name_every_download() {
+        let root = scratch("urlplanempty");
+        let plan = url_add_plan("https://e/flux1-kontext-dev-Q5_K_M.gguf", &root).unwrap();
+        assert_eq!(plan.rows.len(), 3);
+        assert!(plan.rows.iter().all(|r| !r.have && r.fillable));
+        let total: u64 = plan.rows.iter().map(|r| r.size_bytes).sum();
+        assert_eq!(total, 4_893_934_904 + 246_144_152 + 335_304_388);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_single_file_family_has_nothing_to_plan() {
+        let root = scratch("urlplansd15");
+        let plan = url_add_plan("https://e/v1-5-pruned-emaonly.safetensors", &root).unwrap();
+        assert_eq!(plan.family, "sd15");
+        assert!(!plan.edits_images);
+        assert!(plan.rows.is_empty(), "sd15 has no recipe and needs no companions");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_non_https_url_is_refused_by_the_planner_too() {
+        let root = scratch("urlplanhttp");
+        assert!(url_add_plan("http://e/x.gguf", &root).is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A URL-added FLUX.1 model used to arrive with no engine flags at all, so
+    /// it ran without `--vae-format flux` and produced noise. The family knows.
+    #[test]
+    fn flags_are_seeded_from_the_family_recipe() {
+        let f = flags_for_family("flux1-kontext");
+        assert_eq!(f.vae_format.as_deref(), Some("flux"));
+        assert_eq!(f.prediction.as_deref(), Some("flux_flow"));
+        // Unknown families stay empty rather than inventing a flag.
+        assert_eq!(flags_for_family("sd15"), manifest::ManifestFlags::default());
+    }
+
     #[test]
     fn new_model_id_is_unique() {
         assert_ne!(new_model_id(), new_model_id());
@@ -3163,21 +3479,33 @@ mod tests {
     #[test]
     fn an_edit_family_with_a_present_reference_enables_the_flag() {
         let (dir, refs) = a_present_reference("refpresent");
-        assert_eq!(resolve_ref_images(Some("qwen-image-edit"), &plain_model(), &refs), Ok(true));
+        assert_eq!(
+            resolve_ref_images(Some("qwen-image-edit"), None, &plain_model(), &refs),
+            Ok(true)
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn an_edit_family_without_a_reference_is_blocked_with_an_actionable_message() {
-        let err = resolve_ref_images(Some("qwen-image-edit"), &plain_model(), &[]).unwrap_err();
+        let err =
+            resolve_ref_images(Some("qwen-image-edit"), None, &plain_model(), &[]).unwrap_err();
         assert!(err.contains("edits an existing image"), "{err}");
         assert!(err.contains("reference image"), "{err}");
     }
 
     #[test]
+    fn a_kontext_model_demands_a_reference_image() {
+        let err =
+            resolve_ref_images(Some("flux1-kontext"), None, &plain_model(), &[]).unwrap_err();
+        assert!(err.contains("edits an existing image"), "{err}");
+    }
+
+    #[test]
     fn a_reference_that_has_moved_is_blocked_and_named() {
         let refs = vec!["/gone/cat.png".to_string()];
-        let err = resolve_ref_images(Some("qwen-image-edit"), &plain_model(), &refs).unwrap_err();
+        let err =
+            resolve_ref_images(Some("qwen-image-edit"), None, &plain_model(), &refs).unwrap_err();
         assert!(err.contains("/gone/cat.png"), "the message names the file: {err}");
         assert!(err.contains("Choose it again"), "{err}");
     }
@@ -3186,14 +3514,51 @@ mod tests {
     fn a_non_edit_family_neither_errors_nor_passes_the_reference() {
         // The reference does not even have to exist: it is never looked at.
         let refs = vec!["/gone/cat.png".to_string()];
-        for family in [Some("qwen-image"), Some("flux2"), Some("sd15"), None] {
+        // `None` is deliberately not in this list any more: an ad-hoc request
+        // carrying references is an edit by rule 4, tested on its own below.
+        for family in [Some("qwen-image"), Some("flux2"), Some("sd15")] {
             assert_eq!(
-                resolve_ref_images(family, &plain_model(), &refs),
+                resolve_ref_images(family, None, &plain_model(), &refs),
                 Ok(false),
                 "{family:?} must silently ignore a reference, never reject it"
             );
-            assert_eq!(resolve_ref_images(family, &plain_model(), &[]), Ok(false));
+            assert_eq!(resolve_ref_images(family, None, &plain_model(), &[]), Ok(false));
         }
+        // An ad-hoc request with no references is still an ordinary run.
+        assert_eq!(resolve_ref_images(None, None, &plain_model(), &[]), Ok(false));
+    }
+
+    #[test]
+    fn an_ad_hoc_request_carrying_references_is_treated_as_an_edit() {
+        // A replayed Kontext run: no family, no manifest, no vision tower. The
+        // references are the only evidence left that this was an edit, and
+        // ignoring them produces a confident, unrelated image.
+        let (dir, refs) = a_present_reference("refadhoc");
+        assert_eq!(resolve_ref_images(None, None, &plain_model(), &refs), Ok(true));
+        // Without references it stays an ordinary from-scratch run.
+        assert_eq!(resolve_ref_images(None, None, &plain_model(), &[]), Ok(false));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_per_model_override_decides_in_both_directions() {
+        let (dir, refs) = a_present_reference("refoverride");
+        // Forced on against a family that is not an editor.
+        assert_eq!(
+            resolve_ref_images(Some("flux1"), Some(true), &plain_model(), &refs),
+            Ok(true)
+        );
+        // Forced off against one that is: the reference is kept, not passed.
+        assert_eq!(
+            resolve_ref_images(Some("flux1-kontext"), Some(false), &plain_model(), &refs),
+            Ok(false)
+        );
+        // Forced off against a vision tower, which layer 3 would otherwise claim.
+        assert_eq!(
+            resolve_ref_images(Some("custom"), Some(false), &model_with_vision_tower(), &refs),
+            Ok(false)
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -3202,9 +3567,9 @@ mod tests {
         // so no family. Without the vision-tower fallback this run would
         // succeed and quietly ignore the reference.
         let (dir, refs) = a_present_reference("refreplay");
-        assert_eq!(resolve_ref_images(None, &model_with_vision_tower(), &refs), Ok(true));
+        assert_eq!(resolve_ref_images(None, None, &model_with_vision_tower(), &refs), Ok(true));
         // And the empty case is still blocked, not silently downgraded.
-        let err = resolve_ref_images(None, &model_with_vision_tower(), &[]).unwrap_err();
+        let err = resolve_ref_images(None, None, &model_with_vision_tower(), &[]).unwrap_err();
         assert!(err.contains("edits an existing image"), "{err}");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -3216,6 +3581,12 @@ mod tests {
             llm_vision: Some("   ".into()),
             ..Default::default()
         });
-        assert_eq!(resolve_ref_images(None, &model, &["/gone/cat.png".to_string()]), Ok(false));
+        // A named family that does not edit, so only the tower could make this
+        // an edit — and a blank path is not a tower. (With no family at all,
+        // rule 4 would claim the reference; that is the ad-hoc case.)
+        assert_eq!(
+            resolve_ref_images(Some("flux1"), None, &model, &["/gone/cat.png".to_string()]),
+            Ok(false)
+        );
     }
 }

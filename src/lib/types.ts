@@ -64,7 +64,13 @@ export type LibraryEntry = {
   model: ModelRef;
   flags: ManifestFlags;
   recommended_settings: GenDefaults | null;
+  /** Per-model override of the recipe's edit capability: true forces "takes a
+   *  reference image", false forces "doesn't", null defers to the family. */
+  edits_images: boolean | null;
   broken: boolean;
+  /** Required roles never filled. Distinct from `broken`, which is a path
+   *  pointing at a file that is gone. */
+  incomplete: CompletionRow[];
 };
 
 /** Mirrors Rust `loras::LoraInfo`. `name` is the pool filename stem and the
@@ -379,6 +385,28 @@ export interface RecipeInfo {
   roles: RoleInfo[];
   vae_format: string | null;
   prediction: string | null;
+}
+
+/** Mirrors Rust `completion::CompletionRow`: one required role a model has not
+ *  filled, and where it would come from. `have` means the pooled file is
+ *  already on disk, so filling it costs no download. `fillable` false means
+ *  nothing can supply it automatically — the user picks the file. */
+export interface CompletionRow {
+  role: ComponentRole;
+  filename: string | null;
+  have: boolean;
+  size_bytes: number;
+  fillable: boolean;
+}
+
+/** Mirrors Rust `commands::UrlAddPlan` — what a pasted URL would produce,
+ *  known before anything downloads. */
+export interface UrlAddPlan {
+  filename: string;
+  family: string;
+  family_name: string;
+  edits_images: boolean;
+  rows: CompletionRow[];
 }
 
 export interface DetectedSlot { role: ComponentRole; path: string; }

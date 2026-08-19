@@ -2,6 +2,7 @@ mod catalog;
 mod civitai;
 mod command_builder;
 mod commands;
+mod completion;
 mod config;
 mod devices;
 mod diskspace;
@@ -236,6 +237,8 @@ pub fn run() {
             commands::catalog_entries,
             commands::add_catalog_model,
             commands::add_url_model,
+            commands::plan_url_add,
+            commands::complete_model,
             commands::add_local_model,
             commands::edit_model,
             commands::delete_model_entry,

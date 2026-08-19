@@ -1,6 +1,6 @@
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { AppConfig, GalleryItem, GenerationRequest, ProgressUpdate, SystemStats, DownloadProgress, GpuDevice, RecipeInfo, GenDefaults, LibraryEntry, RatedCatalogEntry, ManifestFlags, ModelComponents, LibraryFit, SpaceCheck, ReclaimableModel, LoraInfo, AddedLora, EngineSelection, EngineStatus, EngineUpdate, ChangeEntry, RefImageInfo } from "./types";
+import type { AppConfig, GalleryItem, GenerationRequest, ProgressUpdate, SystemStats, DownloadProgress, GpuDevice, RecipeInfo, GenDefaults, LibraryEntry, RatedCatalogEntry, ManifestFlags, ModelComponents, LibraryFit, SpaceCheck, ReclaimableModel, LoraInfo, AddedLora, EngineSelection, EngineStatus, EngineUpdate, ChangeEntry, RefImageInfo, UrlAddPlan } from "./types";
 
 export const getSettings = () => invoke<AppConfig>("get_settings");
 /** Enumerate Vulkan devices the engine can target (cached server-side). */
@@ -76,6 +76,15 @@ export const addCatalogModel = (catalogId: string) =>
 export const addUrlModel = (url: string, name: string) =>
   invoke<LibraryEntry>("add_url_model", { url, name });
 
+/** Fill a model's unfilled required components from its family recipe, reusing
+ *  anything already pooled. Returns the refreshed entry. */
+export const completeModel = (id: string) =>
+  invoke<LibraryEntry>("complete_model", { id });
+
+/** What pasting this URL would produce — no download, no network. */
+export const planUrlAdd = (url: string) =>
+  invoke<UrlAddPlan>("plan_url_add", { url });
+
 export const addLocalModel = (diffusionPath: string, name: string, family: string | null) =>
   invoke<LibraryEntry>("add_local_model", { diffusionPath, name, family });
 
@@ -86,7 +95,17 @@ export const editModel = (
   flags: ManifestFlags,
   components: ModelComponents,
   recommendedSettings: GenDefaults | null,
-) => invoke<LibraryEntry>("edit_model", { id, name, family, flags, components, recommendedSettings });
+  editsImages: boolean | null,
+) =>
+  invoke<LibraryEntry>("edit_model", {
+    id,
+    name,
+    family,
+    flags,
+    components,
+    recommendedSettings,
+    editsImages,
+  });
 
 export const deleteModelEntry = (id: string) =>
   invoke<void>("delete_model_entry", { id });

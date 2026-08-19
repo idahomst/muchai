@@ -1,13 +1,14 @@
 <script lang="ts">
   import { get } from "svelte/store";
   import { catalogEntries, addCatalogModel, addUrlModel, addLocalModel, pickModelFile, openExternal,
-           diskSpace, checkCatalogSpace, listReclaimable, trashDir, deleteModelEntry, openFolder } from "../api";
+           diskSpace, checkCatalogSpace, listReclaimable, trashDir, deleteModelEntry, openFolder,
+           planUrlAdd } from "../api";
   import { settings, runDownload, downloadBusy, downloadProgress, downloadError, refreshLibrary, engineInstalling,
            catalogHighlightId } from "../stores";
   import { formatBytes, catalogTotalBytes } from "../modelFormat";
   import DownloadProgressBar from "./DownloadProgressBar.svelte";
-  import { INSUFFICIENT_SPACE_PREFIX } from "../types";
-  import type { RatedCatalogEntry, ReclaimableModel } from "../types";
+  import { INSUFFICIENT_SPACE_PREFIX, ROLE_LABELS } from "../types";
+  import type { RatedCatalogEntry, ReclaimableModel, UrlAddPlan } from "../types";
 
   let { vramTotalMb, vramShared = false, ramTotalMb, onClose }: { vramTotalMb: number | null; vramShared?: boolean; ramTotalMb: number | null; onClose: () => void } = $props();
 
@@ -135,6 +136,23 @@
   let urlName = $state("");
   let localPath = $state("");
   let localName = $state("");
+
+  // What the pasted URL would produce — family, edit capability and every
+  // companion file — computed from the filename alone. Debounced because it
+  // re-runs on each keystroke, and cancelled on re-entry so a slow answer for
+  // an old URL cannot overwrite a fast answer for the current one.
+  let plan = $state<UrlAddPlan | null>(null);
+  $effect(() => {
+    const u = url;
+    if (!u.startsWith("https://")) { plan = null; return; }
+    let live = true;
+    const t = setTimeout(() => {
+      planUrlAdd(u)
+        .then((p) => { if (live) plan = p; })
+        .catch(() => { if (live) plan = null; });
+    }, 250);
+    return () => { live = false; clearTimeout(t); };
+  });
 
   // Downloads run at the app level (stores.runDownload) so busy/progress/error
   // survive this dialog closing mid-download. Close only on success.
@@ -279,6 +297,32 @@
             <p class="microlabel">Name</p>
             <input class="dlg-input" bind:value={urlName} placeholder="My model" />
           </div>
+          {#if plan}
+            <div class="preview">
+              <p class="pv-head">
+                Recognised as <strong>{plan.family_name}</strong>{#if plan.edits_images} — edits an existing image{/if}
+              </p>
+              <ul class="pv-list">
+                <li>
+                  <span class="pv-role">{ROLE_LABELS.diffusion}</span>
+                  <span class="pv-file" title={plan.filename}>‎{plan.filename}</span>
+                  <span class="pv-note">this download</span>
+                </li>
+                {#each plan.rows as row}
+                  <li>
+                    <span class="pv-role">{ROLE_LABELS[row.role]}</span>
+                    {#if row.fillable}
+                      <span class="pv-file" title={row.filename}>‎{row.filename}</span>
+                      <span class="pv-note">{row.have ? "already downloaded" : `+ ${formatBytes(row.size_bytes)}`}</span>
+                    {:else}
+                      <span class="pv-file none">no known file — add it afterwards</span>
+                      <span class="pv-note"></span>
+                    {/if}
+                  </li>
+                {/each}
+              </ul>
+            </div>
+          {/if}
           <button class="btn btn-primary" disabled={$downloadBusy || $engineInstalling || !url.startsWith("https://")} onclick={() => run(() => addUrlModel(url, urlName))}>
             Download &amp; add
           </button>
@@ -329,6 +373,17 @@
   .pick .dlg-input { flex: 1; }
   .err { color: var(--danger); font-size: 12px; margin: 0 0 10px; }
   .progress { margin-top: 12px; }
+  .preview { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin: 0 0 14px; }
+  .pv-head { font-size: 12.5px; color: var(--text-muted); margin: 0 0 8px; }
+  .pv-head strong { color: var(--text); font-weight: 600; }
+  .pv-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+  .pv-list li { display: grid; grid-template-columns: 128px 1fr auto; align-items: center; gap: 12px; }
+  .pv-role { font-size: 12px; color: var(--text-muted); }
+  /* direction: rtl keeps the tail of a long filename visible, as in ModelEditor. */
+  .pv-file { min-width: 0; font-size: 12px; font-family: var(--mono); white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
+  .pv-file.none { font-family: inherit; font-style: italic; color: var(--text-muted); direction: ltr; }
+  .pv-note { font-size: 11.5px; color: var(--text-muted); white-space: nowrap; }
 
   .blocked { display: flex; flex-direction: column; gap: 10px; }
   .bhead { font-size: 15px; font-weight: 700; color: var(--danger); margin: 0; }

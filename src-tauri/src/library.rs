@@ -16,8 +16,16 @@ pub struct LibraryEntry {
     /// Per-model recommended-settings override from the manifest (None = fall
     /// back to the family default). Exposed so the editor can pre-load it.
     pub recommended_settings: Option<crate::types::GenDefaults>,
+    /// Per-model edit-capability override from the manifest (None = the family
+    /// decides). The frontend needs it to mirror `resolve_ref_images` without
+    /// re-reading model.json.
+    pub edits_images: Option<bool>,
     /// True when one or more SET component files are missing on disk.
     pub broken: bool,
+    /// Required roles this model never filled, with where each would come from.
+    /// Distinct from `broken`: that is a path pointing at a file that is gone,
+    /// this is a slot that was never filled. Different fault, different repair.
+    pub incomplete: Vec<crate::completion::CompletionRow>,
 }
 
 /// Scan `models_dir/*/model.json` into library entries, sorted by name
@@ -49,6 +57,10 @@ pub fn scan_library(models_dir: &Path) -> Vec<LibraryEntry> {
 pub fn entry_from_manifest(model_dir: &Path, m: &ModelManifest) -> LibraryEntry {
     let components = m.to_components(model_dir);
     let broken = !missing_components(&components).is_empty();
+    // `model_dir` is always `<models_dir>/<id>`, so its parent is the models
+    // directory the shared pool lives under.
+    let models_dir = model_dir.parent().unwrap_or(model_dir);
+    let incomplete = crate::completion::plan_completion(&m.family, &m.components, models_dir);
     LibraryEntry {
         id: m.id.clone(),
         name: m.name.clone(),
@@ -56,7 +68,9 @@ pub fn entry_from_manifest(model_dir: &Path, m: &ModelManifest) -> LibraryEntry 
         model: m.to_model_ref(model_dir),
         flags: m.flags.clone(),
         recommended_settings: m.recommended_settings,
+        edits_images: m.edits_images,
         broken,
+        incomplete,
     }
 }
 
@@ -81,18 +95,30 @@ pub fn resolve_request_model(models_dir: &Path, request: &GenerationRequest) -> 
     }
 }
 
-/// The family of the managed model this request targets, re-read from
-/// `model.json` — the same single-source-of-truth rule `resolve_request_model`
-/// follows, so a family edited between selection and generation is honoured.
-///
-/// `None` for an ad-hoc request (`model_id: None` — a manual single-file pick
-/// or a replayed history item) and for a model that has since been deleted. A
+/// The two manifest facts that decide whether a run is an edit: the family and
+/// the per-model `edits_images` override. Both re-read from `model.json` at the
+/// moment of use, the same single-source-of-truth rule `resolve_request_model`
+/// follows, so an edit made between selection and generation is honoured.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EditFacts {
+    pub family: Option<String>,
+    pub edits_images: Option<bool>,
+}
+
+/// `EditFacts` for a request. All-`None` for an ad-hoc request (`model_id:
+/// None` — a manual single-file pick or a replayed gallery item) and for a
+/// model that has since been deleted: neither has a manifest to consult. A
 /// separate function rather than a wider `resolve_request_model` return type:
-/// every other caller wants only the `ModelRef`, and the two lookups are
-/// cheap (one `model.json` read each) and independent.
-pub fn resolve_request_family(models_dir: &Path, request: &GenerationRequest) -> Option<String> {
-    let id = request.model_id.as_deref()?;
-    resolve_by_id(models_dir, id).map(|e| e.family)
+/// every other caller wants only the `ModelRef`, and the two lookups are cheap
+/// (one `model.json` read each) and independent.
+pub fn resolve_request_edit_facts(models_dir: &Path, request: &GenerationRequest) -> EditFacts {
+    let Some(id) = request.model_id.as_deref() else {
+        return EditFacts::default();
+    };
+    match resolve_by_id(models_dir, id) {
+        Some(e) => EditFacts { family: Some(e.family), edits_images: e.edits_images },
+        None => EditFacts::default(),
+    }
 }
 
 #[cfg(test)]
@@ -115,6 +141,7 @@ mod tests {
             components: ManifestComponents { diffusion_model: diffusion_rel.into(), ..Default::default() },
             flags: ManifestFlags::default(),
             recommended_settings: None,
+            edits_images: None,
         };
         manifest::save_to(&dir, &m).unwrap();
     }
@@ -231,6 +258,7 @@ mod tests {
             },
             flags: ManifestFlags::default(),
             recommended_settings: None,
+            edits_images: None,
         };
         manifest::save_to(&dir, &m).unwrap();
 
@@ -283,8 +311,37 @@ mod tests {
         assert!(resolve_request_model(&root, &req).is_err());
     }
 
+    /// The user's real Kontext entry: one file, three empty slots, and nothing
+    /// in the UI saying so, because `broken` cannot express it.
     #[test]
-    fn a_managed_request_resolves_its_family_from_the_manifest() {
+    fn a_diffusion_only_entry_is_incomplete_but_not_broken() {
+        let root = std::env::temp_dir().join(format!("muchai-incomplete-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let dir = root.join("model-k");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("flux1-kontext-dev-Q5_K_M.gguf"), b"x").unwrap();
+        let m = ModelManifest {
+            schema_version: 1,
+            id: "model-k".into(),
+            name: "Kontext".into(),
+            family: "flux1-kontext".into(),
+            source: ManifestSource::Url { url: "https://e/k.gguf".into() },
+            components: ManifestComponents {
+                diffusion_model: "flux1-kontext-dev-Q5_K_M.gguf".into(),
+                ..Default::default()
+            },
+            flags: ManifestFlags::default(),
+            recommended_settings: None,
+            edits_images: None,
+        };
+        let e = entry_from_manifest(&dir, &m);
+        assert!(!e.broken, "every path it does have points at a real file");
+        assert_eq!(e.incomplete.len(), 3, "clip_l, t5xxl and vae were never filled");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_managed_request_resolves_its_edit_facts_from_the_manifest() {
         let root = std::env::temp_dir().join(format!("muchai-req-family-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let dir = root.join("model-a");
@@ -299,24 +356,27 @@ mod tests {
             components: ManifestComponents { diffusion_model: "diff.gguf".into(), ..Default::default() },
             flags: ManifestFlags::default(),
             recommended_settings: None,
+            edits_images: Some(false),
         };
         manifest::save_to(&dir, &m).unwrap();
 
         let mut req = GenerationRequest { model_id: Some("model-a".into()), ..Default::default() };
-        assert_eq!(resolve_request_family(&root, &req).as_deref(), Some("qwen-image-edit"));
+        let facts = resolve_request_edit_facts(&root, &req);
+        assert_eq!(facts.family.as_deref(), Some("qwen-image-edit"));
+        assert_eq!(facts.edits_images, Some(false), "the override must survive the round trip");
 
         req.model_id = None;
         assert_eq!(
-            resolve_request_family(&root, &req),
-            None,
-            "an ad-hoc model has no manifest and therefore no family"
+            resolve_request_edit_facts(&root, &req),
+            EditFacts::default(),
+            "an ad-hoc model has no manifest and therefore no facts"
         );
 
         req.model_id = Some("model-gone".into());
         assert_eq!(
-            resolve_request_family(&root, &req),
-            None,
-            "a deleted model resolves to no family, not to a stale one"
+            resolve_request_edit_facts(&root, &req),
+            EditFacts::default(),
+            "a deleted model resolves to nothing, not to something stale"
         );
         let _ = std::fs::remove_dir_all(&root);
     }

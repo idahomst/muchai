@@ -6,18 +6,41 @@ use serde::{Deserialize, Serialize};
 /// recipe (they are single-file models, family inferred from the filename), and
 /// the `custom` recipe is not a base family. Keep in sync with
 /// `family_defaults` below and with `catalog::validate`.
-pub const FAMILIES: &[&str] =
-    &["sd15", "sdxl", "sd3", "flux1", "flux2", "qwen-image", "qwen-image-edit", "z-image"];
+pub const FAMILIES: &[&str] = &[
+    "sd15", "sdxl", "sd3", "flux1", "flux1-kontext", "flux2", "qwen-image", "qwen-image-edit",
+    "z-image",
+];
 
-/// Families whose models take a reference image and an instruction rather than
-/// a from-scratch prompt. A list rather than a suffix rule: `qwen-image-edit`
-/// has `qwen-image` as a prefix, and any prefix/suffix cleverness here ends up
-/// handing a reference image to a model that cannot use one.
-pub const EDIT_FAMILIES: &[&str] = &["qwen-image-edit"];
-
-/// True when models of this family are instruction editors.
+/// True when models of this family are instruction editors — read off the
+/// family's own recipe. `sd15` and `sdxl` have no recipe and are not editors,
+/// which is the correct answer for both.
 pub fn is_edit_family(family: &str) -> bool {
-    EDIT_FAMILIES.contains(&family)
+    recipe_for(family).map(|r| r.edits_images).unwrap_or(false)
+}
+
+/// Does this model take a reference image? Three layers, first opinion wins:
+/// the per-model override, then the family recipe, then the presence of a
+/// vision tower (the component that makes reading a reference physically
+/// possible, which only an edit stack assembles).
+///
+/// Pure and total on purpose: `resolve_ref_images` in the backend and
+/// `isEditingModel` in the frontend must give the same answer, and this is the
+/// definition both are written against.
+pub fn edits_images(override_: Option<bool>, family: Option<&str>, has_vision_tower: bool) -> bool {
+    match override_ {
+        Some(v) => v,
+        None => family.map(is_edit_family).unwrap_or(false) || has_vision_tower,
+    }
+}
+
+/// Every family whose models take a reference image. Derived from `recipes()`,
+/// so adding an edit family is one edit, not two.
+pub fn edit_families() -> Vec<String> {
+    recipes()
+        .into_iter()
+        .filter(|r| r.edits_images)
+        .map(|r| r.family.to_string())
+        .collect()
 }
 
 /// A typed slot in a split model, each wired to one engine flag.
@@ -75,6 +98,11 @@ pub struct ModelRecipe {
     /// the user already has. Pinned by `only_the_edit_family_pools_somewhere_else`.
     pub pool_family: &'static str,
     pub name: &'static str,
+    /// True when models of this family take a reference image and an
+    /// instruction rather than a from-scratch prompt. On the recipe rather than
+    /// in a side list because a family that cannot answer this question has not
+    /// finished being defined.
+    pub edits_images: bool,
     pub roles: Vec<RoleSpec>,
     pub vae_format: Option<&'static str>,
     pub prediction: Option<&'static str>,
@@ -176,8 +204,14 @@ pub fn recipes() -> Vec<ModelRecipe> {
             family: "flux1",
             pool_family: "flux1",
             name: "FLUX.1 (dev / schnell / krea)",
+            edits_images: false,
             roles: vec![
-                role(ComponentRole::Diffusion, true, &["flux1", "flux-1", "flux"]),
+                // A Kontext checkpoint matches "flux1" just as well as a dev
+                // checkpoint does, and would then tie with the flux1-kontext
+                // recipe on required roles — a tie `detect_best` settles by
+                // list position. Excluding it here decides the match on the
+                // filename instead, wherever either recipe sits.
+                role_not(ComponentRole::Diffusion, true, &["flux1", "flux-1", "flux"], &["kontext"]),
                 role(ComponentRole::T5xxl, true, &["t5xxl", "t5-xxl", "t5"]),
                 role(ComponentRole::ClipL, true, &["clip_l", "clip-l"]),
                 role(ComponentRole::Vae, true, &["ae.", "vae"]),
@@ -206,9 +240,65 @@ pub fn recipes() -> Vec<ModelRecipe> {
             ],
         },
         ModelRecipe {
+            family: "flux1-kontext",
+            // Kontext dev is the FLUX.1 dev stack with a different transformer:
+            // same T5-XXL, same CLIP-L, and the stock FLUX.1 autoencoder (the
+            // GGUF repos ship no VAE of their own, which is why the pool's
+            // `ae.safetensors` is the file it is meant to run with). Pooling
+            // under flux1 reuses what a FLUX.1 install already has rather than
+            // fetching it twice — the same reason qwen-image-edit pools under
+            // qwen-image.
+            pool_family: "flux1",
+            name: "FLUX.1 Kontext (edits images)",
+            edits_images: true,
+            roles: vec![
+                // Excluding the VAE is not optional: a Kontext VAE ships as
+                // `flux1-kontext-dev-vae.safetensors`, which matches the
+                // "flux1-kontext" pattern exactly as strongly as the diffusion
+                // checkpoint does. `detect` keeps the first file at a given
+                // score, so without this the winner is whichever `read_dir`
+                // returned first — and the real checkpoint goes unassigned.
+                role_not(
+                    ComponentRole::Diffusion,
+                    true,
+                    &["flux1-kontext", "flux-kontext", "kontext"],
+                    &["vae", "ae."],
+                ),
+                role(ComponentRole::T5xxl, true, &["t5xxl", "t5-xxl", "t5"]),
+                role(ComponentRole::ClipL, true, &["clip_l", "clip-l"]),
+                role(ComponentRole::Vae, true, &["ae.", "vae"]),
+            ],
+            vae_format: Some("flux"),
+            prediction: Some("flux_flow"),
+            shared: vec![
+                // Byte-identical to the flux1 entries above and pooled to the
+                // same paths, so an existing FLUX.1 install is reused rather
+                // than re-fetched. Keep the two in sync.
+                SharedComponent {
+                    role: ComponentRole::T5xxl,
+                    url: "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/t5xxl_fp8_e4m3fn.safetensors",
+                    size_bytes: 4_893_934_904,
+                    filename: "t5xxl_fp8_e4m3fn.safetensors",
+                },
+                SharedComponent {
+                    role: ComponentRole::ClipL,
+                    url: "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/clip_l.safetensors",
+                    size_bytes: 246_144_152,
+                    filename: "clip_l.safetensors",
+                },
+                SharedComponent {
+                    role: ComponentRole::Vae,
+                    url: "https://huggingface.co/camenduru/FLUX.1-dev-ungated/resolve/main/ae.safetensors",
+                    size_bytes: 335_304_388,
+                    filename: "ae.safetensors",
+                },
+            ],
+        },
+        ModelRecipe {
             family: "sd3",
             pool_family: "sd3",
             name: "Stable Diffusion 3 / 3.5",
+            edits_images: false,
             roles: vec![
                 role(ComponentRole::Diffusion, true, &["sd3", "sd_3", "stable-diffusion-3"]),
                 role(ComponentRole::ClipL, true, &["clip_l", "clip-l"]),
@@ -254,6 +344,7 @@ pub fn recipes() -> Vec<ModelRecipe> {
             family: "qwen-image",
             pool_family: "qwen-image",
             name: "Qwen-Image",
+            edits_images: false,
             roles: vec![
                 // `"qwen_image"` matches `qwen_image_vae.safetensors` more
                 // strongly than `"vae"` does, so without the exclusion the VAE
@@ -298,6 +389,7 @@ pub fn recipes() -> Vec<ModelRecipe> {
             // Same Qwen2.5-VL encoder, same VAE as Qwen-Image — pool with it.
             pool_family: "qwen-image",
             name: "Qwen-Image-Edit",
+            edits_images: true,
             roles: vec![
                 // Deliberately narrow: NOT "qwen-image"/"qwen". The plain
                 // Qwen-Image family already claims those, and since
@@ -370,6 +462,7 @@ pub fn recipes() -> Vec<ModelRecipe> {
             family: "flux2",
             pool_family: "flux2",
             name: "FLUX.2 (klein / dev)",
+            edits_images: false,
             roles: vec![
                 role(ComponentRole::Diffusion, true, &["flux2", "flux-2", "flux.2"]),
                 role(ComponentRole::Llm, true, &["qwen3", "qwen", "llm"]),
@@ -403,6 +496,7 @@ pub fn recipes() -> Vec<ModelRecipe> {
             family: "z-image",
             pool_family: "z-image",
             name: "Z-Image (Turbo)",
+            edits_images: false,
             roles: vec![
                 role(ComponentRole::Diffusion, true, &["z_image", "z-image", "zimage"]),
                 role(ComponentRole::Llm, true, &["qwen3", "qwen", "llm"]),
@@ -429,6 +523,7 @@ pub fn recipes() -> Vec<ModelRecipe> {
             family: "custom",
             pool_family: "custom",
             name: "Custom (assign files manually)",
+            edits_images: false,
             roles: vec![
                 role(ComponentRole::Diffusion, true, &[]),
                 role(ComponentRole::Vae, false, &[]),
@@ -447,6 +542,29 @@ pub fn recipes() -> Vec<ModelRecipe> {
 /// Look up a recipe by family id.
 pub fn recipe_for(family: &str) -> Option<ModelRecipe> {
     recipes().into_iter().find(|r| r.family == family)
+}
+
+/// Required roles this family's recipe declares that `components` leaves unset.
+/// Empty for a family with no recipe (`sd15`, `sdxl`) and for `custom`, whose
+/// only required role is the diffusion model the caller already supplied.
+///
+/// Distinct from `types::missing_components`, which answers a different
+/// question: that one finds paths that are set but point at a file that is
+/// gone. A role that was never filled has a different repair.
+pub fn missing_required_roles(
+    family: &str,
+    components: &crate::manifest::ManifestComponents,
+) -> Vec<ComponentRole> {
+    let Some(recipe) = recipe_for(family) else {
+        return Vec::new();
+    };
+    recipe
+        .roles
+        .iter()
+        .filter(|spec| spec.required)
+        .filter(|spec| components.get_role(spec.role).is_none())
+        .map(|spec| spec.role)
+        .collect()
 }
 
 /// Recommended generation settings for a model family, or `None` for families
@@ -471,6 +589,10 @@ pub fn family_defaults(family: &str, diffusion_filename: Option<&str>) -> Option
             let steps = if is_schnell { 4 } else { 20 };
             Some(d(steps, 1.0, Sampler::Euler, 1024, 1024))
         }
+        // The dev profile: Kontext is not distilled, and there is no schnell
+        // variant to branch on. 1024×1024 is only the fallback — an edit run
+        // takes its size from the reference image (see `imagedim::suggest_size`).
+        "flux1-kontext" => Some(d(20, 1.0, Sampler::Euler, 1024, 1024)),
         "flux2" => Some(d(4, 1.0, Sampler::Euler, 1024, 1024)),
         "sd3" => {
             // SD3.5 Large Turbo is timestep-distilled: it bakes guidance in, so
@@ -820,26 +942,187 @@ mod tests {
         assert!(FAMILIES.contains(&"sdxl"));
     }
 
+    /// The whole point of moving the flag onto the recipe: there is no second
+    /// place to update, so the predicate and the recipes cannot disagree.
+    #[test]
+    fn edit_capability_is_read_from_the_recipe_not_a_side_list() {
+        for r in recipes() {
+            assert_eq!(
+                is_edit_family(r.family),
+                r.edits_images,
+                "{} disagrees with its own recipe",
+                r.family
+            );
+        }
+        assert!(edit_families().contains(&"qwen-image-edit".to_string()));
+    }
+
+    /// The three layers, in order. Written as a table because the interesting
+    /// part is the precedence, not any single row.
+    #[test]
+    fn the_override_beats_the_family_and_the_vision_tower() {
+        // (override, family, has_vision_tower) -> edits?
+        let cases: &[(Option<bool>, Option<&str>, bool, bool)] = &[
+            (None, Some("flux1-kontext"), false, true),
+            (None, Some("qwen-image-edit"), false, true),
+            (None, Some("flux1"), false, false),
+            (None, None, false, false),
+            (None, Some("custom"), true, true), // vision tower, no edit family
+            (Some(true), Some("flux1"), false, true), // forced on
+            (Some(false), Some("flux1-kontext"), false, false), // forced off
+            (Some(false), None, true, false),   // forced off beats the tower
+        ];
+        for (over, family, tower, expected) in cases {
+            assert_eq!(
+                edits_images(*over, *family, *tower),
+                *expected,
+                "override={over:?} family={family:?} tower={tower}"
+            );
+        }
+    }
+
     #[test]
     fn the_edit_family_list_matches_the_predicate() {
-        for f in EDIT_FAMILIES {
-            assert!(is_edit_family(f), "{f} is listed but the predicate rejects it");
-            assert!(FAMILIES.contains(f), "{f} must also be a real family");
+        let listed = edit_families();
+        assert!(!listed.is_empty(), "some family must be able to edit");
+        for f in listed {
+            assert!(is_edit_family(&f), "{f} is listed but the predicate rejects it");
+            assert!(FAMILIES.contains(&f.as_str()), "{f} must also be a real family");
         }
+    }
+
+    /// A Kontext file set matches flux1's roles as well as flux1-kontext's, so a
+    /// tie would be settled by recipe order — `detect_best` takes `max_by_key`,
+    /// which yields the *last* maximum. flux1's diffusion role excludes
+    /// "kontext" instead, so the decision is made by the filenames themselves
+    /// and survives either recipe being moved.
+    #[test]
+    fn kontext_outranks_plain_flux_regardless_of_recipe_order() {
+        let files: Vec<String> = [
+            "flux1-kontext-dev-Q5_K_M.gguf",
+            "t5xxl_fp8_e4m3fn.safetensors",
+            "clip_l.safetensors",
+            "ae.safetensors",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+
+        let (recipe, d) = detect_best(&files).unwrap();
+        assert_eq!(recipe.family, "flux1-kontext");
+        assert_eq!(d.get(ComponentRole::Diffusion), Some("flux1-kontext-dev-Q5_K_M.gguf"));
+        assert_eq!(d.required_matched(&recipe), 4);
+
+        // flux1 must not merely lose the tie — it must fail to claim the file at
+        // all, which is what makes the outcome order-independent.
+        let plain = detect(&recipe_for("flux1").unwrap(), &files);
+        assert_eq!(plain.get(ComponentRole::Diffusion), None);
+    }
+
+    /// The exclusion must not cost the base family its own files.
+    #[test]
+    fn a_plain_flux_set_still_detects_as_flux1() {
+        let files: Vec<String> = [
+            "flux1-dev-Q4_K_S.gguf",
+            "t5xxl_fp8_e4m3fn.safetensors",
+            "clip_l.safetensors",
+            "ae.safetensors",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let (recipe, _d) = detect_best(&files).unwrap();
+        assert_eq!(recipe.family, "flux1");
+    }
+
+    /// The Kontext VAE ships under a name that also carries "kontext", so the
+    /// diffusion role would otherwise claim it — whichever of the two the
+    /// caller happened to list first wins a same-length pattern match.
+    #[test]
+    fn the_kontext_vae_does_not_win_the_diffusion_slot() {
+        let files: Vec<String> = [
+            "flux1-kontext-dev-vae.safetensors",
+            "flux1-kontext-dev-Q5_K_M.gguf",
+            "t5xxl_fp8_e4m3fn.safetensors",
+            "clip_l.safetensors",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let d = detect(&recipe_for("flux1-kontext").unwrap(), &files);
+        assert_eq!(d.get(ComponentRole::Diffusion), Some("flux1-kontext-dev-Q5_K_M.gguf"));
+        assert_eq!(d.get(ComponentRole::Vae), Some("flux1-kontext-dev-vae.safetensors"));
+    }
+
+    #[test]
+    fn kontext_pools_its_shared_parts_with_flux1() {
+        let r = recipe_for("flux1-kontext").unwrap();
+        assert_eq!(r.pool_family, "flux1");
+        assert!(r.edits_images);
+        let flux = recipe_for("flux1").unwrap();
+        for c in &r.shared {
+            let same = flux.shared.iter().find(|s| s.role == c.role).unwrap();
+            assert_eq!(c.url, same.url, "{:?} must reuse the flux1 download", c.role);
+            assert_eq!(c.filename, same.filename, "{:?} must pool to the same path", c.role);
+        }
+    }
+
+    #[test]
+    fn missing_required_roles_reports_roles_that_were_never_filled() {
+        use crate::manifest::ManifestComponents;
+        // What `add_url_model` writes today: the diffusion model and nothing else.
+        let diffusion_only = ManifestComponents {
+            diffusion_model: "flux1-kontext-dev-Q5_K_M.gguf".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            missing_required_roles("flux1-kontext", &diffusion_only),
+            vec![ComponentRole::T5xxl, ComponentRole::ClipL, ComponentRole::Vae]
+        );
+
+        let complete = ManifestComponents {
+            diffusion_model: "flux1-kontext-dev-Q5_K_M.gguf".into(),
+            t5xxl: Some("/p/t5.safetensors".into()),
+            clip_l: Some("/p/clip_l.safetensors".into()),
+            vae: Some("/p/ae.safetensors".into()),
+            ..Default::default()
+        };
+        assert!(missing_required_roles("flux1-kontext", &complete).is_empty());
+
+        // No recipe at all, and the manual pseudo-family: nothing is required
+        // beyond the file the user already supplied.
+        assert!(missing_required_roles("sd15", &diffusion_only).is_empty());
+        assert!(missing_required_roles("custom", &diffusion_only).is_empty());
+    }
+
+    #[test]
+    fn family_defaults_kontext_matches_flux1_dev() {
+        let d = family_defaults("flux1-kontext", None).unwrap();
+        assert_eq!(d.steps, 20);
+        assert_eq!(d.cfg_scale, 1.0);
+        assert_eq!(d.sampler, crate::types::Sampler::Euler);
     }
 
     #[test]
     fn only_the_edit_families_can_take_a_reference_image() {
         assert!(is_edit_family("qwen-image-edit"));
+        assert!(is_edit_family("flux1-kontext"));
         for f in ["sd15", "sdxl", "sd3", "flux1", "flux2", "qwen-image", "z-image", "custom", ""] {
             assert!(!is_edit_family(f), "{f} is not an editing family");
         }
     }
 
+    /// Pooling elsewhere is deliberate and rare: it means "this family's shared
+    /// parts are byte-identical to another's". Anything not on this list pooling
+    /// somewhere other than its own name is a typo, not a decision.
     #[test]
-    fn only_the_edit_family_pools_somewhere_else() {
+    fn only_the_derived_families_pool_somewhere_else() {
         for r in recipes() {
-            let expected = if r.family == "qwen-image-edit" { "qwen-image" } else { r.family };
+            let expected = match r.family {
+                "qwen-image-edit" => "qwen-image",
+                "flux1-kontext" => "flux1",
+                f => f,
+            };
             assert_eq!(
                 r.pool_family, expected,
                 "{} pools its shared components under the wrong directory",

@@ -55,6 +55,13 @@ pub struct ModelManifest {
     pub flags: ManifestFlags,
     #[serde(default)]
     pub recommended_settings: Option<GenDefaults>,
+    /// Per-model override for "this model edits an existing image". `None`
+    /// defers to the family recipe (and then to the vision tower); `Some`
+    /// decides outright, in both directions. `#[serde(default)]` is what keeps
+    /// `schema_version` at 1: a model.json written before this field existed
+    /// loads as `None`, which is exactly the old behaviour.
+    #[serde(default)]
+    pub edits_images: Option<bool>,
 }
 
 impl ManifestComponents {
@@ -71,6 +78,23 @@ impl ManifestComponents {
             Llm => self.llm = Some(stored),
             LlmVision => self.llm_vision = Some(stored),
         }
+    }
+
+    /// The path stored for a role, or `None` when the slot is unset or blank.
+    /// The inverse of `set_role`, and the reason `missing_required_roles` can
+    /// ask about a role it was handed rather than matching on seven fields.
+    pub fn get_role(&self, role: crate::recipes::ComponentRole) -> Option<&str> {
+        use crate::recipes::ComponentRole::*;
+        let raw = match role {
+            Diffusion => Some(self.diffusion_model.as_str()),
+            Vae => self.vae.as_deref(),
+            ClipL => self.clip_l.as_deref(),
+            ClipG => self.clip_g.as_deref(),
+            T5xxl => self.t5xxl.as_deref(),
+            Llm => self.llm.as_deref(),
+            LlmVision => self.llm_vision.as_deref(),
+        };
+        raw.map(str::trim).filter(|s| !s.is_empty())
     }
 }
 
@@ -146,7 +170,8 @@ impl ModelManifest {
 
     /// Overwrite the editable surface wholesale. `components` must already be
     /// relativized by the caller (which knows the model folder). `recommended`
-    /// is the per-model override (None = use the family default).
+    /// is the per-model override (None = use the family default), and `edits`
+    /// is the per-model edit-capability override (None = ask the family).
     pub fn set_editable(
         &mut self,
         name: String,
@@ -154,12 +179,14 @@ impl ModelManifest {
         flags: ManifestFlags,
         components: ManifestComponents,
         recommended: Option<GenDefaults>,
+        edits: Option<bool>,
     ) {
         self.name = name;
         self.family = family;
         self.flags = flags;
         self.components = components;
         self.recommended_settings = recommended;
+        self.edits_images = edits;
     }
 
     /// The engine-ready reference. Single checkpoint → `SingleFile { -m path }`;
@@ -201,6 +228,7 @@ mod tests {
             },
             flags: ManifestFlags::default(),
             recommended_settings: None,
+            edits_images: None,
         }
     }
 
@@ -250,6 +278,44 @@ mod tests {
         assert_eq!(m.id, "x");
     }
 
+    /// `schema_version` stays 1, so an existing model.json — written before this
+    /// field existed — must load with the field absent and mean "ask the family".
+    #[test]
+    fn edits_images_round_trips_through_all_three_states() {
+        let without = r#"{"schema_version":1,"id":"m","name":"n","family":"flux1",
+            "source":{"kind":"url","url":"https://e/x.gguf"},
+            "components":{"diffusion_model":"x.gguf"}}"#;
+        let m: ModelManifest = serde_json::from_str(without).unwrap();
+        assert_eq!(m.edits_images, None);
+
+        for (json, expected) in [("true", Some(true)), ("false", Some(false))] {
+            let src = format!(
+                r#"{{"schema_version":1,"id":"m","name":"n","family":"flux1",
+                "source":{{"kind":"url","url":"https://e/x.gguf"}},
+                "components":{{"diffusion_model":"x.gguf"}},"edits_images":{json}}}"#
+            );
+            let m: ModelManifest = serde_json::from_str(&src).unwrap();
+            assert_eq!(m.edits_images, expected);
+            let back: ModelManifest = serde_json::from_str(&serde_json::to_string(&m).unwrap()).unwrap();
+            assert_eq!(back.edits_images, expected, "the value must survive a save/load");
+        }
+    }
+
+    #[test]
+    fn get_role_reads_back_what_set_role_wrote() {
+        use crate::recipes::ComponentRole::*;
+        let mut c = ManifestComponents::default();
+        assert_eq!(c.get_role(T5xxl), None);
+        c.set_role(T5xxl, "t5.safetensors".into());
+        c.set_role(Diffusion, "d.gguf".into());
+        assert_eq!(c.get_role(T5xxl), Some("t5.safetensors"));
+        assert_eq!(c.get_role(Diffusion), Some("d.gguf"));
+        // An empty string is "unset", not "set to nothing" — the editor writes
+        // one when the user clears a slot.
+        c.set_role(ClipL, "  ".into());
+        assert_eq!(c.get_role(ClipL), None);
+    }
+
     #[test]
     fn set_role_targets_the_right_field() {
         use crate::recipes::ComponentRole;
@@ -292,6 +358,7 @@ mod tests {
             },
             flags: ManifestFlags::default(),
             recommended_settings: None,
+            edits_images: None,
         };
         assert_eq!(
             m.to_model_ref(dir),
@@ -324,6 +391,7 @@ mod tests {
             components: ManifestComponents { diffusion_model: "sd3.safetensors".into(), ..Default::default() },
             flags: ManifestFlags { vae_format: Some("sd3".into()), prediction: None },
             recommended_settings: None,
+            edits_images: None,
         };
         match m.to_model_ref(dir) {
             ModelRef::MultiFile(c) => assert_eq!(c.vae_format.as_deref(), Some("sd3")),
@@ -364,6 +432,7 @@ mod tests {
             components: ManifestComponents::default(),
             flags: ManifestFlags::default(),
             recommended_settings: None,
+            edits_images: None,
         };
         let rec = GenDefaults {
             steps: 12, cfg_scale: 5.0, sampler: crate::types::Sampler::Euler,
@@ -375,12 +444,14 @@ mod tests {
             ManifestFlags { vae_format: Some("sdxl".into()), prediction: None },
             ManifestComponents { diffusion_model: "d.safetensors".into(), ..Default::default() },
             Some(rec),
+            Some(true),
         );
         assert_eq!(man.name, "New");
         assert_eq!(man.family, "sdxl");
         assert_eq!(man.flags.vae_format.as_deref(), Some("sdxl"));
         assert_eq!(man.components.diffusion_model, "d.safetensors");
         assert_eq!(man.recommended_settings.unwrap().steps, 12);
+        assert_eq!(man.edits_images, Some(true));
     }
 
     #[test]
