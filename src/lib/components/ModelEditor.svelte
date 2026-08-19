@@ -1,8 +1,10 @@
 <script lang="ts">
   import { untrack } from "svelte";
-  import { editModel, deleteModelEntry, pickModelFile } from "../api";
-  import { refreshLibrary } from "../stores";
-  import { VAE_FORMATS, PREDICTIONS, SAMPLERS } from "../types";
+  import { completeModel, editModel, deleteModelEntry, pickModelFile, listFamilies } from "../api";
+  import { refreshLibrary, editFamilies, runDownload, downloadBusy, downloadProgress, downloadError } from "../stores";
+  import { formatBytes } from "../modelFormat";
+  import DownloadProgressBar from "./DownloadProgressBar.svelte";
+  import { VAE_FORMATS, PREDICTIONS, SAMPLERS, ROLE_LABELS } from "../types";
   import type { LibraryEntry, ManifestFlags, ModelComponents, GenDefaults, ModelRef, Sampler } from "../types";
 
   let { entry, onClose }: { entry: LibraryEntry; onClose: () => void } = $props();
@@ -36,7 +38,42 @@
   let error = $state<string | null>(null);
   let confirmingDelete = $state(false);
 
-  const FAMILIES = ["sd15", "sdxl", "flux1", "flux2", "sd3", "qwen-image", "qwen-image-edit", "z-image", "custom"];
+  // Families come from the backend recipe list, so one added there (flux1-kontext)
+  // appears here with nothing to remember. Seeded with this entry's own family:
+  // an empty <select> clears its binding on first paint, and a hand-typed family
+  // no recipe knows still has to survive a save.
+  let families = $state<string[]>(untrack(() => [entry.family]));
+  $effect(() => {
+    listFamilies()
+      .then((fs) => (families = fs.includes(entry.family) ? fs : [...fs, entry.family]))
+      .catch(() => {});
+  });
+
+  // Tri-state, exactly as stored: null means "whatever the family says". Kept as
+  // an override rather than a plain boolean so that changing the family above
+  // moves the checkbox with it instead of freezing yesterday's answer.
+  let editsOverride = $state<boolean | null>(untrack(() => entry.edits_images));
+  const familyEdits = $derived($editFamilies.includes(family));
+  const editsChecked = $derived(editsOverride ?? familyEdits);
+  function setEdits(on: boolean) {
+    editsOverride = on === familyEdits ? null : on;
+  }
+
+  // Local rather than read straight off the prop: completing refreshes the
+  // library, and this modal must show the result whether or not the parent
+  // remounts it with a fresh entry.
+  let incomplete = $state(untrack(() => entry.incomplete));
+
+  async function complete() {
+    error = null;
+    const updated = await runDownload(() => completeModel(entry.id));
+    if (updated === null) { error = $downloadError ?? "Completing this model failed."; return; }
+    incomplete = updated.incomplete;
+    slots = slotsFrom(updated.model);
+    vaeFormat = updated.flags.vae_format ?? vaeFormat;
+    prediction = updated.flags.prediction ?? prediction;
+  }
+
   type SlotKey = "diffusion_model" | "vae" | "clip_l" | "clip_g" | "t5xxl" | "llm" | "llm_vision";
   const OPTIONAL_ROLES: { key: SlotKey; label: string }[] = [
     { key: "vae", label: "VAE" },
@@ -84,7 +121,7 @@
         flags,
         components,
         overrideOn ? rec : null,
-        entry.edits_images,
+        editsOverride,
       );
       await refreshLibrary();
       onClose();
@@ -112,6 +149,31 @@
       {#if entry.broken}<p class="warn">⚠ Some component files are missing. Re-pick them below, then Save.</p>{/if}
       {#if error}<p class="err">{error}</p>{/if}
 
+      {#if incomplete.length > 0}
+        <div class="fill">
+          <p class="warn">Missing {incomplete.length === 1 ? "a required component" : "required components"}:</p>
+          <ul class="fill-list">
+            {#each incomplete as row}
+              <li>
+                <span class="ck">{ROLE_LABELS[row.role]}</span>
+                {#if row.fillable}
+                  <span class="cpath" title={row.filename}>‎{row.filename}</span>
+                  <span class="rsize">{row.have ? "already downloaded" : formatBytes(row.size_bytes)}</span>
+                {:else}
+                  <span class="cpath none">no known file — pick one below</span>
+                  <span class="rsize"></span>
+                {/if}
+              </li>
+            {/each}
+          </ul>
+          {#if incomplete.some((r) => r.fillable)}
+            <button class="btn btn-primary btn-sm" disabled={busy || $downloadBusy} onclick={complete}>
+              {$downloadBusy ? "Completing…" : "Complete this model"}</button>
+            {#if $downloadBusy}<div class="progress"><DownloadProgressBar progress={$downloadProgress} /></div>{/if}
+          {/if}
+        </div>
+      {/if}
+
       <div class="dlg-field">
         <p class="microlabel">Name</p>
         <input class="dlg-input" bind:value={name} />
@@ -119,7 +181,7 @@
       <div class="dlg-field">
         <p class="microlabel">Family</p>
         <select class="dlg-select" bind:value={family}>
-          {#each FAMILIES as f}<option value={f}>{f}</option>{/each}
+          {#each families as f}<option value={f}>{f}</option>{/each}
         </select>
       </div>
 
@@ -145,6 +207,17 @@
           {/if}
         </div>
       {/each}
+
+      <p class="section-hdr">Capabilities</p>
+      <label class="check cap">
+        <input type="checkbox" checked={editsChecked} onchange={(e) => setEdits(e.currentTarget.checked)} />
+        <span class="check-box"></span>
+        <span>Edits an existing image</span>
+      </label>
+      <p class="hint">
+        {#if editsOverride === null}Following the {family} default, which is {familyEdits ? "on" : "off"}.
+        {:else}Set for this model only, overriding the {family} default of {familyEdits ? "on" : "off"}.{/if}
+      </p>
 
       <p class="section-hdr">Engine flags</p>
       <div class="dlg-field">
@@ -211,6 +284,16 @@
   /* Introduces the optional recommended-settings section — needs breathing
      room from the Prediction select directly above (which is .dlg-field.last). */
   .check { margin-top: 20px; }
+  /* The Capabilities checkbox opens its section, so it does not need the gap
+     that separates the recommended-settings checkbox from the select above it. */
+  .check.cap { margin-top: 0; }
+  .hint { font-size: 11.5px; color: var(--text-muted); margin: 6px 0 0; }
+  .fill { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin: 0 0 14px; }
+  .fill .warn { margin: 0 0 8px; }
+  .fill-list { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 6px; }
+  .fill-list li { display: grid; grid-template-columns: 96px 1fr auto; align-items: center; gap: 12px; }
+  .rsize { font-size: 11.5px; color: var(--text-muted); white-space: nowrap; }
+  .progress { margin-top: 10px; }
   .rec-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; margin-top: 14px; }
   .rec-grid .wide { grid-column: 1 / -1; }
   .warn { font-size: 12px; color: var(--warn); }
