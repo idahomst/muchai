@@ -6,8 +6,10 @@ use serde::{Deserialize, Serialize};
 /// recipe (they are single-file models, family inferred from the filename), and
 /// the `custom` recipe is not a base family. Keep in sync with
 /// `family_defaults` below and with `catalog::validate`.
-pub const FAMILIES: &[&str] =
-    &["sd15", "sdxl", "sd3", "flux1", "flux2", "qwen-image", "qwen-image-edit", "z-image"];
+pub const FAMILIES: &[&str] = &[
+    "sd15", "sdxl", "sd3", "flux1", "flux1-kontext", "flux2", "qwen-image", "qwen-image-edit",
+    "z-image",
+];
 
 /// True when models of this family are instruction editors — read off the
 /// family's own recipe. `sd15` and `sdxl` have no recipe and are not editors,
@@ -189,7 +191,12 @@ pub fn recipes() -> Vec<ModelRecipe> {
             name: "FLUX.1 (dev / schnell / krea)",
             edits_images: false,
             roles: vec![
-                role(ComponentRole::Diffusion, true, &["flux1", "flux-1", "flux"]),
+                // A Kontext checkpoint matches "flux1" just as well as a dev
+                // checkpoint does, and would then tie with the flux1-kontext
+                // recipe on required roles — a tie `detect_best` settles by
+                // list position. Excluding it here decides the match on the
+                // filename instead, wherever either recipe sits.
+                role_not(ComponentRole::Diffusion, true, &["flux1", "flux-1", "flux"], &["kontext"]),
                 role(ComponentRole::T5xxl, true, &["t5xxl", "t5-xxl", "t5"]),
                 role(ComponentRole::ClipL, true, &["clip_l", "clip-l"]),
                 role(ComponentRole::Vae, true, &["ae.", "vae"]),
@@ -197,6 +204,61 @@ pub fn recipes() -> Vec<ModelRecipe> {
             vae_format: Some("flux"),
             prediction: Some("flux_flow"),
             shared: vec![
+                SharedComponent {
+                    role: ComponentRole::T5xxl,
+                    url: "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/t5xxl_fp8_e4m3fn.safetensors",
+                    size_bytes: 4_893_934_904,
+                    filename: "t5xxl_fp8_e4m3fn.safetensors",
+                },
+                SharedComponent {
+                    role: ComponentRole::ClipL,
+                    url: "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/clip_l.safetensors",
+                    size_bytes: 246_144_152,
+                    filename: "clip_l.safetensors",
+                },
+                SharedComponent {
+                    role: ComponentRole::Vae,
+                    url: "https://huggingface.co/camenduru/FLUX.1-dev-ungated/resolve/main/ae.safetensors",
+                    size_bytes: 335_304_388,
+                    filename: "ae.safetensors",
+                },
+            ],
+        },
+        ModelRecipe {
+            family: "flux1-kontext",
+            // Kontext dev is the FLUX.1 dev stack with a different transformer:
+            // same T5-XXL, same CLIP-L, and the stock FLUX.1 autoencoder (the
+            // GGUF repos ship no VAE of their own, which is why the pool's
+            // `ae.safetensors` is the file it is meant to run with). Pooling
+            // under flux1 reuses what a FLUX.1 install already has rather than
+            // fetching it twice — the same reason qwen-image-edit pools under
+            // qwen-image.
+            pool_family: "flux1",
+            name: "FLUX.1 Kontext (edits images)",
+            edits_images: true,
+            roles: vec![
+                // Excluding the VAE is not optional: a Kontext VAE ships as
+                // `flux1-kontext-dev-vae.safetensors`, which matches the
+                // "flux1-kontext" pattern exactly as strongly as the diffusion
+                // checkpoint does. `detect` keeps the first file at a given
+                // score, so without this the winner is whichever `read_dir`
+                // returned first — and the real checkpoint goes unassigned.
+                role_not(
+                    ComponentRole::Diffusion,
+                    true,
+                    &["flux1-kontext", "flux-kontext", "kontext"],
+                    &["vae", "ae."],
+                ),
+                role(ComponentRole::T5xxl, true, &["t5xxl", "t5-xxl", "t5"]),
+                role(ComponentRole::ClipL, true, &["clip_l", "clip-l"]),
+                role(ComponentRole::Vae, true, &["ae.", "vae"]),
+            ],
+            vae_format: Some("flux"),
+            prediction: Some("flux_flow"),
+            shared: vec![
+                // Byte-identical to the flux1 entries above and pooled to the
+                // same paths, so an existing FLUX.1 install is reused rather
+                // than re-fetched. Keep the two in sync.
                 SharedComponent {
                     role: ComponentRole::T5xxl,
                     url: "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/t5xxl_fp8_e4m3fn.safetensors",
@@ -489,6 +551,10 @@ pub fn family_defaults(family: &str, diffusion_filename: Option<&str>) -> Option
             let steps = if is_schnell { 4 } else { 20 };
             Some(d(steps, 1.0, Sampler::Euler, 1024, 1024))
         }
+        // The dev profile: Kontext is not distilled, and there is no schnell
+        // variant to branch on. 1024×1024 is only the fallback — an edit run
+        // takes its size from the reference image (see `imagedim::suggest_size`).
+        "flux1-kontext" => Some(d(20, 1.0, Sampler::Euler, 1024, 1024)),
         "flux2" => Some(d(4, 1.0, Sampler::Euler, 1024, 1024)),
         "sd3" => {
             // SD3.5 Large Turbo is timestep-distilled: it bakes guidance in, so
@@ -863,18 +929,110 @@ mod tests {
         }
     }
 
+    /// A Kontext file set matches flux1's roles as well as flux1-kontext's, so a
+    /// tie would be settled by recipe order — `detect_best` takes `max_by_key`,
+    /// which yields the *last* maximum. flux1's diffusion role excludes
+    /// "kontext" instead, so the decision is made by the filenames themselves
+    /// and survives either recipe being moved.
+    #[test]
+    fn kontext_outranks_plain_flux_regardless_of_recipe_order() {
+        let files: Vec<String> = [
+            "flux1-kontext-dev-Q5_K_M.gguf",
+            "t5xxl_fp8_e4m3fn.safetensors",
+            "clip_l.safetensors",
+            "ae.safetensors",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+
+        let (recipe, d) = detect_best(&files).unwrap();
+        assert_eq!(recipe.family, "flux1-kontext");
+        assert_eq!(d.get(ComponentRole::Diffusion), Some("flux1-kontext-dev-Q5_K_M.gguf"));
+        assert_eq!(d.required_matched(&recipe), 4);
+
+        // flux1 must not merely lose the tie — it must fail to claim the file at
+        // all, which is what makes the outcome order-independent.
+        let plain = detect(&recipe_for("flux1").unwrap(), &files);
+        assert_eq!(plain.get(ComponentRole::Diffusion), None);
+    }
+
+    /// The exclusion must not cost the base family its own files.
+    #[test]
+    fn a_plain_flux_set_still_detects_as_flux1() {
+        let files: Vec<String> = [
+            "flux1-dev-Q4_K_S.gguf",
+            "t5xxl_fp8_e4m3fn.safetensors",
+            "clip_l.safetensors",
+            "ae.safetensors",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let (recipe, _d) = detect_best(&files).unwrap();
+        assert_eq!(recipe.family, "flux1");
+    }
+
+    /// The Kontext VAE ships under a name that also carries "kontext", so the
+    /// diffusion role would otherwise claim it — whichever of the two the
+    /// caller happened to list first wins a same-length pattern match.
+    #[test]
+    fn the_kontext_vae_does_not_win_the_diffusion_slot() {
+        let files: Vec<String> = [
+            "flux1-kontext-dev-vae.safetensors",
+            "flux1-kontext-dev-Q5_K_M.gguf",
+            "t5xxl_fp8_e4m3fn.safetensors",
+            "clip_l.safetensors",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let d = detect(&recipe_for("flux1-kontext").unwrap(), &files);
+        assert_eq!(d.get(ComponentRole::Diffusion), Some("flux1-kontext-dev-Q5_K_M.gguf"));
+        assert_eq!(d.get(ComponentRole::Vae), Some("flux1-kontext-dev-vae.safetensors"));
+    }
+
+    #[test]
+    fn kontext_pools_its_shared_parts_with_flux1() {
+        let r = recipe_for("flux1-kontext").unwrap();
+        assert_eq!(r.pool_family, "flux1");
+        assert!(r.edits_images);
+        let flux = recipe_for("flux1").unwrap();
+        for c in &r.shared {
+            let same = flux.shared.iter().find(|s| s.role == c.role).unwrap();
+            assert_eq!(c.url, same.url, "{:?} must reuse the flux1 download", c.role);
+            assert_eq!(c.filename, same.filename, "{:?} must pool to the same path", c.role);
+        }
+    }
+
+    #[test]
+    fn family_defaults_kontext_matches_flux1_dev() {
+        let d = family_defaults("flux1-kontext", None).unwrap();
+        assert_eq!(d.steps, 20);
+        assert_eq!(d.cfg_scale, 1.0);
+        assert_eq!(d.sampler, crate::types::Sampler::Euler);
+    }
+
     #[test]
     fn only_the_edit_families_can_take_a_reference_image() {
         assert!(is_edit_family("qwen-image-edit"));
+        assert!(is_edit_family("flux1-kontext"));
         for f in ["sd15", "sdxl", "sd3", "flux1", "flux2", "qwen-image", "z-image", "custom", ""] {
             assert!(!is_edit_family(f), "{f} is not an editing family");
         }
     }
 
+    /// Pooling elsewhere is deliberate and rare: it means "this family's shared
+    /// parts are byte-identical to another's". Anything not on this list pooling
+    /// somewhere other than its own name is a typo, not a decision.
     #[test]
-    fn only_the_edit_family_pools_somewhere_else() {
+    fn only_the_derived_families_pool_somewhere_else() {
         for r in recipes() {
-            let expected = if r.family == "qwen-image-edit" { "qwen-image" } else { r.family };
+            let expected = match r.family {
+                "qwen-image-edit" => "qwen-image",
+                "flux1-kontext" => "flux1",
+                f => f,
+            };
             assert_eq!(
                 r.pool_family, expected,
                 "{} pools its shared components under the wrong directory",
