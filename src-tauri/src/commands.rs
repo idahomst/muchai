@@ -785,6 +785,12 @@ fn infer_single_file_family(filename: &str) -> String {
     // and hit "flux" instead. That mislabelled model then hid every flux2 LoRA.
     let squashed: String = lower.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
     for (needle, family) in [
+        // Both edit variants must be tested before the base family whose name
+        // is a prefix of theirs, or "flux"/"qwen" claims them first and the
+        // model silently loses its edit capability.
+        ("kontext", "flux1-kontext"),
+        ("qwenimageedit", "qwen-image-edit"),
+        ("qwenedit", "qwen-image-edit"),
         ("flux2", "flux2"),
         ("flux", "flux1"),
         ("qwen", "qwen-image"),
@@ -2649,6 +2655,24 @@ mod tests {
             assert_eq!(infer_single_file_family(name), "flux2", "{name}");
         }
         assert_eq!(infer_single_file_family("z-image-turbo-Q2_K.gguf"), "z-image");
+    }
+
+    /// The needle list is ordered, and both of these families are named as a
+    /// suffix of a family that would otherwise claim them first. This is the
+    /// same class of bug as the flux2 regression above.
+    #[test]
+    fn an_edit_variant_is_not_filed_under_its_base_family() {
+        // The real file the user downloaded.
+        assert_eq!(infer_single_file_family("flux1-kontext-dev-Q5_K_M.gguf"), "flux1-kontext");
+        assert_eq!(infer_single_file_family("flux-kontext-dev-fp8.safetensors"), "flux1-kontext");
+        assert_eq!(
+            infer_single_file_family("Qwen-Image-Edit-2511-Q3_K_S.gguf"),
+            "qwen-image-edit"
+        );
+        assert_eq!(infer_single_file_family("qwen_image_edit_2509.safetensors"), "qwen-image-edit");
+        // The base families keep their own files.
+        assert_eq!(infer_single_file_family("flux1-dev-Q4_K_S.gguf"), "flux1");
+        assert_eq!(infer_single_file_family("qwen-image-Q4.gguf"), "qwen-image");
     }
 
     #[test]
