@@ -5,8 +5,8 @@ use crate::types::{
 use crate::recipes::{self, ComponentRole};
 use crate::types::ModelRef;
 use crate::{
-    catalog, config, downloader, engine_install, engine_release, fit, gallery, hf, library, loras,
-    manifest, models, types,
+    catalog, completion, config, downloader, engine_install, engine_release, fit, gallery, hf,
+    library, loras, manifest, models, types,
 };
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -985,10 +985,116 @@ pub async fn add_catalog_model(
     Ok(library::entry_from_manifest(&model_dir, &man))
 }
 
+/// Fill every required role a model is missing that its recipe can supply.
+/// A component already in `shared/<pool_family>/` is wired into the manifest
+/// and never re-downloaded; anything absent is fetched into the pool. Mutates
+/// `man` in place — the caller saves it.
+///
+/// Roles no `SharedComponent` covers (in practice the diffusion model itself)
+/// are left alone rather than guessed at. They stay visible in the entry's
+/// `incomplete` list, which is where the user is offered a file picker.
+///
+/// One routine, two callers (`add_url_model` and `complete_model`) so that an
+/// add and a repair cannot drift apart.
+async fn fill_required_components(
+    app: &AppHandle,
+    models_dir: &Path,
+    hf_token: String,
+    civitai_token: String,
+    cancel: Arc<AtomicBool>,
+    model_dir: &Path,
+    man: &mut manifest::ModelManifest,
+) -> Result<(), String> {
+    let rows = completion::plan_completion(&man.family, &man.components, models_dir);
+    let Some(recipe) = recipes::recipe_for(&man.family) else {
+        return Ok(());
+    };
+    let pool = models_dir.join("shared").join(recipe.pool_family);
+
+    // role, url, destination in the pool, already-on-disk
+    let mut fill: Vec<(ComponentRole, String, PathBuf, bool)> = Vec::new();
+    for row in rows {
+        let (Some(filename), true) = (row.filename.clone(), row.fillable) else {
+            continue; // nothing can supply this role automatically
+        };
+        let url = match recipe.shared.iter().find(|s| s.role == row.role) {
+            Some(s) => s.url.to_string(),
+            None => continue,
+        };
+        fill.push((row.role, url, pool.join(filename), row.have));
+    }
+
+    let pending: Vec<(String, PathBuf)> = fill
+        .iter()
+        .filter(|(_, _, _, have)| !have)
+        .map(|(_, url, dest, _)| (url.clone(), dest.clone()))
+        .collect();
+
+    if !pending.is_empty() {
+        // The UI triggers at most one download at a time; this reset assumes
+        // that single-flight invariant, the same way add_catalog_model does.
+        cancel.store(false, Ordering::SeqCst);
+        let app2 = app.clone();
+        let file_count = pending.len() as u32;
+        tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+            for (i, (url, dest)) in pending.iter().enumerate() {
+                let token = token_for_url(url, &hf_token, &civitai_token);
+                let name =
+                    dest.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+                // Same ~4 MiB throttle as every other download here: a multi-GB
+                // fetch would otherwise emit ~100k IPC events.
+                let mut last_emit: u64 = 0;
+                let app3 = app2.clone();
+                downloader::download_to(
+                    url,
+                    &token,
+                    dest,
+                    move |downloaded, total| {
+                        if downloaded.saturating_sub(last_emit) >= 4 << 20
+                            || Some(downloaded) == total
+                        {
+                            last_emit = downloaded;
+                            let _ = app3.emit(
+                                "model:download:progress",
+                                DownloadProgress {
+                                    downloaded,
+                                    total,
+                                    file_index: Some(i as u32),
+                                    file_count: Some(file_count),
+                                    file_name: Some(name.clone()),
+                                },
+                            );
+                        }
+                    },
+                    &cancel,
+                )
+                .map_err(|e| e.message())?;
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|e| e.to_string())??;
+    }
+
+    // Wire every fillable role in — including the ones that were already
+    // pooled, which is the entire point of asking before downloading.
+    for (role, _url, dest, _have) in fill {
+        man.components.set_role(role, manifest::relativize(model_dir, &dest.to_string_lossy()));
+    }
+    // A model added before its family had a recipe carries no engine flags at
+    // all, which for FLUX.1 means no `--vae-format flux`. Seed them only when
+    // both are unset, so an explicit choice in the editor is never overwritten.
+    if man.flags.vae_format.is_none() && man.flags.prediction.is_none() {
+        man.flags = flags_for_family(&man.family);
+    }
+    Ok(())
+}
+
 /// Download a single user-supplied URL into its own `models_dir/<id>/` folder,
 /// infer its family from the filename, and write a manifest. Mirrors
-/// `add_catalog_model`'s download/error-cleanup shape but for one file with no
-/// pooled/shared components.
+/// `add_catalog_model`'s download/error-cleanup shape for the one file the user
+/// named; whatever else the inferred family requires is then filled in from the
+/// shared pool by `fill_required_components`.
 #[tauri::command]
 pub async fn add_url_model(
     app: AppHandle,
@@ -1003,6 +1109,9 @@ pub async fn add_url_model(
         let cfg = state.config.lock().unwrap();
         (PathBuf::from(&cfg.models_dir), cfg.hf_token.clone().unwrap_or_default(), cfg.civitai_token.clone().unwrap_or_default())
     };
+    // Second copies for the completion pass below; the first pair is moved into
+    // the diffusion download's blocking closure.
+    let (hf_token2, civitai_token2) = (hf_token.clone(), civitai_token.clone());
     if models_dir.as_os_str().is_empty() {
         return Err("models directory is not set".into());
     }
@@ -1059,20 +1168,71 @@ pub async fn add_url_model(
     let family = infer_single_file_family(&filename);
     let mut components = manifest::ManifestComponents::default();
     components.set_role(
-        crate::recipes::ComponentRole::Diffusion,
+        ComponentRole::Diffusion,
         manifest::relativize(&model_dir, &dest.to_string_lossy()),
     );
-    let man = manifest::ModelManifest {
+    let mut man = manifest::ModelManifest {
         schema_version: manifest::MANIFEST_SCHEMA_VERSION,
         id: id.clone(),
         name: if name.trim().is_empty() { filename.clone() } else { name },
-        family,
+        family: family.clone(),
         source: manifest::ManifestSource::Url { url },
         components,
-        flags: manifest::ManifestFlags::default(),
+        // Seeded from the recipe, like a catalog install: a FLUX.1 model with
+        // no `--vae-format flux` generates noise, and the family knows.
+        flags: flags_for_family(&family),
         recommended_settings: None,
         edits_images: None,
     };
+    // Fill in whatever the family needs and the pool can supply. A failure here
+    // is deliberately not fatal: the diffusion model is already on disk (often
+    // several GB of it), and destroying that download because a companion file
+    // could not be fetched is the wrong trade. The entry is saved as-is, shows
+    // as incomplete, and offers "Complete this model".
+    let _ = fill_required_components(
+        &app,
+        &models_dir,
+        hf_token2,
+        civitai_token2,
+        state.download_cancel.clone(),
+        &model_dir,
+        &mut man,
+    )
+    .await;
+    manifest::save_to(&model_dir, &man).map_err(|e| e.to_string())?;
+    Ok(library::entry_from_manifest(&model_dir, &man))
+}
+
+/// Fill an existing model's unfilled required components from its family
+/// recipe, reusing anything already in the shared pool. Returns the refreshed
+/// entry — whose `incomplete` list names anything that still could not be
+/// filled automatically, which the editor turns into a file picker.
+///
+/// Unlike the add path, a failure here IS returned: the user pressed a button
+/// and is owed the reason.
+#[tauri::command]
+pub async fn complete_model(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<library::LibraryEntry, String> {
+    let (models_dir, hf_token, civitai_token) = {
+        let cfg = state.config.lock().unwrap();
+        (PathBuf::from(&cfg.models_dir), cfg.hf_token.clone().unwrap_or_default(), cfg.civitai_token.clone().unwrap_or_default())
+    };
+    let model_dir =
+        safe_model_dir(&models_dir, &id).ok_or_else(|| "invalid model id".to_string())?;
+    let mut man = manifest::load_from(&model_dir)?;
+    fill_required_components(
+        &app,
+        &models_dir,
+        hf_token,
+        civitai_token,
+        state.download_cancel.clone(),
+        &model_dir,
+        &mut man,
+    )
+    .await?;
     manifest::save_to(&model_dir, &man).map_err(|e| e.to_string())?;
     Ok(library::entry_from_manifest(&model_dir, &man))
 }
@@ -2695,6 +2855,17 @@ mod tests {
         // The base families keep their own files.
         assert_eq!(infer_single_file_family("flux1-dev-Q4_K_S.gguf"), "flux1");
         assert_eq!(infer_single_file_family("qwen-image-Q4.gguf"), "qwen-image");
+    }
+
+    /// A URL-added FLUX.1 model used to arrive with no engine flags at all, so
+    /// it ran without `--vae-format flux` and produced noise. The family knows.
+    #[test]
+    fn flags_are_seeded_from_the_family_recipe() {
+        let f = flags_for_family("flux1-kontext");
+        assert_eq!(f.vae_format.as_deref(), Some("flux"));
+        assert_eq!(f.prediction.as_deref(), Some("flux_flow"));
+        // Unknown families stay empty rather than inventing a flag.
+        assert_eq!(flags_for_family("sd15"), manifest::ManifestFlags::default());
     }
 
     #[test]
