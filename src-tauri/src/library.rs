@@ -22,6 +22,10 @@ pub struct LibraryEntry {
     pub edits_images: Option<bool>,
     /// True when one or more SET component files are missing on disk.
     pub broken: bool,
+    /// Required roles this model never filled, with where each would come from.
+    /// Distinct from `broken`: that is a path pointing at a file that is gone,
+    /// this is a slot that was never filled. Different fault, different repair.
+    pub incomplete: Vec<crate::completion::CompletionRow>,
 }
 
 /// Scan `models_dir/*/model.json` into library entries, sorted by name
@@ -53,6 +57,10 @@ pub fn scan_library(models_dir: &Path) -> Vec<LibraryEntry> {
 pub fn entry_from_manifest(model_dir: &Path, m: &ModelManifest) -> LibraryEntry {
     let components = m.to_components(model_dir);
     let broken = !missing_components(&components).is_empty();
+    // `model_dir` is always `<models_dir>/<id>`, so its parent is the models
+    // directory the shared pool lives under.
+    let models_dir = model_dir.parent().unwrap_or(model_dir);
+    let incomplete = crate::completion::plan_completion(&m.family, &m.components, models_dir);
     LibraryEntry {
         id: m.id.clone(),
         name: m.name.clone(),
@@ -62,6 +70,7 @@ pub fn entry_from_manifest(model_dir: &Path, m: &ModelManifest) -> LibraryEntry 
         recommended_settings: m.recommended_settings,
         edits_images: m.edits_images,
         broken,
+        incomplete,
     }
 }
 
@@ -300,6 +309,35 @@ mod tests {
             ..Default::default()
         };
         assert!(resolve_request_model(&root, &req).is_err());
+    }
+
+    /// The user's real Kontext entry: one file, three empty slots, and nothing
+    /// in the UI saying so, because `broken` cannot express it.
+    #[test]
+    fn a_diffusion_only_entry_is_incomplete_but_not_broken() {
+        let root = std::env::temp_dir().join(format!("muchai-incomplete-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let dir = root.join("model-k");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("flux1-kontext-dev-Q5_K_M.gguf"), b"x").unwrap();
+        let m = ModelManifest {
+            schema_version: 1,
+            id: "model-k".into(),
+            name: "Kontext".into(),
+            family: "flux1-kontext".into(),
+            source: ManifestSource::Url { url: "https://e/k.gguf".into() },
+            components: ManifestComponents {
+                diffusion_model: "flux1-kontext-dev-Q5_K_M.gguf".into(),
+                ..Default::default()
+            },
+            flags: ManifestFlags::default(),
+            recommended_settings: None,
+            edits_images: None,
+        };
+        let e = entry_from_manifest(&dir, &m);
+        assert!(!e.broken, "every path it does have points at a real file");
+        assert_eq!(e.incomplete.len(), 3, "clip_l, t5xxl and vae were never filled");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

@@ -2,6 +2,7 @@ mod catalog;
 mod civitai;
 mod command_builder;
 mod commands;
+mod completion;
 mod config;
 mod devices;
 mod diskspace;

@@ -544,6 +544,29 @@ pub fn recipe_for(family: &str) -> Option<ModelRecipe> {
     recipes().into_iter().find(|r| r.family == family)
 }
 
+/// Required roles this family's recipe declares that `components` leaves unset.
+/// Empty for a family with no recipe (`sd15`, `sdxl`) and for `custom`, whose
+/// only required role is the diffusion model the caller already supplied.
+///
+/// Distinct from `types::missing_components`, which answers a different
+/// question: that one finds paths that are set but point at a file that is
+/// gone. A role that was never filled has a different repair.
+pub fn missing_required_roles(
+    family: &str,
+    components: &crate::manifest::ManifestComponents,
+) -> Vec<ComponentRole> {
+    let Some(recipe) = recipe_for(family) else {
+        return Vec::new();
+    };
+    recipe
+        .roles
+        .iter()
+        .filter(|spec| spec.required)
+        .filter(|spec| components.get_role(spec.role).is_none())
+        .map(|spec| spec.role)
+        .collect()
+}
+
 /// Recommended generation settings for a model family, or `None` for families
 /// without a meaningful preset (`custom`, single-file "none", or any unknown id
 /// → the UI hides the "Use recommended settings" button). For `flux1`, the
@@ -1042,6 +1065,34 @@ mod tests {
             assert_eq!(c.url, same.url, "{:?} must reuse the flux1 download", c.role);
             assert_eq!(c.filename, same.filename, "{:?} must pool to the same path", c.role);
         }
+    }
+
+    #[test]
+    fn missing_required_roles_reports_roles_that_were_never_filled() {
+        use crate::manifest::ManifestComponents;
+        // What `add_url_model` writes today: the diffusion model and nothing else.
+        let diffusion_only = ManifestComponents {
+            diffusion_model: "flux1-kontext-dev-Q5_K_M.gguf".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            missing_required_roles("flux1-kontext", &diffusion_only),
+            vec![ComponentRole::T5xxl, ComponentRole::ClipL, ComponentRole::Vae]
+        );
+
+        let complete = ManifestComponents {
+            diffusion_model: "flux1-kontext-dev-Q5_K_M.gguf".into(),
+            t5xxl: Some("/p/t5.safetensors".into()),
+            clip_l: Some("/p/clip_l.safetensors".into()),
+            vae: Some("/p/ae.safetensors".into()),
+            ..Default::default()
+        };
+        assert!(missing_required_roles("flux1-kontext", &complete).is_empty());
+
+        // No recipe at all, and the manual pseudo-family: nothing is required
+        // beyond the file the user already supplied.
+        assert!(missing_required_roles("sd15", &diffusion_only).is_empty());
+        assert!(missing_required_roles("custom", &diffusion_only).is_empty());
     }
 
     #[test]
