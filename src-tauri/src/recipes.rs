@@ -18,6 +18,21 @@ pub fn is_edit_family(family: &str) -> bool {
     recipe_for(family).map(|r| r.edits_images).unwrap_or(false)
 }
 
+/// Does this model take a reference image? Three layers, first opinion wins:
+/// the per-model override, then the family recipe, then the presence of a
+/// vision tower (the component that makes reading a reference physically
+/// possible, which only an edit stack assembles).
+///
+/// Pure and total on purpose: `resolve_ref_images` in the backend and
+/// `isEditingModel` in the frontend must give the same answer, and this is the
+/// definition both are written against.
+pub fn edits_images(override_: Option<bool>, family: Option<&str>, has_vision_tower: bool) -> bool {
+    match override_ {
+        Some(v) => v,
+        None => family.map(is_edit_family).unwrap_or(false) || has_vision_tower,
+    }
+}
+
 /// Every family whose models take a reference image. Derived from `recipes()`,
 /// so adding an edit family is one edit, not two.
 pub fn edit_families() -> Vec<String> {
@@ -917,6 +932,30 @@ mod tests {
             );
         }
         assert!(edit_families().contains(&"qwen-image-edit".to_string()));
+    }
+
+    /// The three layers, in order. Written as a table because the interesting
+    /// part is the precedence, not any single row.
+    #[test]
+    fn the_override_beats_the_family_and_the_vision_tower() {
+        // (override, family, has_vision_tower) -> edits?
+        let cases: &[(Option<bool>, Option<&str>, bool, bool)] = &[
+            (None, Some("flux1-kontext"), false, true),
+            (None, Some("qwen-image-edit"), false, true),
+            (None, Some("flux1"), false, false),
+            (None, None, false, false),
+            (None, Some("custom"), true, true), // vision tower, no edit family
+            (Some(true), Some("flux1"), false, true), // forced on
+            (Some(false), Some("flux1-kontext"), false, false), // forced off
+            (Some(false), None, true, false),   // forced off beats the tower
+        ];
+        for (over, family, tower, expected) in cases {
+            assert_eq!(
+                edits_images(*over, *family, *tower),
+                *expected,
+                "override={over:?} family={family:?} tower={tower}"
+            );
+        }
     }
 
     #[test]

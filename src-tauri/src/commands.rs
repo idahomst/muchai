@@ -381,8 +381,18 @@ pub fn cancel_generation(state: State<AppState>) {
 /// and switching back does not cost them the image they chose. Discarding a
 /// user's input to keep internal state tidy is the wrong trade — the same rule
 /// the LoRA selection follows.
+///
+/// An ad-hoc request carries no family and no manifest, so the first two layers
+/// cannot speak for it. A replayed gallery item is exactly that (`ParamsPanel`
+/// sets `model_id: null` to keep the frozen ModelRef), and a replayed Kontext
+/// run has no vision tower either — it would generate from scratch and ignore
+/// the reference, which is the failure mode that looks like success. So a
+/// non-empty `ref_images` on an ad-hoc request is itself the evidence: there is
+/// no other way that list gets populated. A mismatched model then fails loudly
+/// at the engine, which beats a wrong picture that looks right.
 fn resolve_ref_images(
     family: Option<&str>,
+    edits_override: Option<bool>,
     model: &ModelRef,
     ref_images: &[String],
 ) -> Result<bool, String> {
@@ -392,7 +402,9 @@ fn resolve_ref_images(
         }
         ModelRef::SingleFile { .. } => false,
     };
-    let is_edit = family.map(recipes::is_edit_family).unwrap_or(false) || has_vision_tower;
+    let ad_hoc_with_refs = family.is_none() && edits_override.is_none() && !ref_images.is_empty();
+    let is_edit =
+        recipes::edits_images(edits_override, family, has_vision_tower) || ad_hoc_with_refs;
     if !is_edit {
         return Ok(false);
     }
@@ -449,11 +461,16 @@ pub async fn generate(
         loras::resolve_selection(std::path::Path::new(&cfg.models_dir), &request.loras)?;
     // Reference images are decided here for the same reason: an edit model run
     // without one produces a confident, unrelated image and no engine warning.
-    // The family is re-read from model.json alongside the components above.
-    let ref_family =
-        library::resolve_request_family(std::path::Path::new(&cfg.models_dir), &request);
-    let ref_images =
-        resolve_ref_images(ref_family.as_deref(), &request.model, &request.ref_images)?;
+    // The family and the per-model override are re-read from model.json
+    // alongside the components above.
+    let facts =
+        library::resolve_request_edit_facts(std::path::Path::new(&cfg.models_dir), &request);
+    let ref_images = resolve_ref_images(
+        facts.family.as_deref(),
+        facts.edits_images,
+        &request.model,
+        &request.ref_images,
+    )?;
     // Validate the saved device against the enumerated list (cached) and map it
     // to a backend; a stale/absent selection falls back to the engine default
     // when a real GPU exists, or to the CPU backend when none does.
@@ -3192,21 +3209,33 @@ mod tests {
     #[test]
     fn an_edit_family_with_a_present_reference_enables_the_flag() {
         let (dir, refs) = a_present_reference("refpresent");
-        assert_eq!(resolve_ref_images(Some("qwen-image-edit"), &plain_model(), &refs), Ok(true));
+        assert_eq!(
+            resolve_ref_images(Some("qwen-image-edit"), None, &plain_model(), &refs),
+            Ok(true)
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn an_edit_family_without_a_reference_is_blocked_with_an_actionable_message() {
-        let err = resolve_ref_images(Some("qwen-image-edit"), &plain_model(), &[]).unwrap_err();
+        let err =
+            resolve_ref_images(Some("qwen-image-edit"), None, &plain_model(), &[]).unwrap_err();
         assert!(err.contains("edits an existing image"), "{err}");
         assert!(err.contains("reference image"), "{err}");
     }
 
     #[test]
+    fn a_kontext_model_demands_a_reference_image() {
+        let err =
+            resolve_ref_images(Some("flux1-kontext"), None, &plain_model(), &[]).unwrap_err();
+        assert!(err.contains("edits an existing image"), "{err}");
+    }
+
+    #[test]
     fn a_reference_that_has_moved_is_blocked_and_named() {
         let refs = vec!["/gone/cat.png".to_string()];
-        let err = resolve_ref_images(Some("qwen-image-edit"), &plain_model(), &refs).unwrap_err();
+        let err =
+            resolve_ref_images(Some("qwen-image-edit"), None, &plain_model(), &refs).unwrap_err();
         assert!(err.contains("/gone/cat.png"), "the message names the file: {err}");
         assert!(err.contains("Choose it again"), "{err}");
     }
@@ -3215,14 +3244,51 @@ mod tests {
     fn a_non_edit_family_neither_errors_nor_passes_the_reference() {
         // The reference does not even have to exist: it is never looked at.
         let refs = vec!["/gone/cat.png".to_string()];
-        for family in [Some("qwen-image"), Some("flux2"), Some("sd15"), None] {
+        // `None` is deliberately not in this list any more: an ad-hoc request
+        // carrying references is an edit by rule 4, tested on its own below.
+        for family in [Some("qwen-image"), Some("flux2"), Some("sd15")] {
             assert_eq!(
-                resolve_ref_images(family, &plain_model(), &refs),
+                resolve_ref_images(family, None, &plain_model(), &refs),
                 Ok(false),
                 "{family:?} must silently ignore a reference, never reject it"
             );
-            assert_eq!(resolve_ref_images(family, &plain_model(), &[]), Ok(false));
+            assert_eq!(resolve_ref_images(family, None, &plain_model(), &[]), Ok(false));
         }
+        // An ad-hoc request with no references is still an ordinary run.
+        assert_eq!(resolve_ref_images(None, None, &plain_model(), &[]), Ok(false));
+    }
+
+    #[test]
+    fn an_ad_hoc_request_carrying_references_is_treated_as_an_edit() {
+        // A replayed Kontext run: no family, no manifest, no vision tower. The
+        // references are the only evidence left that this was an edit, and
+        // ignoring them produces a confident, unrelated image.
+        let (dir, refs) = a_present_reference("refadhoc");
+        assert_eq!(resolve_ref_images(None, None, &plain_model(), &refs), Ok(true));
+        // Without references it stays an ordinary from-scratch run.
+        assert_eq!(resolve_ref_images(None, None, &plain_model(), &[]), Ok(false));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_per_model_override_decides_in_both_directions() {
+        let (dir, refs) = a_present_reference("refoverride");
+        // Forced on against a family that is not an editor.
+        assert_eq!(
+            resolve_ref_images(Some("flux1"), Some(true), &plain_model(), &refs),
+            Ok(true)
+        );
+        // Forced off against one that is: the reference is kept, not passed.
+        assert_eq!(
+            resolve_ref_images(Some("flux1-kontext"), Some(false), &plain_model(), &refs),
+            Ok(false)
+        );
+        // Forced off against a vision tower, which layer 3 would otherwise claim.
+        assert_eq!(
+            resolve_ref_images(Some("custom"), Some(false), &model_with_vision_tower(), &refs),
+            Ok(false)
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -3231,9 +3297,9 @@ mod tests {
         // so no family. Without the vision-tower fallback this run would
         // succeed and quietly ignore the reference.
         let (dir, refs) = a_present_reference("refreplay");
-        assert_eq!(resolve_ref_images(None, &model_with_vision_tower(), &refs), Ok(true));
+        assert_eq!(resolve_ref_images(None, None, &model_with_vision_tower(), &refs), Ok(true));
         // And the empty case is still blocked, not silently downgraded.
-        let err = resolve_ref_images(None, &model_with_vision_tower(), &[]).unwrap_err();
+        let err = resolve_ref_images(None, None, &model_with_vision_tower(), &[]).unwrap_err();
         assert!(err.contains("edits an existing image"), "{err}");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -3245,6 +3311,12 @@ mod tests {
             llm_vision: Some("   ".into()),
             ..Default::default()
         });
-        assert_eq!(resolve_ref_images(None, &model, &["/gone/cat.png".to_string()]), Ok(false));
+        // A named family that does not edit, so only the tower could make this
+        // an edit — and a blank path is not a tower. (With no family at all,
+        // rule 4 would claim the reference; that is the ad-hoc case.)
+        assert_eq!(
+            resolve_ref_images(Some("flux1"), None, &model, &["/gone/cat.png".to_string()]),
+            Ok(false)
+        );
     }
 }
