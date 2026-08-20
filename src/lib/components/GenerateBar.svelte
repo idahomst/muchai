@@ -1,7 +1,7 @@
 <script lang="ts">
   import { get } from "svelte/store";
   import { onMount } from "svelte";
-  import { request, genStatus, history, currentImage, currentItem, settings, gpuDevices, sysStats, livePreview, loras, engineInstalling } from "../stores";
+  import { request, genStatus, history, currentImage, currentItem, settings, gpuDevices, sysStats, livePreview, loras, engineInstalling, pendingRun, viewingLive } from "../stores";
   import { generate, cancelGeneration, imageSrc, listHistory, onProgress, onGenNotice, onPreview, onLoraMissing, engineSelect, engineStatus } from "../api";
   import { modelIsSet } from "../types";
 
@@ -72,11 +72,19 @@
     missingLoras = [];
     previewPath = null;
     livePreview.set(null);
+    // The pending tile appears now and is the selected one, so pressing
+    // Generate still puts the run on screen without anyone clicking anything.
+    pendingRun.set({ prompt: req.prompt });
+    viewingLive.set(true);
     const vram = get(sysStats)?.gpu?.vram_total_mb ?? 0;
     const deviceVramMb = vram > 0 ? vram : null;
     try {
       const items = await generate(req, deviceVramMb);
-      if (items.length > 0) {
+      // Only jump to the result if they were still watching the run. Having
+      // wandered off to an older image, being yanked away from it the moment
+      // the run lands is the thing the pending tile exists to avoid — the new
+      // thumbnails appear in the strip either way.
+      if (items.length > 0 && get(viewingLive)) {
         currentImage.set(imageSrc(items[0].image_path));
         currentItem.set(items[0]);
       }
@@ -103,6 +111,11 @@
       // runs or the next run's `?t=` values collide with this run's cache.
       previewPath = null;
       livePreview.set(null);
+      // The tile goes with the run it stands for, on every outcome. Clearing
+      // `viewingLive` with it hands the image area back to `currentImage` —
+      // which is the result just set above, or whatever they had navigated to.
+      pendingRun.set(null);
+      viewingLive.set(false);
     }
   }
   $: pct = $genStatus.kind === "running" && $genStatus.progress

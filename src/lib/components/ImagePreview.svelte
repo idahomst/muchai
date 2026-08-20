@@ -1,16 +1,22 @@
 <script lang="ts">
   import { get } from "svelte/store";
   import { currentImage, currentItem, history, livePreview, library, selectedModelId,
-           editFamilies, request, catalogHighlightId, revealModelPicker } from "../stores";
+           editFamilies, request, catalogHighlightId, revealModelPicker,
+           pendingRun, viewingLive } from "../stores";
   import { deleteImage, listHistory, imageSrc, openFolder, pickRefImage } from "../api";
 
   let { onNeedEditModel }: { onNeedEditModel: () => void } = $props();
 
-  // The live draft (if any) wins over the settled image. When a draft 404s
-  // (engine hasn't written the first frame yet) we clear it so the fallback
-  // shows and never render a broken-image icon.
-  const shown = $derived($livePreview ?? $currentImage);
-  const isPreview = $derived($livePreview !== null);
+  // The live draft shows only while the pending tile is the selected one. It
+  // used to win over the settled image unconditionally, which meant clicking a
+  // thumbnail mid-run moved Parameters but left this area stuck on the draft.
+  // When a draft 404s (engine hasn't written the first frame yet) we clear it
+  // so the fallback shows and never render a broken-image icon.
+  const isPreview = $derived($viewingLive && $livePreview !== null);
+  const shown = $derived(isPreview ? $livePreview : $currentImage);
+  // Watching a run that hasn't produced its first frame: the empty-state copy
+  // ("press Generate") would be wrong — they just did.
+  const waiting = $derived($viewingLive && $pendingRun !== null && !isPreview);
 
   let confirming = $state(false);
   let busy = $state(false);
@@ -133,7 +139,15 @@
 </script>
 
 <div class="preview">
-  {#if shown}
+  {#if waiting}
+    <!-- Comes before `shown` on purpose: while the pending tile is selected,
+         this area must not keep showing the previously-viewed image — the
+         selected thumbnail and what's on screen would disagree. -->
+    <div class="empty">
+      <span class="spinner" aria-hidden="true"></span>
+      <p class="empty-sub" role="status">Generating…</p>
+    </div>
+  {:else if shown}
     <img class="photo" src={shown} alt={isPreview ? "generation preview" : "generated result"}
       onerror={() => { if (isPreview) livePreview.set(null); }} />
     {#if isPreview}
@@ -210,6 +224,10 @@
   .err { position:absolute; bottom:.5rem; left:.5rem; right:.5rem; color:var(--danger-soft); font-size:.75rem;
     background:var(--overlay); padding:.3rem .5rem; border-radius:5px; }
   .empty { opacity:.55; text-align:center; padding:1rem; }
+  .spinner { display:block; width:26px; height:26px; margin:0 auto .6rem; border-radius:50%;
+    border:2px solid var(--border-strong); border-top-color:var(--accent);
+    animation:spin .8s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
   .empty-title { margin:0 0 .3rem; font-size:.95rem; }
   .empty-sub { margin:0; font-size:.8rem; opacity:.85; }
 </style>
