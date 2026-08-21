@@ -66,10 +66,23 @@
     }
   }
 
+  // F11 toggles fullscreen. On a desktop the window manager already offers
+  // this; on a handheld running Gamescope (Steam Deck) there is no titlebar and
+  // no way to resize, so without this the app is stuck at whatever size it
+  // asked for. Best-effort — a platform that refuses just leaves the window be.
+  async function toggleFullscreen() {
+    try {
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      const w = getCurrentWindow();
+      await w.setFullscreen(!(await w.isFullscreen()));
+    } catch { /* not fatal: the window stays as it is */ }
+  }
+
   // F1 opens Help from anywhere, and closes it again. It never stacks on top of
   // another dialog: those are modal, and a Help sheet over them would leave two
   // Escape targets and no clear owner of the focus.
   function onkeydown(e: KeyboardEvent) {
+    if (e.key === "F11") { e.preventDefault(); void toggleFullscreen(); return; }
     if (e.key !== "F1") return;
     e.preventDefault();
     if (showHelp) { showHelp = false; return; }
