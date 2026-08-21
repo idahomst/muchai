@@ -74,7 +74,7 @@
     livePreview.set(null);
     // The pending tile appears now and is the selected one, so pressing
     // Generate still puts the run on screen without anyone clicking anything.
-    pendingRun.set({ prompt: req.prompt });
+    pendingRun.set(req);
     viewingLive.set(true);
     const vram = get(sysStats)?.gpu?.vram_total_mb ?? 0;
     const deviceVramMb = vram > 0 ? vram : null;

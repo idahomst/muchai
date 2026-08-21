@@ -15,10 +15,14 @@ export const livePreview = writable<string | null>(null);
 export const currentItem = writable<GalleryItem | null>(null); // params behind the previewed image
 export const sysStats = writable<SystemStats | null>(null);
 
-/** The run in flight, or null between runs. Drives the pending tile at the head
- *  of the filmstrip — the thing that makes the live draft reachable again after
- *  the user has clicked away to an older image. */
-export const pendingRun = writable<{ prompt: string } | null>(null);
+/** The request being generated right now, or null between runs. Drives the
+ *  pending tile at the head of the filmstrip — the thing that makes the live
+ *  draft reachable again after the user has clicked away to an older image —
+ *  and is what Parameters reads while that tile is selected. It has to be the
+ *  whole request, not just the prompt: the left panel is editable mid-run, so
+ *  reading the settings back out of `request` would describe the next run
+ *  rather than the one on screen. */
+export const pendingRun = writable<GenerationRequest | null>(null);
 
 /** Whether the image area is showing the run in flight rather than a settled
  *  gallery image. Set when a run starts and when the pending tile is clicked;

@@ -1,11 +1,21 @@
 <script lang="ts">
-  import { currentItem, settings, request, selectedModelId, loras } from "$lib/stores";
+  import { currentItem, settings, request, selectedModelId, loras,
+           pendingRun, viewingLive } from "$lib/stores";
   import { setSettings, pickRefImage } from "$lib/api";
   import { SAMPLERS, modelLabel } from "$lib/types";
   import type { LoraSelection } from "$lib/types";
 
   let busy = $state(false);
   let error = $state<string | null>(null);
+
+  /** Whether the image area is showing the run in flight rather than a settled
+   *  image. Parameters follows the same selection the filmstrip does — showing
+   *  the previously-viewed image's settings beside a draft describes the wrong
+   *  picture. */
+  const live = $derived($viewingLive && $pendingRun !== null);
+  /** The request Parameters is describing: the one being generated, or the one
+   *  behind the selected gallery image. Null when there is neither. */
+  const shown = $derived(live ? $pendingRun : ($currentItem?.request ?? null));
 
   // Brief confirmation on the Load button. Without it the click looks inert:
   // the panel that changed is on the other side of the window.
@@ -38,7 +48,7 @@
   // checked yet, which renders as plain text rather than as either verdict.
   let refStatus = $state<Record<string, boolean>>({});
   $effect(() => {
-    const paths = $currentItem?.request.ref_images ?? [];
+    const paths = shown?.ref_images ?? [];
     if (paths.length === 0) return;
     for (const p of paths) {
       if (p in refStatus) continue;
@@ -74,8 +84,11 @@
   }
 </script>
 
-{#if $currentItem}
-  {@const r = $currentItem.request}
+{#if shown}
+  {@const r = shown}
+  <!-- A random seed is only decided by the engine, so mid-run there is no
+       number to show — "-1" would read as if that were the seed used. -->
+  {@const seedText = live && r.seed < 0 ? "random" : String(r.seed)}
   <div class="params">
     <div class="top">
       <button class="hdr" onclick={toggle} disabled={busy}
@@ -84,24 +97,27 @@
         <span class="chev">{expanded ? "▾" : "▸"}</span>
         <span class="ttl">Parameters</span>
         {#if expanded}
-          <span class="src">from this image</span>
+          <span class="src">{live ? "generating now" : "from this image"}</span>
         {:else}
           <span class="summary">
-            {#if r.ref_images.length > 0}Edit · {/if}Seed {r.seed} · {r.steps} steps · CFG {r.cfg_scale} · {r.width}×{r.height}
+            {#if r.ref_images.length > 0}Edit · {/if}Seed {seedText} · {r.steps} steps · CFG {r.cfg_scale} · {r.width}×{r.height}
           </span>
         {/if}
       </button>
       <!-- Outside .hdr, not inside: .hdr is itself a button and nesting one
-           inside another is invalid. -->
-      <button class="load" onclick={load}
-              title="Copy these settings into the panel on the left">
-        {justLoaded ? "Loaded ✓" : "Load"}
-      </button>
+           inside another is invalid. Hidden mid-run: these settings came from
+           the left panel, so loading them back into it does nothing. -->
+      {#if !live}
+        <button class="load" onclick={load}
+                title="Copy these settings into the panel on the left">
+          {justLoaded ? "Loaded ✓" : "Load"}
+        </button>
+      {/if}
     </div>
     {#if expanded}
       <div class="grid">
         <div class="kv"><span class="k">Model</span><span class="v mono" title={modelLabel(r.model)}>{modelLabel(r.model)}</span></div>
-        <div class="kv"><span class="k">Seed</span><span class="v mono">{r.seed}</span></div>
+        <div class="kv"><span class="k">Seed</span><span class="v mono">{seedText}</span></div>
         <div class="kv"><span class="k">Steps</span><span class="v">{r.steps}</span></div>
         <div class="kv"><span class="k">CFG</span><span class="v">{r.cfg_scale}</span></div>
         <div class="kv"><span class="k">Sampler</span><span class="v">{samplerLabel(r.sampler)}</span></div>
