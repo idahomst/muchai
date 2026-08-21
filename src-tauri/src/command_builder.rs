@@ -156,12 +156,37 @@ pub fn build_args(
             DIFFUSION_TENSOR_RULES.iter().map(|p| format!("{p}={t}")).collect();
         a.push(rules.join(","));
     }
+    // Flash attention and tiled VAE decode are NOT low-VRAM relief, despite
+    // having shipped inside that bundle: they cap the size of an *individual*
+    // buffer, and the Vulkan per-allocation ceiling does not grow when the card
+    // does. Gating them on `fit::resolve_low_vram` made a GPU upgrade a
+    // regression — measured 2026-08-21, qwen-image-edit-2511-Q3_K_S + a
+    // Qwen2.5-VL-7B encoder estimates 18510 MB, which is over a 3060's 12010 MB
+    // (bundle on) but under an A5000's 24564 MB (bundle off). With the bundle
+    // off, the same 1024x1024 edit:
+    //
+    //   --backend vulkan1                        never reached step 1 in 4+ min;
+    //                                            GPU 0%, CPU 812%, and
+    //                                            "ggml_vulkan: Failed to allocate
+    //                                            pinned memory (Requested buffer
+    //                                            size exceeds device buffer size
+    //                                            limit)" -> silent CPU fallback
+    //   + --diffusion-fa                         ~21 s/it on GPU, then the VAE
+    //                                            decode asks for one 16.5 GB
+    //                                            buffer and fails
+    //   + --diffusion-fa --vae-tiling            ~21 s/it, decode buffer 469 MB
+    //                                            in 11.9 s, image written
+    //
+    // So both are unconditional. They do shift output slightly (flash attention
+    // reorders accumulation; tiling decodes in blended tiles of --vae-tile-size,
+    // default 32x32 latent), which is the accepted cost of one code path that
+    // cannot stall on any card.
+    a.push("--vae-tiling".into());
+    a.push("--diffusion-fa".into());
     if opts.low_vram {
-        // Weights paged from RAM, tiled VAE decode, flash attention — the
-        // low-VRAM/high-headroom bundle so models larger than VRAM can run.
+        // Weights paged from RAM — the actual capacity/speed trade, and the only
+        // part of the old bundle that belongs behind the Low-VRAM gate.
         a.push("--offload-to-cpu".into());
-        a.push("--vae-tiling".into());
-        a.push("--diffusion-fa".into());
     }
     // Graph-cut is part of the low-VRAM bundle, but only for runs with no vision
     // tower: `master-813-bfbef5b` aborts (SIGABRT in `ggml_graph_cut::
@@ -404,8 +429,61 @@ mod tests {
     #[test]
     fn low_vram_off_omits_offload_flags() {
         let args = build_args(&sample(), "/out/x.png", None, EngineOptions { low_vram: false, ..Default::default() });
-        for flag in ["--offload-to-cpu", "--vae-tiling", "--diffusion-fa", "--max-vram", "--stream-layers"] {
+        for flag in ["--offload-to-cpu", "--max-vram", "--stream-layers"] {
             assert!(!args.iter().any(|x| x == flag), "{flag} must be absent");
+        }
+    }
+
+    #[test]
+    fn flash_attention_and_vae_tiling_do_not_depend_on_low_vram() {
+        // Regression: these two were bundled with --offload-to-cpu behind the
+        // Low-VRAM gate, so swapping a 12 GB card for a 24 GB one pushed
+        // qwen-image-edit under fit::resolve_low_vram's threshold and silently
+        // dropped them. They guard the Vulkan *per-allocation* ceiling, which
+        // does not grow with VRAM: without --diffusion-fa the attention buffer
+        // overflows it and ggml falls back to CPU mid-run (GPU idle, never
+        // reaches step 1); without --vae-tiling the decode asks for a single
+        // 16.5 GB buffer and fails outright.
+        for low_vram in [true, false] {
+            let args = build_args(&sample(), "/out/x.png", Some("vulkan1"), EngineOptions { low_vram, ..Default::default() });
+            for flag in ["--diffusion-fa", "--vae-tiling"] {
+                assert!(args.iter().any(|x| x == flag), "{flag} must be present with low_vram={low_vram}");
+            }
+        }
+    }
+
+    #[test]
+    fn an_edit_model_on_a_card_it_fits_still_gets_the_vulkan_buffer_caps() {
+        // The exact reported scenario: qwen-image-edit on a 24 GB card, so
+        // fit::resolve_low_vram says the stack fits and Low-VRAM stays off. The
+        // buffer caps must still be there, offload must not be, and graph-cut
+        // must stay suppressed off the vision tower rather than off low_vram.
+        use crate::types::ModelComponents;
+        let mut req = sample();
+        req.width = 1024;
+        req.height = 1024;
+        req.model = ModelRef::MultiFile(ModelComponents {
+            diffusion_model: "/m/qwen-image-edit-2511-Q3_K_S.gguf".into(),
+            llm: Some("/m/shared/qwen-image/Qwen2.5-VL-7B-Instruct.gguf".into()),
+            llm_vision: Some("/m/shared/qwen-image/mmproj-f16.gguf".into()),
+            ..Default::default()
+        });
+        let args =
+            build_args(&req, "/out/x.png", Some("vulkan1"), EngineOptions { low_vram: false, ..Default::default() });
+        for flag in ["--diffusion-fa", "--vae-tiling"] {
+            assert!(args.iter().any(|x| x == flag), "{flag} must be present");
+        }
+        for flag in ["--offload-to-cpu", "--max-vram", "--stream-layers"] {
+            assert!(!args.iter().any(|x| x == flag), "{flag} must be absent");
+        }
+    }
+
+    #[test]
+    fn flash_attention_and_vae_tiling_are_emitted_once() {
+        // Un-bundling must not leave a duplicate behind the low_vram branch.
+        let args = build_args(&sample(), "/out/x.png", None, EngineOptions { low_vram: true, ..Default::default() });
+        for flag in ["--diffusion-fa", "--vae-tiling"] {
+            assert_eq!(args.iter().filter(|x| *x == flag).count(), 1, "{flag} must appear exactly once");
         }
     }
 
