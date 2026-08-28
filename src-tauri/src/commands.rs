@@ -488,7 +488,11 @@ pub async fn generate(
 
     let gallery_dir = PathBuf::from(&cfg.gallery_dir);
     std::fs::create_dir_all(&gallery_dir).map_err(|e| e.to_string())?;
-    let id = uuid::Uuid::new_v4().to_string();
+    // Prefix the id with the Unix second the run started so file names sort in
+    // creation order in any file manager; the uuid keeps them unique within a
+    // second. The same value lands in the sidecar's `created_at_unix`.
+    let started_at = now_unix();
+    let id = format!("{started_at}-{}", uuid::Uuid::new_v4());
     let ext = request.output_format.extension();
     let image_path = gallery_dir.join(format!("{id}.{ext}"));
 
@@ -615,7 +619,7 @@ pub async fn generate(
                     id: if multi { format!("{id}_{i}") } else { id.clone() },
                     image_path: path.to_string_lossy().into_owned(),
                     request: req_i,
-                    created_at_unix: now_unix(),
+                    created_at_unix: started_at,
                     batch_id: id.clone(),
                     batch_index: i as u32,
                     batch_size: produced_len as u32,
