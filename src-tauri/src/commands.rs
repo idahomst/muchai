@@ -649,6 +649,9 @@ pub async fn generate(
             if let Some(hint) = lora_shape_hint(tail, &request.loras) {
                 return Err(format!("{hint}\n\n{tail}"));
             }
+            if let Some(hint) = gpu_hang_hint(tail, request.width, request.height) {
+                return Err(format!("{hint}\n\n{tail}"));
+            }
             if tail.is_empty() {
                 Err(format!("Image generation failed (engine exited with code {code:?})."))
             } else {
@@ -846,6 +849,35 @@ fn lora_shape_hint(stderr_tail: &str, selection: &[types::LoraSelection]) -> Opt
          differently-sized version of this model. Turn off {} and try again, or \
          switch to the model it was made for.",
         names.join(", ")
+    ))
+}
+
+/// Recognise a GPU *reset*, which reads nothing like an out-of-memory failure but
+/// is what a too-large canvas actually produces on a slow device.
+///
+/// The kernel watchdogs every submission: when one compute dispatch runs longer
+/// than `amdgpu.lockup_timeout` (or the NVIDIA/Intel equivalent) the driver kills
+/// the queue and every later call fails with "device lost". Measured on an AMD
+/// Radeon 8060S (Strix Halo), Z-Image-Turbo at 2048x2048: `ring comp_1.1.1
+/// timeout` in dmesg, `vk::DeviceLostError` from the engine, exit code None
+/// (SIGABRT from the uncaught throw). At 1024x1024 the same model is fine — the
+/// dispatch is 4x smaller and lands inside the watchdog.
+///
+/// This is a wall-clock limit, not a capacity one, so neither Low-VRAM nor the
+/// always-on `--diffusion-fa`/`--vae-tiling` pair can help: they cap buffer size,
+/// not how long one dispatch runs.
+fn gpu_hang_hint(stderr_tail: &str, width: u32, height: u32) -> Option<String> {
+    let l = stderr_tail.to_lowercase();
+    if !(l.contains("devicelost") || l.contains("device lost") || l.contains("context is lost")) {
+        return None;
+    }
+    Some(format!(
+        "The GPU driver reset the device mid-run. At {width}x{height} a single \
+         operation takes longer than the kernel's watchdog allows, so it was \
+         killed — this is a time limit, not a memory one, and Low-VRAM won't \
+         change it. Generate at a smaller size (1024x1024 is a safe starting \
+         point) and upscale, or raise the watchdog: on AMD, boot with \
+         `amdgpu.lockup_timeout=10000,600000,10000,10000`."
     ))
 }
 
@@ -2974,6 +3006,19 @@ mod tests {
     #[test]
     fn new_model_id_is_unique() {
         assert_ne!(new_model_id(), new_model_id());
+    }
+
+    #[test]
+    fn a_device_lost_abort_is_reported_as_a_watchdog_reset() {
+        // Verbatim tail from a Radeon 8060S run at 2048x2048.
+        let tail = "radv/amdgpu: The CS has been cancelled because the context is lost. \
+                    This context is innocent.\nterminate called after throwing an instance \
+                    of 'vk::DeviceLostError'\n  what():  vk::Queue::submit: ErrorDeviceLost";
+        let hint = gpu_hang_hint(tail, 2048, 2048).expect("hint");
+        assert!(hint.contains("2048x2048"), "names the size that caused it: {hint}");
+        assert!(hint.contains("lockup_timeout"), "offers the watchdog knob: {hint}");
+        // An unrelated failure must not be blamed on the watchdog.
+        assert_eq!(gpu_hang_hint("failed to load model", 2048, 2048), None);
     }
 
     #[test]
