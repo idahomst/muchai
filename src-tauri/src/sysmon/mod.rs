@@ -109,7 +109,9 @@ pub fn select_gpu(gpus: &[GpuStats], target: &Target) -> Option<GpuStats> {
 /// (see `uma_override_mb`, the user's Preferences value). Whatever the provider did
 /// manage to read — busy%, GTT used — is carried across. This is the only place
 /// that knows whether a total came from the device or from the budget, which is
-/// what `GpuStats::shared` records.
+/// what `GpuStats::shared` records. The exception is a BIOS carve-out bigger than
+/// the budget — memory the OS has already lost to the GPU — which is reported
+/// verbatim as a dedicated pool.
 pub fn gather(
     sys: &mut System,
     providers: &[Box<dyn GpuProvider>],
@@ -136,16 +138,35 @@ pub fn gather(
                 // here), so the row is built from the target rather than found.
                 Target::Device { name, uma: true } => {
                     let base = select_gpu(&all, target);
-                    Some(GpuStats {
-                        name: name.clone(),
-                        utilization_pct: base.as_ref().and_then(|b| b.utilization_pct),
-                        // GTT used is what a shared device actually consumes; the
-                        // amdgpu VRAM figures describe the BIOS carve-out only.
-                        vram_used_mb: base.as_ref().and_then(|b| b.shared_used_mb),
-                        vram_total_mb: Some(budget::uma_budget_mb(ram_total_mb, uma_override_mb)),
-                        shared_used_mb: None,
-                        shared: true,
-                    })
+                    let budget_mb = budget::uma_budget_mb(ram_total_mb, uma_override_mb);
+                    let carve_out_mb = base.as_ref().and_then(|b| b.vram_total_mb).unwrap_or(0);
+                    // A BIOS carve-out larger than the RAM-derived budget is not the
+                    // token 512 MB an APU usually reserves: it is memory taken away
+                    // from the OS and handed to the GPU outright (a Strix Halo box
+                    // can reserve 96 GB of its 128 GB). That pool is real and
+                    // dedicated, so it is reported as such — reading it as "shared"
+                    // would both understate it and count RAM the OS never sees.
+                    if carve_out_mb > budget_mb {
+                        Some(GpuStats {
+                            name: name.clone(),
+                            utilization_pct: base.as_ref().and_then(|b| b.utilization_pct),
+                            vram_used_mb: base.as_ref().and_then(|b| b.vram_used_mb),
+                            vram_total_mb: Some(carve_out_mb),
+                            shared_used_mb: None,
+                            shared: false,
+                        })
+                    } else {
+                        Some(GpuStats {
+                            name: name.clone(),
+                            utilization_pct: base.as_ref().and_then(|b| b.utilization_pct),
+                            // GTT used is what a shared device actually consumes; the
+                            // amdgpu VRAM figures describe the BIOS carve-out only.
+                            vram_used_mb: base.as_ref().and_then(|b| b.shared_used_mb),
+                            vram_total_mb: Some(budget_mb),
+                            shared_used_mb: None,
+                            shared: true,
+                        })
+                    }
                 }
                 _ => select_gpu(&all, target),
             }
@@ -255,6 +276,30 @@ mod tests {
         assert_eq!(gpu.utilization_pct, Some(71));
         assert_eq!(gpu.shared_used_mb, None, "promoted into vram_used_mb, not duplicated");
         assert!(gpu.shared);
+    }
+
+    #[test]
+    fn gather_uma_target_with_a_large_carve_out_reports_the_carve_out_as_dedicated() {
+        // Strix Halo: 96 GB reserved in BIOS, leaving ~31 GB visible to the OS.
+        // The RAM-derived budget (~21 GB) would both understate the pool and label
+        // it "shared", so the carve-out wins.
+        let mut sys = System::new();
+        let apu = GpuStats {
+            name: "AMD".into(),
+            utilization_pct: Some(12),
+            vram_used_mb: Some(1589),
+            vram_total_mb: Some(98304), // 96 GB carve-out
+            shared_used_mb: Some(260),
+            shared: false,
+        };
+        let (providers, _) = fake(vec![apu]);
+        let target = Target::Device { name: "AMD Radeon 8060S".into(), uma: true };
+        let stats = gather(&mut sys, &providers, &target, None);
+        let gpu = stats.gpu.expect("a UMA target always yields a row");
+        assert_eq!(gpu.vram_total_mb, Some(98304));
+        assert_eq!(gpu.vram_used_mb, Some(1589), "carve-out use, not GTT use");
+        assert_eq!(gpu.utilization_pct, Some(12));
+        assert!(!gpu.shared, "a carve-out that large is dedicated memory");
     }
 
     #[test]
