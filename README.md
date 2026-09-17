@@ -8,6 +8,11 @@ editing the ones you already have. It wraps
 simple GUI: pick a model, type a prompt, press Generate. Nothing leaves your
 computer.
 
+The name MuchAI is a combination of the surname Mucha and AI. [Alfons
+(Alphonse) Mucha](https://en.wikipedia.org/wiki/Alphonse_Mucha) was a Czech
+painter, illustrator, and graphic artist. Living in Paris during the Art
+Nouveau period.
+
 ![MuchAI main window](docs/screenshots/main-dark.png)
 
 ## Motivation
