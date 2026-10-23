@@ -1,7 +1,6 @@
 <script lang="ts">
   import { settings, engineUpdateTag, sysStats } from "$lib/stores";
   import { setSettings, autoUmaBudgetMb } from "$lib/api";
-  import { LOAD_PRECISION_OPTIONS, type LoadPrecision } from "$lib/types";
   import ModelFolders from "./ModelFolders.svelte";
   import GalleryLocation from "./GalleryLocation.svelte";
   import DevicePicker from "./DevicePicker.svelte";
@@ -63,26 +62,8 @@
     }
   }
 
-  // Optimistic save of the low-VRAM toggle, reusing the same serialized chain so
-  // it can't race a token save. Reverts on failure.
-  function saveLowVram(value: boolean) {
-    saveChain = saveChain.then(async () => {
-      const cur = $settings;
-      if (!cur || cur.low_vram === value) return;
-      const next = { ...cur, low_vram: value };
-      settings.set(next);
-      error = null;
-      try {
-        await setSettings(next);
-      } catch (e) {
-        settings.set({ ...($settings ?? cur), low_vram: cur.low_vram });
-        error = String(e);
-      }
-    });
-  }
-
   // Optimistic save of the live-preview toggle, on the same serialized chain as
-  // low-VRAM / tokens so no save races or is dropped. Reverts on failure.
+  // the tokens so no save races or is dropped. Reverts on failure.
   function saveLivePreview(value: boolean) {
     saveChain = saveChain.then(async () => {
       const cur = $settings;
@@ -98,28 +79,6 @@
       }
     });
   }
-
-  // Optimistic save of the load-precision select, on the same serialized chain
-  // as the toggles above so no save races or is dropped. Reverts on failure.
-  function saveLoadPrecision(value: LoadPrecision) {
-    saveChain = saveChain.then(async () => {
-      const cur = $settings;
-      if (!cur || cur.load_precision === value) return;
-      const next = { ...cur, load_precision: value };
-      settings.set(next);
-      error = null;
-      try {
-        await setSettings(next);
-      } catch (e) {
-        settings.set({ ...($settings ?? cur), load_precision: cur.load_precision });
-        error = String(e);
-      }
-    });
-  }
-
-  const precisionHint = $derived(
-    LOAD_PRECISION_OPTIONS.find((o) => o.value === ($settings?.load_precision ?? "auto"))?.hint ?? ""
-  );
 
   // Optimistic save of the shared-memory budget, on the same serialized chain as
   // the tokens and toggles. Blank — or anything that isn't a positive number —
@@ -226,14 +185,6 @@
       <DevicePicker />
       <label class="check">
         <input type="checkbox"
-          checked={$settings?.low_vram ?? false}
-          disabled={!$settings}
-          onchange={(e) => saveLowVram(e.currentTarget.checked)} />
-        <span class="check-box"></span>
-        <span>Low-VRAM mode <em>— slower; fits bigger models</em></span>
-      </label>
-      <label class="check">
-        <input type="checkbox"
           checked={$settings?.live_preview ?? true}
           disabled={!$settings}
           onchange={(e) => saveLivePreview(e.currentTarget.checked)} />
@@ -248,18 +199,6 @@
           placeholder={autoBudget ? `Auto — ${autoBudget} GB` : "Auto"}
           onchange={(e) => saveUmaBudget(e.currentTarget.value, e.currentTarget)} />
         <p class="hint">{umaHint}</p>
-      </div>
-      <div class="dlg-field precision">
-        <p class="microlabel">Load precision</p>
-        <select class="dlg-select"
-          value={$settings?.load_precision ?? "auto"}
-          disabled={!$settings}
-          onchange={(e) => saveLoadPrecision(e.currentTarget.value as LoadPrecision)}>
-          {#each LOAD_PRECISION_OPTIONS as o (o.value)}
-            <option value={o.value}>{o.label}</option>
-          {/each}
-        </select>
-        <p class="hint">{precisionHint}</p>
       </div>
 
       <!-- The dot mirrors the one on the gear so a user who opened Preferences
@@ -301,7 +240,6 @@
   .dlg-input.mono { font-family:var(--mono); font-size:12px; }
   .hint { font-size:11.5px; color:var(--text-muted); margin:5px 0 0; }
   .check { margin-top:14px; }
-  .dlg-field.precision { margin-top:14px; margin-bottom:0; }
   .dlg-field.uma { margin-top:14px; margin-bottom:0; }
   .check em { color:var(--text-muted); font-style:normal; }
   .prefrow { display:flex; align-items:center; gap:12px; padding:10px 0; }

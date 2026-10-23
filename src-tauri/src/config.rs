@@ -49,10 +49,8 @@ pub fn default_config() -> AppConfig {
         onboarded: false,
         hf_token: None,
         civitai_token: None,
-        low_vram: false,
         uma_budget_mb: None,
         live_preview: true,
-        load_precision: crate::types::LOAD_PRECISION_AUTO.to_string(),
         engine: EngineSelection::Builtin,
         engine_update_check: true,
         engine_last_check: None,
@@ -341,31 +339,20 @@ mod tests {
     }
 
     #[test]
-    fn old_config_without_low_vram_defaults_to_false() {
-        let dir = std::env::temp_dir().join(format!("fridai-cfg-lv-{}", std::process::id()));
+    fn a_config_carrying_retired_memory_keys_still_loads() {
+        // `low_vram` and `load_precision` were dropped when memory placement
+        // moved to the engine's `--auto-fit`. Configs written before that still
+        // carry them, and must load as the user's config, not as the default.
+        let dir = std::env::temp_dir().join(format!("fridai-cfg-retired-{}", std::process::id()));
         let path = dir.join("config.json");
         std::fs::create_dir_all(&dir).unwrap();
-        // A pre-feature config file: no low_vram key.
         std::fs::write(
             &path,
-            r#"{"sd_binary_path":null,"default_model_path":null,"gallery_dir":"/tmp/g","last_request":{"model":{"type":"single_file","path":""},"prompt":"","negative_prompt":"","steps":20,"cfg_scale":7.0,"sampler":"euler_a","width":512,"height":512,"seed":-1,"batch_count":1}}"#,
+            r#"{"sd_binary_path":null,"default_model_path":null,"gallery_dir":"/tmp/retired-g","low_vram":true,"load_precision":"q8_0","last_request":{"model":{"type":"single_file","path":""},"prompt":"","negative_prompt":"","steps":20,"cfg_scale":7.0,"sampler":"euler_a","width":512,"height":512,"seed":-1,"batch_count":1}}"#,
         )
         .unwrap();
         let cfg = load_config_from(&path);
-        assert!(!cfg.low_vram, "missing low_vram must default to false");
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn low_vram_round_trips() {
-        let dir = std::env::temp_dir().join(format!("fridai-cfg-lv2-{}", std::process::id()));
-        let path = dir.join("config.json");
-        let mut cfg = default_config();
-        cfg.low_vram = true;
-        save_config_to(&path, &cfg).unwrap();
-        let back = load_config_from(&path);
-        assert!(back.low_vram);
-        assert_eq!(back, cfg);
+        assert_eq!(cfg.gallery_dir, "/tmp/retired-g");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -23,18 +23,16 @@ use std::collections::BTreeSet;
 ///
 /// `--version` is intentionally absent: the engine does not advertise it in
 /// `--help`, and it is checked separately by the identity probe.
-pub const REQUIRED_FLAGS: [&str; 24] = [
+pub const REQUIRED_FLAGS: [&str; 20] = [
     "--backend",
     "--cfg-scale",
     "--clip_g",
     "--clip_l",
-    "--diffusion-fa",
     "--diffusion-model",
+    "--flash-attn",
     "--llm",
     "--llm_vision",
     "--lora-model-dir",
-    "--max-vram",
-    "--offload-to-cpu",
     "--prediction",
     "--preview",
     "--preview-interval",
@@ -42,9 +40,7 @@ pub const REQUIRED_FLAGS: [&str; 24] = [
     "--ref-image",
     "--sampling-method",
     "--steps",
-    "--stream-layers",
     "--t5xxl",
-    "--tensor-type-rules",
     "--vae",
     "--vae-format",
     "--vae-tiling",
@@ -93,7 +89,7 @@ pub fn parse_help_flags(help: &str) -> BTreeSet<String> {
 }
 
 /// The fewest flags a genuine `--help` from this engine can plausibly yield.
-/// The real fixture yields 160; 10 is far below any partial-but-real read, so
+/// The real fixture yields 175; 10 is far below any partial-but-real read, so
 /// falling under it means the help text could not be parsed at all rather
 /// than that the build dropped most of its flags.
 const PLAUSIBLE_FLAG_FLOOR: usize = 10;
@@ -104,7 +100,7 @@ const PLAUSIBLE_FLAG_FLOOR: usize = 10;
 /// `Unparseable` exists because the two failures need different words. A
 /// build that genuinely dropped `--tensor-type-rules` should say so; a build
 /// whose help we could not read at all would otherwise be reported as
-/// missing every flag at once — twenty-two dead ends instead of the one true
+/// missing every flag at once — twenty dead ends instead of the one true
 /// problem.
 #[derive(Debug, PartialEq, Eq)]
 pub enum FlagCheck {
@@ -228,13 +224,15 @@ mod tests {
     }
 
     #[test]
-    fn doctored_help_without_tensor_type_rules_is_rejected() {
+    fn doctored_help_without_flash_attn_is_rejected() {
+        // `--flash-attn` is still *named* in the descriptions of the deprecated
+        // `--fa` and `--diffusion-fa`; only its own declaration may count.
         let doctored: String = fixture()
             .lines()
-            .filter(|l| !l.trim_start().starts_with("--tensor-type-rules"))
+            .filter(|l| !l.trim_start().starts_with("--flash-attn "))
             .collect::<Vec<_>>()
             .join("\n");
-        assert_eq!(missing_flags(&doctored), FlagCheck::Missing(vec!["--tensor-type-rules"]));
+        assert_eq!(missing_flags(&doctored), FlagCheck::Missing(vec!["--flash-attn"]));
     }
 
     #[test]
@@ -244,28 +242,25 @@ mod tests {
 
     #[test]
     fn dropping_a_flag_still_named_only_in_another_flags_description_is_caught() {
-        // The reviewer's scenario: delete the genuine `--max-vram <string>`
-        // declaration, and rewrite the one description fragment that used to
-        // mention it (on `--stream-layers`, wrapped onto its own line) so the
-        // fragment no longer starts with a bare `--max-vram`. Before Fix 1,
-        // the wrapped fragment `--max-vram; defaults to false)` was itself
-        // miscounted as a *declaration* of `--max-vram`, so deleting the real
-        // declaration didn't matter — the gate still saw `--max-vram` as
-        // present and accepted the build. After Fix 1, continuation lines
-        // are never counted, so with the real declaration gone the gate must
-        // reject.
+        // Delete the genuine `--cfg-scale <float>` declaration, leaving the one
+        // wrapped description line that mentions it (`--img-cfg-scale`'s
+        // "(default: same as\n --cfg-scale)"), loosened so the fragment
+        // starts with a bare `--cfg-scale` token. A parser that counted
+        // continuation lines as declarations would still see the flag and
+        // accept the build; continuation lines are never counted, so with the
+        // real declaration gone the gate must reject.
         let doctored: String = fixture()
             .lines()
             .map(|l| {
-                if l.trim_start().starts_with("--max-vram <string>") {
+                if l.trim_start().starts_with("--cfg-scale <float>") {
                     return String::new();
                 }
-                l.replace("--max-vram; defaults to false)", "--max-vram defaults to false)")
+                l.replace("--cfg-scale)", "--cfg-scale )")
             })
             .collect::<Vec<_>>()
             .join("\n");
 
-        assert_eq!(missing_flags(&doctored), FlagCheck::Missing(vec!["--max-vram"]));
+        assert_eq!(missing_flags(&doctored), FlagCheck::Missing(vec!["--cfg-scale"]));
     }
 
     /// Drift guard one: add a flag to the command builder without registering

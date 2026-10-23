@@ -350,8 +350,8 @@ fn validate_engine(dir: &Path) -> Result<String, String> {
                 tail
             ));
         }
-        // Distinct wording on purpose: reporting all 22 flags as "missing" would
-        // be false and would point the user at twenty-two dead ends instead of
+        // Distinct wording on purpose: reporting all 20 flags as "missing" would
+        // be false and would point the user at twenty dead ends instead of
         // the one real problem.
         crate::engine_flags::FlagCheck::Unparseable { .. } => {
             return Err(
@@ -1201,11 +1201,11 @@ mod tests {
     #[test]
     fn validation_rejects_a_build_missing_a_flag_muchai_uses() {
         let root = tmp("val-flags");
-        let doctored = full_help().replace("--tensor-type-rules", "--type-rules");
+        let doctored = full_help().replace("--flash-attn", "--attention-mode");
         fake_engine(&root, GOOD_VERSION, &doctored, 0);
 
         let err = validate_engine(&root).unwrap_err();
-        assert!(err.contains("--tensor-type-rules"), "the message must name the flag: {err}");
+        assert!(err.contains("--flash-attn"), "the message must name the flag: {err}");
         assert!(err.contains("isn't compatible"), "unexpected message: {err}");
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -1222,13 +1222,13 @@ mod tests {
 
         let err = validate_engine(&root).unwrap_err();
         assert!(err.contains("isn't compatible"), "unexpected message: {err}");
-        // Naming the first few and counting the rest, not listing all 22. The
+        // Naming the first few and counting the rest, not listing all 20. The
         // length bound alone would also pass on a message that named every
         // flag but abbreviated each one, so pin a specific flag that must not
         // appear: `--vae-tiling` is last in `REQUIRED_FLAGS`, so it is only
         // ever reached by an implementation that skipped the cap.
         assert!(!err.contains("--vae-tiling"), "the list must be truncated: {err}");
-        assert!(err.contains("21 more"), "the message must account for the rest: {err}");
+        assert!(err.contains("17 more"), "the message must account for the rest: {err}");
         assert!(err.len() < 300, "the message must stay readable, got {} chars", err.len());
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -1236,8 +1236,8 @@ mod tests {
     #[test]
     fn validation_says_it_could_not_read_the_help_rather_than_naming_every_flag() {
         let root = tmp("val-unreadable");
-        // Help we cannot parse at all — reporting all 22 flags as missing would
-        // be false and would send the user chasing twenty-two dead ends.
+        // Help we cannot parse at all — reporting all 20 flags as missing would
+        // be false and would send the user chasing twenty dead ends.
         fake_engine(&root, GOOD_VERSION, "usage: sd [options]\n", 0);
 
         let err = validate_engine(&root).unwrap_err();

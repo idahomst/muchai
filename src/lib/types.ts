@@ -268,18 +268,10 @@ export interface AppConfig {
   // Rust AppConfig fields (#[serde(default)] → null for old configs). null = unset.
   hf_token: string | null;
   civitai_token: string | null;
-  // Low-VRAM offload mode (mirrors Rust AppConfig.low_vram, #[serde(default)] →
-  // false for old configs). When on, generation pages weights from RAM.
-  low_vram: boolean;
   // Show a rough live draft as the image generates (mirrors Rust
   // AppConfig.live_preview, #[serde(default = "default_true")] → true for old
   // configs).
   live_preview: boolean;
-  // Load-time weight precision for the diffusion model (mirrors Rust
-  // AppConfig.load_precision, #[serde(default)] → "auto" for old configs).
-  // "auto" re-quantises only when the model won't fit the selected GPU,
-  // "original" never does, any other value is an engine weight type.
-  load_precision: LoadPrecision;
   // Which engine binary the backend spawns. Mirrors Rust AppConfig.engine
   // (#[serde(default)] → { type: "builtin" } for old configs).
   engine: EngineSelection;
@@ -298,19 +290,6 @@ export interface AppConfig {
   // null = auto (70% of RAM, floor/ceiling applied server-side).
   uma_budget_mb: number | null;
 }
-
-// Values accepted by AppConfig.load_precision. The quantised entries must stay
-// in sync with fit::QUANT_LADDER on the Rust side — the string is passed to the
-// engine verbatim as a --tensor-type-rules target.
-export type LoadPrecision = "auto" | "original" | "q8_0" | "q5_1" | "q4_K";
-
-export const LOAD_PRECISION_OPTIONS: { value: LoadPrecision; label: string; hint: string }[] = [
-  { value: "auto", label: "Auto", hint: "Reduce precision only when the model won't fit your GPU" },
-  { value: "original", label: "Original", hint: "Always load the model exactly as stored" },
-  { value: "q8_0", label: "8-bit", hint: "About half the memory of a 16-bit model, near-identical output" },
-  { value: "q5_1", label: "5-bit", hint: "Smaller again, slight quality loss" },
-  { value: "q4_K", label: "4-bit", hint: "Smallest; noticeable quality loss, but runs on modest GPUs" },
-];
 
 export const defaultRequest = (): GenerationRequest => ({
   model: { type: "single_file", path: "" }, prompt: "", negative_prompt: "",

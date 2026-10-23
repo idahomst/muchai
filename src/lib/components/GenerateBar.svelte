@@ -1,11 +1,10 @@
 <script lang="ts">
   import { get } from "svelte/store";
   import { onMount } from "svelte";
-  import { request, genStatus, history, currentImage, currentItem, settings, gpuDevices, sysStats, livePreview, loras, engineInstalling, pendingRun, viewingLive } from "../stores";
-  import { generate, cancelGeneration, imageSrc, listHistory, onProgress, onGenNotice, onPreview, onLoraMissing, engineSelect, engineStatus } from "../api";
+  import { request, genStatus, history, currentImage, currentItem, settings, gpuDevices, livePreview, loras, engineInstalling, pendingRun, viewingLive } from "../stores";
+  import { generate, cancelGeneration, imageSrc, listHistory, onProgress, onPreview, onLoraMissing, engineSelect, engineStatus } from "../api";
   import { modelIsSet } from "../types";
 
-  let lowVramAuto = false;
 
   // Offer a way back only when the running engine is one we installed. A
   // downloaded build that runs happily and emits garbage is the one failure the
@@ -67,7 +66,6 @@
     if (!modelIsSet(req.model)) { genStatus.set({ kind: "error", message: "Select a model first." }); return; }
     if (!req.prompt.trim()) { genStatus.set({ kind: "error", message: "Enter a prompt." }); return; }
     genStatus.set({ kind: "running", progress: null });
-    lowVramAuto = false;
     errorDismissed = false;
     missingLoras = [];
     previewPath = null;
@@ -76,10 +74,8 @@
     // Generate still puts the run on screen without anyone clicking anything.
     pendingRun.set(req);
     viewingLive.set(true);
-    const vram = get(sysStats)?.gpu?.vram_total_mb ?? 0;
-    const deviceVramMb = vram > 0 ? vram : null;
     try {
-      const items = await generate(req, deviceVramMb);
+      const items = await generate(req);
       // Only jump to the result if they were still watching the run. Having
       // wandered off to an older image, being yanked away from it the moment
       // the run lands is the thing the pending tile exists to avoid — the new
@@ -156,7 +152,6 @@
       // on the fixed preview path and the webview would serve a stale frame).
       if (previewPath) livePreview.set(imageSrc(previewPath) + "?t=" + (++previewTick));
     });
-    const unNotice = onGenNotice(() => { lowVramAuto = true; });
     const unPreview = onPreview((path) => { previewPath = path; });
     const unLora = onLoraMissing((name) => {
       // The engine only knows the pool filename; show the label the user gave
@@ -165,7 +160,7 @@
       if (!missingLoras.includes(label)) missingLoras = [...missingLoras, label];
     });
     window.addEventListener("keydown", onKey);
-    return () => { un.then((f) => f()); unNotice.then((f) => f()); unPreview.then((f) => f()); unLora.then((f) => f()); window.removeEventListener("keydown", onKey); };
+    return () => { un.then((f) => f()); unPreview.then((f) => f()); unLora.then((f) => f()); window.removeEventListener("keydown", onKey); };
   });
 </script>
 
@@ -193,10 +188,6 @@
 
 {#if $genStatus.kind === "running" && willRunOnCpu}
   <div class="cpu-note" role="status">Running on CPU — this will be much slower.</div>
-{/if}
-
-{#if $genStatus.kind === "running" && lowVramAuto}
-  <div class="cpu-note" role="status">Low-VRAM mode auto-enabled — this model needs more memory than your selected device has, so generation will be slower.</div>
 {/if}
 
 {#if missingLoras.length > 0}

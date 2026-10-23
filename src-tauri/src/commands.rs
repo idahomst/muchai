@@ -427,7 +427,6 @@ pub async fn generate(
     app: AppHandle,
     state: State<'_, AppState>,
     request: GenerationRequest,
-    device_vram_mb: Option<u64>,
 ) -> Result<Vec<GalleryItem>, String> {
     // Claimed first, before any work: everything below assumes it is the only
     // run in flight. Released when `_run` drops on any exit path.
@@ -502,20 +501,6 @@ pub async fn generate(
     let req = request.clone();
     let img = image_path.clone();
     let backend_owned = backend;
-    // Decide Low-VRAM for THIS run: manual toggle forces it on; otherwise
-    // auto-engage when the summed weight bytes won't fit the selected GPU's VRAM.
-    // Weights are summed as *in-memory* bytes (what estimate_vram_mb expects), so
-    // fp8 checkpoints — which the engine widens to f16 on load — are counted at
-    // their real cost. A broken model (some file un-stat'able) yields None →
-    // treated as "unknown", no auto-engage.
-    let is_cpu = backend_owned.as_deref() == Some("cpu");
-    let weights_bytes = models::sum_memory_bytes(&request.model.component_paths());
-    let (low_vram, auto_engaged) =
-        crate::fit::resolve_low_vram(cfg.low_vram, weights_bytes, device_vram_mb, is_cpu);
-    if auto_engaged {
-        // One-time, payload-free signal; the note text lives in the frontend.
-        let _ = app.emit("generation:low_vram_auto", ());
-    }
     // Live preview: when enabled, the engine writes a rough draft to a fixed
     // file every 2 steps; the frontend reloads it on each progress tick.
     let preview = if cfg.live_preview { Some(preview_path()) } else { None };
@@ -526,25 +511,8 @@ pub async fn generate(
         // Tell the frontend where the draft will appear (file arrives ~step 2).
         let _ = app.emit("generation:preview", p.to_string_lossy().to_string());
     }
-    // Load-time precision: only the diffusion model is ever re-quantised, so it
-    // is measured on its own and the remaining components counted as fixed cost.
-    let diffusion_path = std::path::Path::new(request.model.diffusion_path());
-    let diffusion_bytes = crate::weights::memory_bytes(diffusion_path);
-    let other_bytes = weights_bytes
-        .zip(diffusion_bytes)
-        .map(|(all, diffusion)| all.saturating_sub(diffusion));
-    let weight_type = crate::fit::resolve_weight_type(
-        &cfg.load_precision,
-        diffusion_bytes,
-        other_bytes,
-        device_vram_mb,
-        is_cpu,
-        crate::weights::is_quantized(diffusion_path),
-    );
     let engine_opts = crate::command_builder::EngineOptions {
-        low_vram,
         preview_path: preview.as_ref().map(|p| p.to_string_lossy().into_owned()),
-        weight_type,
         lora_dir,
         ref_images,
     };
@@ -2579,12 +2547,12 @@ mod tests {
         let base = scratch("chlog");
         let root = base.join("engines");
         std::fs::create_dir_all(&root).unwrap();
-        let mut cfg = crate::config::default_config(); // Builtin → master-813-bfbef5b
+        let mut cfg = crate::config::default_config(); // Builtin → master-995-fd21ecf
 
         let (from, to) = changelog_range(&cfg, &root, "master-797-5ef4a75".into()).unwrap();
         assert_eq!(
             from.as_deref(),
-            Some("bfbef5b"),
+            Some("fd21ecf"),
             "the range starts at the running engine's commit, not its tag"
         );
         assert_eq!(to, "5ef4a75", "a tag has to be reduced too — /compare 404s on a tag name");
@@ -2782,7 +2750,7 @@ mod tests {
         let root = base.join("engines");
         std::fs::create_dir_all(&root).unwrap();
         let cfg_path = base.join("config.json");
-        let config = Mutex::new(crate::config::default_config()); // Builtin → master-813
+        let config = Mutex::new(crate::config::default_config()); // Builtin → master-995
 
         // A release with nothing we can run is "no update", not an error — and
         // it still counts as a check. GitHub answered; there was simply nothing
@@ -2795,10 +2763,10 @@ mod tests {
             "reaching GitHub and finding no usable asset is still a completed check"
         );
 
-        let up = record_check(&config, &cfg_path, &root, Ok(Some(a_release("master-820-abc1234", 45020326))))
+        let up = record_check(&config, &cfg_path, &root, Ok(Some(a_release("master-1002-abc1234", 45020326))))
             .unwrap()
-            .expect("build 820 is newer than the built-in 813");
-        assert_eq!(up.tag, "master-820-abc1234");
+            .expect("build 1002 is newer than the built-in 995");
+        assert_eq!(up.tag, "master-1002-abc1234");
         assert_eq!(up.asset_size, 45020326, "the card sizes the download from this");
         assert_eq!(
             up.current_tag.as_deref(),
@@ -3189,14 +3157,14 @@ mod tests {
         // is the snapshot taken at mount, before any of the above happened.
         let mut incoming = crate::config::default_config();
         incoming.theme = crate::types::Theme::Light;
-        incoming.low_vram = true;
+        incoming.live_preview = false;
         incoming.last_request = crate::types::GenerationRequest::default(); // stale
 
         let merged = merged_settings(&current, incoming);
 
         // Preference fields adopt the incoming values…
         assert_eq!(merged.theme, crate::types::Theme::Light);
-        assert!(merged.low_vram);
+        assert!(!merged.live_preview);
         // …but nothing the backend owns is rolled back by a theme toggle. A
         // reverted engine would silently drop the user back to the built-in
         // binary; a reverted timestamp would make the daily check run at every

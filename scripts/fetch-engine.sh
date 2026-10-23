@@ -19,14 +19,19 @@
 # run with CFG > 1 AND at least one reference image — i.e. every instruction
 # edit. Fixed by leejet/stable-diffusion.cpp#1813 (b8bf676). bfbef5b is the
 # build verified by hand through the in-app engine updater.
+#
+# 2026-10-23: bumped bfbef5b -> fd21ecf, for Qwen-Image-2.1 support. MuchAI now
+# targets this engine only: weight placement is left to its default
+# `--auto-fit on`, and the flags it removed or deprecated (`--stream-layers`,
+# `--diffusion-fa`) are no longer emitted. Older engines are not supported.
 set -euo pipefail
 
 # --- Pinned engine release (leejet/stable-diffusion.cpp GitHub Releases) --------
-ENGINE_REV="bfbef5b"
-ENGINE_TAG="master-813-bfbef5b"
-ENGINE_ASSET="sd-master-bfbef5b-bin-Linux-Ubuntu-24.04-x86_64-vulkan.zip"
+ENGINE_REV="fd21ecf"
+ENGINE_TAG="master-995-fd21ecf"
+ENGINE_ASSET="sd-master-fd21ecf-bin-Linux-Ubuntu-24.04-x86_64-vulkan.zip"
 ENGINE_URL="https://github.com/leejet/stable-diffusion.cpp/releases/download/${ENGINE_TAG}/${ENGINE_ASSET}"
-ENGINE_SHA256="7672553dccb9c4eeec850e1a7ad6f3c4bcde584ad6deae6648ed8b29c5cdbf7f"
+ENGINE_SHA256="e7c6732da6c5d35eae5c592805a9f888cfc1921c3d3f98239e9f36009af6b6a3"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEST="$ROOT/src-tauri/binaries/engine"

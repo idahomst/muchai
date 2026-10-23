@@ -86,27 +86,19 @@ The badge in the catalog compares an estimate against your hardware. The
 estimate is deliberately rough: **weights × 1.15, plus 1.5 GB** of working space
 for activations. A 6 GB model therefore wants about 8.4 GB to run comfortably.
 
-Three controls change the outcome, in this order of preference:
-
-**Low-VRAM mode** (Preferences → Hardware) offloads weights to system RAM and
-streams them to the GPU as needed. Slower, but it makes models fit that
-otherwise would not. MuchAI turns this on automatically for a run whose estimate
-exceeds your card's VRAM, and tells you when it does — you do not need to
-predict it.
+The badge is advice, not a gate. Where the weights actually go is decided by
+the engine at load time: it fills the GPU you picked first, then system RAM,
+then disk. A model larger than your card still runs at full precision, only
+slower, because the part that spills is copied to the GPU as it is needed.
+There is nothing to switch on for this.
 
 **Shared-memory budget** applies only to unified-memory devices: integrated
 GPUs, AMD APUs, systems where "VRAM" is really system RAM. On such a device
-there is no fixed VRAM figure to read, so MuchAI assumes one: `min(70% of total
-RAM, total RAM − 4 GB)`, never below 1 GB. Setting the field overrides that
-calculation; out-of-range values are clamped, and the hint below the field always
-names the figure actually in force — trust the hint, not what you typed. On a
-discrete card this setting is ignored, and says so.
-
-**Load precision** (Preferences → Hardware) re-quantizes the diffusion model as
-it loads: **Auto**, **Original**, **8-bit**, **5-bit**, **4-bit**. Auto reduces
-precision only when the model will not otherwise fit, which is what you want
-almost always. This is a fitting tool, not a quality tool — reducing precision on
-a model that already fits costs you quality and buys nothing.
+there is no fixed VRAM figure to read, so MuchAI assumes one for the catalog
+badge: `min(70% of total RAM, total RAM − 4 GB)`, never below 1 GB. Setting the
+field overrides that calculation; out-of-range values are clamped, and the hint
+below the field always names the figure actually in force — trust the hint, not
+what you typed. On a discrete card this setting is ignored, and says so.
 
 ![Preferences](screenshots/preferences.png)
 

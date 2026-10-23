@@ -7,12 +7,9 @@ export const getSettings = () => invoke<AppConfig>("get_settings");
 export const listGpuDevices = () => invoke<GpuDevice[]>("list_gpu_devices");
 export const setSettings = (config: AppConfig) => invoke<void>("set_settings", { config });
 export const listHistory = () => invoke<GalleryItem[]>("list_history");
-/** Returns one item per produced image (batch_count may yield several).
- *  `deviceVramMb` is the selected GPU's total VRAM (from sysStats, may be a
- *  RAM-derived budget on a unified-memory device) so the backend can
- *  auto-engage Low-VRAM; null when unknown / running on CPU. */
-export const generate = (request: GenerationRequest, deviceVramMb: number | null = null) =>
-  invoke<GalleryItem[]>("generate", { request, deviceVramMb });
+/** Returns one item per produced image (batch_count may yield several). */
+export const generate = (request: GenerationRequest) =>
+  invoke<GalleryItem[]>("generate", { request });
 /** Move a generated image (and its sidecar) to the OS trash. */
 export const deleteImage = (path: string) => invoke<void>("delete_image", { imagePath: path });
 export const cancelGeneration = () => invoke<void>("cancel_generation");
@@ -39,10 +36,6 @@ export const onProgress = (cb: (p: ProgressUpdate) => void): Promise<UnlistenFn>
  *  path the engine will overwrite with the draft image. */
 export const onPreview = (cb: (path: string) => void): Promise<UnlistenFn> =>
   listen<string>("generation:preview", (e) => cb(e.payload));
-
-/** Fires once per run when the backend auto-engaged Low-VRAM mode for it. */
-export const onGenNotice = (cb: () => void): Promise<UnlistenFn> =>
-  listen("generation:low_vram_auto", () => cb());
 
 /** Fires when the engine reported it could not find a selected LoRA, carrying
  *  that LoRA's name. The run still SUCCEEDS — with a silently unmodified image
