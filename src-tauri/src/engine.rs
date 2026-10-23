@@ -66,6 +66,53 @@ fn looks_like_oom(s: &str) -> bool {
     l.contains("out of memory") || l.contains("cuda error") || l.contains("oom")
 }
 
+/// The `LD_LIBRARY_PATH` an engine process should see, given the one MuchAI
+/// inherited and the AppImage mount it runs from (`APPDIR`). `None` means
+/// unset it.
+///
+/// `sd-cli` finds its `.so` siblings through its own `RUNPATH` of `$ORIGIN`,
+/// and the loader searches `LD_LIBRARY_PATH` *before* `RUNPATH`. linuxdeploy's
+/// `AppRun` prepends the bundle's `usr/lib` directories to it — and that
+/// `usr/lib` carries the built-in engine's `libstable-diffusion.so`, `libggml`
+/// and `libwebp`, pulled in as dependencies. So every engine MuchAI spawned
+/// from the AppImage loaded the *built-in* engine's libraries: a downloaded
+/// `master-995-fd21ecf` died with "undefined symbol: sd_add_rpc_servers"
+/// before printing its banner, and a downloaded build whose ABI happened to
+/// match would have run the old library while reporting the old commit.
+///
+/// Empty entries go too: the loader reads one as the current directory, and a
+/// stray trailing `:` from a shell profile is enough to put one there.
+/// Everything else the user set is kept — a Vulkan loader or driver path is a
+/// legitimate thing for the engine to inherit.
+pub(crate) fn engine_library_path(
+    current: &std::ffi::OsStr,
+    appdir: Option<&Path>,
+) -> Option<std::ffi::OsString> {
+    let kept: Vec<std::path::PathBuf> = std::env::split_paths(current)
+        .filter(|p| !p.as_os_str().is_empty())
+        .filter(|p| !appdir.is_some_and(|a| p.starts_with(a)))
+        .collect();
+    if kept.is_empty() {
+        return None;
+    }
+    std::env::join_paths(kept).ok()
+}
+
+/// A `Command` for the engine binary, with the library search path it must
+/// see. Every place that spawns `sd-cli` goes through here; see
+/// `engine_library_path` for why.
+pub(crate) fn engine_command(binary: &Path) -> Command {
+    let mut cmd = Command::new(binary);
+    if let Some(current) = std::env::var_os("LD_LIBRARY_PATH") {
+        let appdir = std::env::var_os("APPDIR").map(std::path::PathBuf::from);
+        match engine_library_path(&current, appdir.as_deref()) {
+            Some(path) => cmd.env("LD_LIBRARY_PATH", path),
+            None => cmd.env_remove("LD_LIBRARY_PATH"),
+        };
+    }
+    cmd
+}
+
 /// How many times to wait out an "executable file busy" refusal, and how long
 /// to wait each time. A sixth of a second in the worst case, against a window
 /// that is milliseconds wide.
@@ -137,7 +184,7 @@ pub fn run_generation<F: FnMut(ProgressUpdate), N: FnMut(String)>(
     let args = build_args(req, &output_path.to_string_lossy(), run_opts.backend, run_opts.opts);
 
     let mut child = retrying_while_busy(|| {
-        Command::new(binary).args(&args).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()
+        engine_command(binary).args(&args).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()
     })
     .map_err(|e| GenError::Spawn(e.to_string()))?;
 
@@ -217,7 +264,48 @@ pub fn run_generation<F: FnMut(ProgressUpdate), N: FnMut(String)>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsStr;
     use std::sync::OnceLock;
+
+    /// What linuxdeploy's `AppRun` hands every child of the AppImage when the
+    /// session had no `LD_LIBRARY_PATH` of its own: ten bundle directories and
+    /// a trailing empty entry.
+    const APPRUN_PATH: &str = "/tmp/.mount_muchaiX/usr/lib/:/tmp/.mount_muchaiX/usr/lib/x86_64-linux-gnu/:\
+                               /tmp/.mount_muchaiX/usr/lib64/:/tmp/.mount_muchaiX/lib/:";
+
+    #[test]
+    fn appimage_library_dirs_are_kept_from_the_engine() {
+        // The live failure: the bundle's own `usr/lib` carries the built-in
+        // engine's `libstable-diffusion.so`, and a downloaded `sd-cli` loaded
+        // that one instead of its sibling — "undefined symbol" and no banner.
+        let current = format!("{APPRUN_PATH}/usr/local/cuda/lib64");
+        let got = engine_library_path(OsStr::new(&current), Some(Path::new("/tmp/.mount_muchaiX")));
+        assert_eq!(got.as_deref(), Some(OsStr::new("/usr/local/cuda/lib64")));
+    }
+
+    #[test]
+    fn nothing_left_after_stripping_means_unset() {
+        let got = engine_library_path(OsStr::new(APPRUN_PATH), Some(Path::new("/tmp/.mount_muchaiX")));
+        assert_eq!(got, None);
+    }
+
+    #[test]
+    fn an_empty_entry_is_dropped_even_outside_an_appimage() {
+        // `export LD_LIBRARY_PATH=/x:$LD_LIBRARY_PATH` with nothing to append
+        // leaves a trailing `:`, which the loader reads as "the current
+        // directory" — ahead of the engine's own `$ORIGIN`.
+        let got = engine_library_path(OsStr::new("/usr/local/cuda/lib64:"), None);
+        assert_eq!(got.as_deref(), Some(OsStr::new("/usr/local/cuda/lib64")));
+    }
+
+    #[test]
+    fn unrelated_entries_survive_untouched() {
+        // Component-wise prefix: a sibling mount sharing the string prefix of
+        // APPDIR is not inside it.
+        let current = "/opt/vulkan/lib:/tmp/.mount_muchaiX2/lib";
+        let got = engine_library_path(OsStr::new(current), Some(Path::new("/tmp/.mount_muchaiX")));
+        assert_eq!(got.as_deref(), Some(OsStr::new(current)));
+    }
 
     // Serialize fake-engine write+spawn across tests to avoid the
     // fork/exec ETXTBSY ("Text file busy") race: when tests run on parallel

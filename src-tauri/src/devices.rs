@@ -1,7 +1,7 @@
 use crate::types::{DeviceKind, GpuDevice, GpuSelection};
 use std::io::Read;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::Duration;
 
 /// Reserved index for the synthetic CPU device. `u32::MAX` never collides with a
@@ -67,7 +67,7 @@ pub fn enumerate(binary: &Path) -> Vec<GpuDevice> {
     let model = tmp.join("muchai-vk-probe-missing.gguf");
     let out = tmp.join("muchai-vk-probe.png");
 
-    let mut child = match Command::new(binary)
+    let mut child = match crate::engine::engine_command(binary)
         .args(["-M", "img_gen", "-m"])
         .arg(&model)
         .args(["-p", "x", "--steps", "1", "-W", "64", "-H", "64", "-o"])
@@ -109,7 +109,7 @@ pub fn engine_version(binary: &Path) -> Option<String> {
     if !binary.exists() {
         return None;
     }
-    let mut child = Command::new(binary)
+    let mut child = crate::engine::engine_command(binary)
         .arg("--version")
         .stdout(Stdio::piped())
         .stderr(Stdio::null())

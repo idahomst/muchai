@@ -241,14 +241,16 @@ const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(300)
 /// Run a probe subcommand against the engine in `dir`, returning its combined
 /// output.
 ///
-/// The environment is deliberately left alone. The engine's `.so` files sit
-/// beside the binary rather than on the system path, and `sd-cli` finds them
-/// through its own `RUNPATH` of `$ORIGIN` — which is also how `run_generation`
-/// and `devices::engine_version` run it, neither of which sets
-/// `LD_LIBRARY_PATH`. Setting it here would make validation strictly more
-/// permissive than production: the loader searches `LD_LIBRARY_PATH` before
-/// `RUNPATH`, so a build that lost its `$ORIGIN` would probe clean, install,
-/// and then fail every generation with "error while loading shared libraries".
+/// The engine's `.so` files sit beside the binary rather than on the system
+/// path, and `sd-cli` finds them through its own `RUNPATH` of `$ORIGIN`. The
+/// probe spawns through `engine::engine_command`, exactly as `run_generation`
+/// and `devices::engine_version` do, so it sees the same `LD_LIBRARY_PATH` —
+/// the inherited one minus the AppImage's own directories, which would
+/// otherwise shadow `$ORIGIN`. Aiming it at `dir` here would make validation
+/// strictly more permissive than production: the loader searches
+/// `LD_LIBRARY_PATH` before `RUNPATH`, so a build that lost its `$ORIGIN` would
+/// probe clean, install, and then fail every generation with "error while
+/// loading shared libraries".
 /// Validation is only worth anything if it runs the binary the way we will.
 ///
 /// The exit status is deliberately not consulted: what a probe *printed* is the
@@ -261,7 +263,7 @@ fn probe(dir: &Path, arg: &str) -> Result<String, String> {
     use std::io::Read;
     let bin = dir.join(crate::commands::engine_binary_name());
     let mut child = crate::engine::retrying_while_busy(|| {
-        std::process::Command::new(&bin)
+        crate::engine::engine_command(&bin)
             .arg(arg)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
