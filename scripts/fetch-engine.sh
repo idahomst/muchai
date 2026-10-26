@@ -24,14 +24,17 @@
 # targets this engine only: weight placement is left to its default
 # `--auto-fit on`, and the flags it removed or deprecated (`--stream-layers`,
 # `--diffusion-fa`) are no longer emitted. Older engines are not supported.
+#
+# 2026-10-26: bumped fd21ecf -> e41fbcf. Same flag surface as fd21ecf (every
+# flag MuchAI emits present, none removed); `--prediction` only gained values.
 set -euo pipefail
 
 # --- Pinned engine release (leejet/stable-diffusion.cpp GitHub Releases) --------
-ENGINE_REV="fd21ecf"
-ENGINE_TAG="master-995-fd21ecf"
-ENGINE_ASSET="sd-master-fd21ecf-bin-Linux-Ubuntu-24.04-x86_64-vulkan.zip"
+ENGINE_REV="e41fbcf"
+ENGINE_TAG="master-1015-e41fbcf"
+ENGINE_ASSET="sd-master-e41fbcf-bin-Linux-Ubuntu-24.04-x86_64-vulkan.zip"
 ENGINE_URL="https://github.com/leejet/stable-diffusion.cpp/releases/download/${ENGINE_TAG}/${ENGINE_ASSET}"
-ENGINE_SHA256="e7c6732da6c5d35eae5c592805a9f888cfc1921c3d3f98239e9f36009af6b6a3"
+ENGINE_SHA256="0ae9ef34eea1ff6a229b892144a65ed8c00b6438c5ba783cdeca77024b2fc697"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEST="$ROOT/src-tauri/binaries/engine"
