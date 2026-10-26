@@ -408,11 +408,10 @@ fn resolve_ref_images(
     if !is_edit {
         return Ok(false);
     }
+    // An edit-capable model may also generate from scratch (Qwen-Image 2.1 does
+    // both), so the reference is optional: none means an ordinary run.
     if ref_images.is_empty() {
-        return Err(
-            "This model edits an existing image. Add a reference image above the instruction."
-                .to_string(),
-        );
+        return Ok(false);
     }
     for p in ref_images {
         if !std::path::Path::new(p).exists() {
@@ -458,8 +457,8 @@ pub async fn generate(
     // warning and a wrong-looking-but-successful image.
     let lora_dir =
         loras::resolve_selection(std::path::Path::new(&cfg.models_dir), &request.loras)?;
-    // Reference images are decided here for the same reason: an edit model run
-    // without one produces a confident, unrelated image and no engine warning.
+    // Reference images are decided here for the same reason: a reference given
+    // to a model that would ignore it produces a confident, unrelated image.
     // The family and the per-model override are re-read from model.json
     // alongside the components above.
     let facts =
@@ -3504,18 +3503,19 @@ mod tests {
     }
 
     #[test]
-    fn an_edit_family_without_a_reference_is_blocked_with_an_actionable_message() {
-        let err =
-            resolve_ref_images(Some("qwen-image-edit"), None, &plain_model(), &[]).unwrap_err();
-        assert!(err.contains("edits an existing image"), "{err}");
-        assert!(err.contains("reference image"), "{err}");
+    fn an_edit_family_without_a_reference_generates_from_scratch() {
+        assert_eq!(
+            resolve_ref_images(Some("qwen-image-edit"), None, &plain_model(), &[]),
+            Ok(false)
+        );
     }
 
     #[test]
-    fn a_kontext_model_demands_a_reference_image() {
-        let err =
-            resolve_ref_images(Some("flux1-kontext"), None, &plain_model(), &[]).unwrap_err();
-        assert!(err.contains("edits an existing image"), "{err}");
+    fn a_kontext_model_without_a_reference_is_an_ordinary_run() {
+        assert_eq!(
+            resolve_ref_images(Some("flux1-kontext"), None, &plain_model(), &[]),
+            Ok(false)
+        );
     }
 
     #[test]
@@ -3585,9 +3585,8 @@ mod tests {
         // succeed and quietly ignore the reference.
         let (dir, refs) = a_present_reference("refreplay");
         assert_eq!(resolve_ref_images(None, None, &model_with_vision_tower(), &refs), Ok(true));
-        // And the empty case is still blocked, not silently downgraded.
-        let err = resolve_ref_images(None, None, &model_with_vision_tower(), &[]).unwrap_err();
-        assert!(err.contains("edits an existing image"), "{err}");
+        // Without a reference it is an ordinary run.
+        assert_eq!(resolve_ref_images(None, None, &model_with_vision_tower(), &[]), Ok(false));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

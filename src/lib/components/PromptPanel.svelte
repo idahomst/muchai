@@ -6,7 +6,9 @@
   // Legacy-mode component: `$:` and store auto-subscription, not runes.
   // The label must agree with the panel above it, so both read the one store
   // that mirrors the backend's gate rather than each deriving their own.
-  $: editing = $isEditingModel;
+  // An edit-capable model also generates from scratch, so the field is an
+  // instruction only while a reference image is actually attached.
+  $: editing = $isEditingModel && $request.ref_images.length > 0;
 </script>
 
 <div class="field">
