@@ -2076,7 +2076,7 @@ dependencies = [
 
 [[package]]
 name = "muchai"
-version = "1.7.0"
+version = "1.7.1"
 dependencies = [
  "directories",
  "nvml-wrapper",
