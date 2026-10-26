@@ -46,7 +46,10 @@ VERSION="$(node -p "require('./src-tauri/tauri.conf.json').version")"
 APPIMAGE_NAME="muchai_${VERSION}_amd64.AppImage"
 
 echo ">> tauri build (appimage)…"
-npm run tauri build -- --bundles appimage
+# linuxdeploy's bundled binutils `strip` is too old for the .relr.dyn sections
+# in libs from rolling distros (Arch/CachyOS) and fails the whole bundle step.
+# Skipping strip only costs a few MB.
+NO_STRIP=1 npm run tauri build -- --bundles appimage
 
 echo ">> stripping host-provided / host-coupled libs from AppDir…"
 # libvulkan.so* is the host ICD loader; libcuda/libnvidia-* are driver libs.
