@@ -1,0 +1,13 @@
+#0  0x00007f539ea6204f in ggml_vk_tensor_subbuffer(ggml_backend_vk_context const*, ggml_tensor const*, bool) [clone .constprop.0] () from /home/idaho/g/mst/muchai/src-tauri/binaries/engine/libggml-vul
+#1  0x00007f539eadde62 in void ggml_vk_op_f32<vk_op_binary_push_constants>(ggml_backend_vk_context*, std::shared_ptr<vk_context_struct>&, ggml_tensor const*, ggml_tensor const*, ggml_tensor const*, gg
+#2  0x00007f539eae1021 in ggml_vk_add(ggml_backend_vk_context*, std::shared_ptr<vk_context_struct>&, ggml_tensor const*, ggml_tensor const*, ggml_tensor*) () from /home/idaho/g/mst/muchai/src-tauri/bi
+#3  0x00007f539eb09057 in ggml_vk_build_graph(ggml_backend_vk_context*, ggml_cgraph*, int, ggml_tensor*, int, bool, bool, bool) () from /home/idaho/g/mst/muchai/src-tauri/binaries/engine/libggml-vulka
+#4  0x00007f539eb0a853 in ggml_backend_vk_graph_compute(ggml_backend*, ggml_cgraph*) () from /home/idaho/g/mst/muchai/src-tauri/binaries/engine/libggml-vulkan.so
+#5  0x00007f53a0a7fff4 in ggml_backend_sched_graph_compute_async () from /home/idaho/g/mst/muchai/src-tauri/binaries/engine/libggml-base.so.0
+#6  0x00007f53a0a80072 in ggml_backend_sched_graph_compute () from /home/idaho/g/mst/muchai/src-tauri/binaries/engine/libggml-base.so.0
+#7  0x00007f53a148d1b9 in GGMLRunner::execute_segment(ggml_cgraph*, int) () from /home/idaho/g/mst/muchai/src-tauri/binaries/engine/libstable-diffusion.so
+#8  0x00007f53a14913e8 in GGMLRunner::execute_graph(ggml_cgraph*, int, bool, std::function<bool ()> const&) () from /home/idaho/g/mst/muchai/src-tauri/binaries/engine/libstable-diffusion.so
+#9  0x00007f53a1492e8f in GGMLRunner::compute(std::function<ggml_cgraph* ()>, int, bool, bool, std::function<bool ()> const&) () from /home/idaho/g/mst/muchai/src-tauri/binaries/engine/libstable-diffu
+#10 0x00007f53a157b59c in LLMEmbedder::encode_prompt(int, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::pair<int, int> const&, int, int, std::vector<std::pair<i
+#11 0x00007f53a157f3e3 in LLMEmbedder::get_learned_condition(int, ConditionerParams const&) () from /home/idaho/g/mst/muchai/src-tauri/binaries/engine/libstable-diffusion.so
+#12 0x00007f53a18d0e55 in ConditioningCache::get(Conditioner&, int, ConditionerParams const&) () from /home/idaho/g/mst/muchai/src-tauri/binaries/engine/libstable-diffusion.so
