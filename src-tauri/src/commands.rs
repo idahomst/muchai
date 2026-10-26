@@ -582,6 +582,13 @@ pub async fn generate(
                 // Clear `model_id` so replaying one never re-resolves against a
                 // since-changed (or deleted) manifest.
                 req_i.model_id = None;
+                // References the run did not use (a non-edit model, or an edit
+                // model run from scratch) are leftovers in the form, not part of
+                // how this image was made. Recording them would label it
+                // "Editing …" and make a replay look like an edit.
+                if !ref_images {
+                    req_i.ref_images.clear();
+                }
                 let item = GalleryItem {
                     id: if multi { format!("{id}_{i}") } else { id.clone() },
                     image_path: path.to_string_lossy().into_owned(),
