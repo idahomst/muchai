@@ -1,0 +1,114 @@
+# 2026-10-27T08:05:15+01:00 engine: stable-diffusion.cpp version unknown, commit e41fbcf
+# command: src-tauri/binaries/engine/sd-cli --diffusion-model /home/idaho/.local/share/muchai/models/shared/qwen-image-2.1/qwen-image-2.1-Q8_0.gguf --vae /home/idaho/.local/share/muchai/models/shared/qwen-image-2.1/qwen_image_2.1_vae_bf16.safetensors --llm /home/idaho/.local/share/muchai/models/shared/qwen-image-2.1/Qwen3VL-8B-Instruct-Q8_0.gguf --backend vulkan1 --vae-tiling --flash-attn auto\,diffusion=on -p a\ red\ apple\ on\ a\ table -W 512 -H 512 --steps 20 --cfg-scale 6.0 --sampling-method euler -v -o /tmp/claude-1000/-home-idaho-g-mst-muchai/a5dff533-89b8-42b9-a996-1861bfc89fd5/scratchpad/out/qwen21-defaults-512.png 
+[V] version: stable-diffusion.cpp version unknown, commit e41fbcf --- main.cpp:694
+ggml_vulkan: Found 2 Vulkan devices:
+ggml_vulkan: 0 = Intel(R) UHD Graphics 770 (ADL-S GT1) (Intel open-source Mesa driver) | uma: 1 | fp16: 1 | bf16: 0 | fp4: 0 | warp size: 32 | shared memory: 65536 | int dot: 0 | matrix cores: none
+ggml_vulkan: 1 = NVIDIA GeForce RTX 3060 (NVIDIA) | uma: 0 | fp16: 1 | bf16: 0 | fp4: 0 | warp size: 32 | shared memory: 49152 | int dot: 0 | matrix cores: KHR_coopmat
+load_backend: loaded Vulkan backend from /home/idaho/g/mst/muchai/src-tauri/binaries/engine/libggml-vulkan.so
+load_backend: loaded CPU backend from /home/idaho/g/mst/muchai/src-tauri/binaries/engine/libggml-cpu-alderlake.so
+[V] System Info: 
+   SSE3 = 1 |    SSSE3 = 1 |    AVX = 1 |    AVX_VNNI = 1 |    AVX2 = 1 |    F16C = 1 |    FMA = 1 |    BMI2 = 1 |    OPENMP = 1 |    REPACK = 1 |  --- main.cpp:695
+[V] using 12 threads for model loading --- model_loader.cpp:190
+[I] loading diffusion model from '/home/idaho/.local/share/muchai/models/shared/qwen-image-2.1/qwen-image-2.1-Q8_0.gguf' --- diffusion_engine.cpp:692
+[I] load /home/idaho/.local/share/muchai/models/shared/qwen-image-2.1/qwen-image-2.1-Q8_0.gguf using gguf format --- model_loader.cpp:216
+[V] init from '/home/idaho/.local/share/muchai/models/shared/qwen-image-2.1/qwen-image-2.1-Q8_0.gguf' --- model_loader.cpp:262
+[V] GGUF v3, tensor_count=265, metadata_kv_count=0 --- gguf_reader_ext.h:219
+[I] loading llm from '/home/idaho/.local/share/muchai/models/shared/qwen-image-2.1/Qwen3VL-8B-Instruct-Q8_0.gguf' --- diffusion_engine.cpp:749
+[I] load /home/idaho/.local/share/muchai/models/shared/qwen-image-2.1/Qwen3VL-8B-Instruct-Q8_0.gguf using gguf format --- model_loader.cpp:216
+[V] init from '/home/idaho/.local/share/muchai/models/shared/qwen-image-2.1/Qwen3VL-8B-Instruct-Q8_0.gguf' --- model_loader.cpp:262
+[V] GGUF v3, tensor_count=399, metadata_kv_count=30 --- gguf_reader_ext.h:219
+[I] loading vae from '/home/idaho/.local/share/muchai/models/shared/qwen-image-2.1/qwen_image_2.1_vae_bf16.safetensors' --- diffusion_engine.cpp:763
+[I] load /home/idaho/.local/share/muchai/models/shared/qwen-image-2.1/qwen_image_2.1_vae_bf16.safetensors using safetensors format --- model_loader.cpp:222
+[V] init from '/home/idaho/.local/share/muchai/models/shared/qwen-image-2.1/qwen_image_2.1_vae_bf16.safetensors', prefix = 'vae.' --- model_loader.cpp:290
+[I] Version: Qwen Image 2.1  --- diffusion_engine.cpp:975
+[I] auto-fit plan: --- backend_fit.cpp:323
+[I]   devices: --- backend_fit.cpp:324
+[I]     Vulkan0      Intel(R) UHD Graphics 770 (ADL-S GT1) free  14304 MiB, budget  13792 MiB --- backend_fit.cpp:326
+[I]     Vulkan1      NVIDIA GeForce RTX 3060          free  12202 MiB, budget  11690 MiB --- backend_fit.cpp:326
+[I]     RAM          free  20442 MiB, params budget  18394 MiB --- backend_fit.cpp:333
+[I]   compute-device weight cache priority: diffusion > te > vae --- backend_fit.cpp:336
+[I]   components (params: compute device -> RAM -> other GPU -> disk): --- backend_fit.cpp:337
+[I]     DiT          params   7286 MiB, compute reserve  2048 MiB -> compute Vulkan1, params Vulkan1 --- backend_fit.cpp:346
+[I]     Conditioner  params   8300 MiB, compute reserve  2048 MiB -> compute Vulkan1, params cpu --- backend_fit.cpp:346
+[I]     VAE          params    644 MiB, compute reserve  1024 MiB -> compute Vulkan1, params cpu --- backend_fit.cpp:346
+[I] auto-fit: --backend "vulkan1" --params-backend "te=cpu,vae=cpu" --- backend_fit.cpp:474
+[V] Initializing backend: Vulkan1 --- ggml_extend_backend.cpp:420
+[V] using 12 threads for model loading --- model_loader.cpp:190
+[I] Weight type stat:                      f32: 210  |    q8_0: 450  |    bf16: 242   --- diffusion_engine.cpp:1548
+[I] Conditioner weight type stat:          f32: 145  |    q8_0: 254   --- diffusion_engine.cpp:1549
+[I] Diffusion model weight type stat:      f32: 65   |    q8_0: 196  |    bf16: 4     --- diffusion_engine.cpp:1550
+[I] VAE weight type stat:                 bf16: 238   --- diffusion_engine.cpp:1551
+[V] Initializing backend: CPU --- ggml_extend_backend.cpp:420
+[V] llm: num_layers = 36, vocab_size = 151936, hidden_size = 4096, intermediate_size = 12288 --- llm.hpp:442
+[W] no vision weights detected, vision disabled --- llm.hpp:448
+[V] qwen_image_2_1: layers = 32, hidden_size = 4096, context_dim = 4096 --- qwen_image_2_1.hpp:54
+[I] using VAE for encoding / decoding --- model_builders.cpp:210
+[V] Wan VAE convolution type: 3D --- wan_vae.hpp:1343
+[I] flash attention auto: Vulkan1 -> on (Vulkan NVIDIA RTX) --- flash_attn.cpp:78
+[I] conv2d direct auto: Vulkan1 -> on (probe: im2col 0.161 ms, direct 0.078 ms) --- conv_direct.cpp:82
+[I] conv3d direct auto: Vulkan1 -> on (probe: im2col 0.264 ms, direct 0.214 ms) --- conv_direct.cpp:82
+[V] validating model metadata --- diffusion_engine.cpp:1307
+[V] model metadata validated; weights will be prepared lazily --- diffusion_engine.cpp:1377
+[I] total params memory size = 15601.02MB (VRAM 7286.88MB, RAM 8314.15MB): text_encoders 7669.77MB(RAM), diffusion_model 7286.88MB(VRAM), vae 644.38MB(RAM), controlnet 0.00MB(N/A), extensions 0.00MB(N/A) --- diffusion_engine.cpp:1423
+[I] running in FLOW mode --- diffusion_engine.cpp:1478
+[I] generate_image 512x512 --- image.cpp:869
+[V] using 12 threads for model loading --- model_loader.cpp:190
+[I] Using 'qwen' preset for reference images --- diffusion_engine.cpp:3103
+[I] get_sigmas with Flux scheduler --- denoiser.hpp:1196
+[V] Flux scheduler: image_seq_len=1024, steps=20, mu=0.539, shift_terminal=0.020 --- denoiser.hpp:773
+[I] sampling using Euler method --- request.cpp:477
+[V] split prompt "<|im_start|>system\nComprehend and analyze the provided prompt.<|im_end|>\n" to 14 tokens ["<|im_start|>", "system", "Ċ", "Com", "preh", "end", "Ġand", "Ġanalyze", "Ġthe", "Ġprovided", "Ġprompt", ".", "<|im_end|>", "Ċ", ] --- bpe_tokenizer.cpp:245
+[V] parse '<|im_start|>system\nComprehend and analyze the provided prompt.<|im_end|>\n<|im_start|>user\na red apple on a table<|im_end|>\n<|im_start|>assistant\n' to [['<|im_start|>system\nComprehend and analyze the provided prompt.<|im_end|>\n<|im_start|>user\n', 1], ['a red apple on a table', 1], ['<|im_end|>\n<|im_start|>assistant\n', 1], ] --- conditioner.hpp:2181
+[V] split prompt "<|im_start|>system\nComprehend and analyze the provided prompt.<|im_end|>\n<|im_start|>user\n" to 17 tokens ["<|im_start|>", "system", "Ċ", "Com", "preh", "end", "Ġand", "Ġanalyze", "Ġthe", "Ġprovided", "Ġprompt", ".", "<|im_end|>", "Ċ", "<|im_start|>", "user", "Ċ", ] --- bpe_tokenizer.cpp:245
+[V] split prompt "a red apple on a table" to 6 tokens ["a", "Ġred", "Ġapple", "Ġon", "Ġa", "Ġtable", ] --- bpe_tokenizer.cpp:245
+[V] split prompt "<|im_end|>\n<|im_start|>assistant\n" to 5 tokens ["<|im_end|>", "Ċ", "<|im_start|>", "assistant", "Ċ", ] --- bpe_tokenizer.cpp:245
+[I] qwen3vl build cached graph cut plan done (taking 1 ms) --- ggml_graph_cut.cpp:1032
+[V] loading 397/399 tensors from /home/idaho/.local/share/muchai/models/shared/qwen-image-2.1/Qwen3VL-8B-Instruct-Q8_0.gguf --- model_loader.cpp:1130
+  |#                                                 |   5/397 -   0.00MB/s[K  |#####                                             |  38/397 - 888.62MB/s[K  |#########                                         |  69/397 -   1.89GB/s[K  |#############                                     |  96/397 -   2.02GB/s[K  |#################                                 | 134/397 -   2.26GB/s[K  |####################                              | 157/397 -   2.24GB/s[K  |########################                          | 188/397 -   2.30GB/s[K  |############################                      | 218/397 -   2.34GB/s[K  |################################                  | 252/397 -   2.38GB/s[K  |###################################               | 273/397 -   2.35GB/s[K  |#######################################           | 306/397 -   2.43GB/s[K  |###########################################       | 335/397 -   2.45GB/s[K  |###############################################   | 366/397 -   2.46GB/s[K  |##################################################| 395/397 -   2.47GB/s[K  |##################################################| 397/397 -   2.67GB/s[K
+[I] loading tensors completed, taking 2.80s (read: 2.65s, memcpy: 0.00s, convert: 0.00s, copy_to_backend: 0.00s) --- model_loader.cpp:1400
+[V] model manager prepared params backend buffers (7670.00 MB, 397 tensors, 8 blocks, RAM) on Vulkan_Host --- model_manager.cpp:490
+[V] model manager staged compute params (7669.75 MB, 397 tensors, 8 blocks) to Vulkan1, taking 1.41s --- model_manager.cpp:618
+[V] qwen3vl compute buffer size: 3.50 MB(VRAM) on Vulkan1 (peak across 1 segment) --- ggml_runner.cpp:1019
+[V] computing condition graph completed, taking 4336 ms --- conditioner.hpp:3287
+[V] split prompt "<|im_start|>system\nComprehend and analyze the provided prompt.<|im_end|>\n" to 14 tokens ["<|im_start|>", "system", "Ċ", "Com", "preh", "end", "Ġand", "Ġanalyze", "Ġthe", "Ġprovided", "Ġprompt", ".", "<|im_end|>", "Ċ", ] --- bpe_tokenizer.cpp:245
+[V] parse '<|im_start|>system\nComprehend and analyze the provided prompt.<|im_end|>\n<|im_start|>user\n <|im_end|>\n<|im_start|>assistant\n' to [['<|im_start|>system\nComprehend and analyze the provided prompt.<|im_end|>\n<|im_start|>user\n', 1], [' ', 1], ['<|im_end|>\n<|im_start|>assistant\n', 1], ] --- conditioner.hpp:2181
+[V] split prompt "<|im_start|>system\nComprehend and analyze the provided prompt.<|im_end|>\n<|im_start|>user\n" to 17 tokens ["<|im_start|>", "system", "Ċ", "Com", "preh", "end", "Ġand", "Ġanalyze", "Ġthe", "Ġprovided", "Ġprompt", ".", "<|im_end|>", "Ċ", "<|im_start|>", "user", "Ċ", ] --- bpe_tokenizer.cpp:245
+[V] split prompt " " to 1 tokens ["Ġ", ] --- bpe_tokenizer.cpp:245
+[V] split prompt "<|im_end|>\n<|im_start|>assistant\n" to 5 tokens ["<|im_end|>", "Ċ", "<|im_start|>", "assistant", "Ċ", ] --- bpe_tokenizer.cpp:245
+[I] qwen3vl build cached graph cut plan done (taking 2 ms) --- ggml_graph_cut.cpp:1032
+[V] computing condition graph completed, taking 91 ms --- conditioner.hpp:3287
+[I] get_learned_condition completed, taking 4.43s --- image.cpp:580
+[I] generating image: 1/1 - seed 42 --- image.cpp:920
+[I] qwen_image_2_1 build cached graph cut plan done (taking 3 ms) --- ggml_graph_cut.cpp:1032
+[V] loading 265/265 tensors from /home/idaho/.local/share/muchai/models/shared/qwen-image-2.1/qwen-image-2.1-Q8_0.gguf --- model_loader.cpp:1130
+  |#                                                 |   2/265 -   0.00MB/s[K  |#######                                           |  36/265 -   1.09GB/s[K  |############                                      |  59/265 -   1.74GB/s[K  |###############                                   |  77/265 -   2.13GB/s[K  |###################                               | 100/265 -   2.34GB/s[K  |#######################                           | 117/265 -   2.35GB/s[K  |###########################                       | 140/265 -   2.46GB/s[K  |##############################                    | 157/265 -   2.45GB/s[K  |###################################               | 181/265 -   2.55GB/s[K  |######################################            | 201/265 -   2.59GB/s[K  |##########################################        | 222/265 -   2.63GB/s[K  |#############################################     | 237/265 -   2.54GB/s[K  |##################################################| 261/265 -   2.62GB/s[K  |##################################################| 265/265 -   2.72GB/s[K
+[I] loading tensors completed, taking 2.62s (read: 2.17s, memcpy: 0.00s, convert: 0.00s, copy_to_backend: 0.28s) --- model_loader.cpp:1400
+[V] model manager prepared params backend buffers (7286.88 MB, 265 tensors, 8 blocks, VRAM) on Vulkan1 --- model_manager.cpp:490
+[V] qwen_image_2_1 compute buffer size: 261.09 MB(VRAM) on Vulkan1 (peak across 1 segment) --- ggml_runner.cpp:1019
+[I] qwen_image_2_1 build cached graph cut plan done (taking 3 ms) --- ggml_graph_cut.cpp:1032
+  |==>                                               |  1/20 -   4.93s/it - ETA 01:33[K[I] qwen_image_2_1 build cached graph cut plan done (taking 2 ms) --- ggml_graph_cut.cpp:1032
+[I] qwen_image_2_1 build cached graph cut plan done (taking 1 ms) --- ggml_graph_cut.cpp:1032
+  |=====>                                            |  2/20 -   1.98s/it - ETA 01:02[K  |=======>                                          |  3/20 -   1.98s/it - ETA 00:50[K  |==========>                                       |  4/20 -   1.98s/it - ETA 00:43[K  |============>                                     |  5/20 -   1.98s/it - ETA 00:38[K  |===============>                                  |  6/20 -   1.98s/it - ETA 00:34[K  |=================>                                |  7/20 -   1.98s/it - ETA 00:31[K  |====================>                             |  8/20 -   1.98s/it - ETA 00:28[K  |======================>                           |  9/20 -   1.98s/it - ETA 00:25[K  |=========================>                        | 10/20 -   1.98s/it - ETA 00:22[K  |===========================>                      | 11/20 -   1.98s/it - ETA 00:20[K  |==============================>                   | 12/20 -   1.98s/it - ETA 00:17[K  |================================>                 | 13/20 -   1.99s/it - ETA 00:15[K  |===================================>              | 14/20 -   1.99s/it - ETA 00:13[K  |=====================================>            | 15/20 -   1.99s/it - ETA 00:10[K  |========================================>         | 16/20 -   1.99s/it - ETA 00:08[K  |==========================================>       | 17/20 -   1.99s/it - ETA 00:06[K  |=============================================>    | 18/20 -   2.01s/it - ETA 00:04[K  |===============================================>  | 19/20 -  20.92s/it - ETA 00:03[K  |==================================================| 20/20 -  20.92s/it[K
+[I] sampling completed, taking 80.50s --- image.cpp:953
+[I] generating 1 latent images completed, taking 80.50s --- image.cpp:965
+[I] decoding 1 latents --- image.cpp:605
+[V] VAE decode tile size: 256x256 pixels (16x16 latent) --- vae.hpp:347
+[V] num tiles : 3, 3  --- tiling.cpp:178
+[V] processing 9 tiles --- tiling.cpp:179
+[I] wan_vae build cached graph cut plan done (taking 0 ms) --- ggml_graph_cut.cpp:1032
+[V] loading 128/238 tensors from /home/idaho/.local/share/muchai/models/shared/qwen-image-2.1/qwen_image_2.1_vae_bf16.safetensors --- model_loader.cpp:1130
+  |##                                                |   4/128 -   0.00MB/s[K  |#################################                 |  84/128 -   1.40GB/s[K  |##################################################| 128/128 -   1.18GB/s[K
+[I] loading tensors completed, taking 0.40s (read: 0.12s, memcpy: 0.00s, convert: 0.12s, copy_to_backend: 0.00s) --- model_loader.cpp:1400
+[V] model manager prepared params backend buffers (483.09 MB, 128 tensors, 1 blocks, RAM) on Vulkan_Host --- model_manager.cpp:490
+[V] model manager staged compute params (482.81 MB, 128 tensors, 1 blocks) to Vulkan1, taking 0.10s --- model_manager.cpp:618
+[V] wan_vae compute buffer size: 289.19 MB(VRAM) on Vulkan1 (peak across 1 segment) --- ggml_runner.cpp:1019
+  |=====>                                            | 1/9 -   1.46it/s[K  |===========>                                      | 2/9 -   6.29it/s[K  |================>                                 | 3/9 -   6.21it/s[K  |======================>                           | 4/9 -   6.29it/s[K  |===========================>                      | 5/9 -   6.29it/s[K  |=================================>                | 6/9 -   6.29it/s[K  |======================================>           | 7/9 -   6.33it/s[K  |============================================>     | 8/9 -   6.29it/s[K  |==================================================| 9/9 -   6.29it/s[K
+[V] computing vae decode graph completed, taking 1.97s --- vae.hpp:384
+[I] latent 1 decoded, taking 1.97s --- image.cpp:671
+[I] decode_first_stage completed, taking 1.97s --- image.cpp:675
+[I] generate_image completed in 86.99s --- image.cpp:1140
+[V] model manager released params backend buffers (7286.88 MB, 265 tensors, 8 blocks, VRAM) from Vulkan1 --- model_manager.cpp:1295
+[V] model manager released params backend buffers (8153.09 MB, 525 tensors, 9 blocks, RAM) from Vulkan_Host --- model_manager.cpp:1295
+[I] save result image 0 to '/tmp/claude-1000/-home-idaho-g-mst-muchai/a5dff533-89b8-42b9-a996-1861bfc89fd5/scratchpad/out/qwen21-defaults-512.png' (success) --- main.cpp:495
+[I] 1/1 images saved --- main.cpp:571
+# exit 0 wall 88.376021234 s

@@ -1,0 +1,121 @@
+# 2026-10-26T10:54:23+01:00 engine: stable-diffusion.cpp version unknown, commit e41fbcf
+# command: src-tauri/binaries/engine/sd-cli --diffusion-model /home/idaho/.local/share/muchai/models/shared/flux3/flux-3-image-klein-UD-Q4_K_XL.gguf --vae /home/idaho/.local/share/muchai/models/shared/flux2/flux2-vae.safetensors --llm /home/idaho/.local/share/muchai/models/shared/flux3/Qwen3VL-4B-Instruct-Q8_0.gguf --backend vulkan1 --vae-tiling --flash-attn auto\,diffusion=on -p a\ red\ apple\ on\ a\ table -W 512 -H 512 --steps 16 --cfg-scale 1.0 --sampling-method euler -v -o /tmp/claude-1000/-home-idaho-g-mst-muchai/a5dff533-89b8-42b9-a996-1861bfc89fd5/scratchpad/out/flux3-512.png
+[V] version: stable-diffusion.cpp version unknown, commit e41fbcf --- main.cpp:694
+ggml_vulkan: Found 2 Vulkan devices:
+ggml_vulkan: 0 = Intel(R) UHD Graphics 770 (ADL-S GT1) (Intel open-source Mesa driver) | uma: 1 | fp16: 1 | bf16: 0 | fp4: 0 | warp size: 32 | shared memory: 65536 | int dot: 0 | matrix cores: none
+ggml_vulkan: 1 = NVIDIA GeForce RTX 3060 (NVIDIA) | uma: 0 | fp16: 1 | bf16: 0 | fp4: 0 | warp size: 32 | shared memory: 49152 | int dot: 0 | matrix cores: KHR_coopmat
+load_backend: loaded Vulkan backend from /home/idaho/g/mst/muchai/src-tauri/binaries/engine/libggml-vulkan.so
+load_backend: loaded CPU backend from /home/idaho/g/mst/muchai/src-tauri/binaries/engine/libggml-cpu-alderlake.so
+[V] System Info: 
+   SSE3 = 1 |    SSSE3 = 1 |    AVX = 1 |    AVX_VNNI = 1 |    AVX2 = 1 |    F16C = 1 |    FMA = 1 |    BMI2 = 1 |    OPENMP = 1 |    REPACK = 1 |  --- main.cpp:695
+[V] using 12 threads for model loading --- model_loader.cpp:190
+[I] loading diffusion model from '/home/idaho/.local/share/muchai/models/shared/flux3/flux-3-image-klein-UD-Q4_K_XL.gguf' --- diffusion_engine.cpp:692
+[I] load /home/idaho/.local/share/muchai/models/shared/flux3/flux-3-image-klein-UD-Q4_K_XL.gguf using gguf format --- model_loader.cpp:216
+[V] init from '/home/idaho/.local/share/muchai/models/shared/flux3/flux-3-image-klein-UD-Q4_K_XL.gguf' --- model_loader.cpp:262
+[V] GGUF v3, tensor_count=359, metadata_kv_count=6 --- gguf_reader_ext.h:219
+[I] loading llm from '/home/idaho/.local/share/muchai/models/shared/flux3/Qwen3VL-4B-Instruct-Q8_0.gguf' --- diffusion_engine.cpp:749
+[I] load /home/idaho/.local/share/muchai/models/shared/flux3/Qwen3VL-4B-Instruct-Q8_0.gguf using gguf format --- model_loader.cpp:216
+[V] init from '/home/idaho/.local/share/muchai/models/shared/flux3/Qwen3VL-4B-Instruct-Q8_0.gguf' --- model_loader.cpp:262
+[V] GGUF v3, tensor_count=398, metadata_kv_count=32 --- gguf_reader_ext.h:219
+[I] loading vae from '/home/idaho/.local/share/muchai/models/shared/flux2/flux2-vae.safetensors' --- diffusion_engine.cpp:763
+[I] load /home/idaho/.local/share/muchai/models/shared/flux2/flux2-vae.safetensors using safetensors format --- model_loader.cpp:222
+[V] init from '/home/idaho/.local/share/muchai/models/shared/flux2/flux2-vae.safetensors', prefix = 'vae.' --- model_loader.cpp:290
+[I] Version: Flux.3 Image Klein  --- diffusion_engine.cpp:975
+[I] auto-fit plan: --- backend_fit.cpp:323
+[I]   devices: --- backend_fit.cpp:324
+[I]     Vulkan0      Intel(R) UHD Graphics 770 (ADL-S GT1) free  14304 MiB, budget  13792 MiB --- backend_fit.cpp:326
+[I]     Vulkan1      NVIDIA GeForce RTX 3060          free  12204 MiB, budget  11692 MiB --- backend_fit.cpp:326
+[I]     RAM          free  25133 MiB, params budget  22619 MiB --- backend_fit.cpp:333
+[I]   compute-device weight cache priority: diffusion > te > vae --- backend_fit.cpp:336
+[I]   components (params: compute device -> RAM -> other GPU -> disk): --- backend_fit.cpp:337
+[I]     DiT          params   3747 MiB, compute reserve  2048 MiB -> compute Vulkan1, params Vulkan1 --- backend_fit.cpp:346
+[I]     Conditioner  params   4076 MiB, compute reserve  2048 MiB -> compute Vulkan1, params Vulkan1 --- backend_fit.cpp:346
+[I]     VAE          params    320 MiB, compute reserve  1024 MiB -> compute Vulkan1, params Vulkan1 --- backend_fit.cpp:346
+[I] auto-fit: --backend "vulkan1" --- backend_fit.cpp:474
+[V] Initializing backend: Vulkan1 --- ggml_extend_backend.cpp:420
+[V] using 12 threads for model loading --- model_loader.cpp:190
+[I] Weight type stat:                      f32: 481  |    q8_0: 265  |    q2_K: 24   |    q3_K: 5    |    q4_K: 51   |    q5_K: 88   |    q6_K: 79   |     i32: 1    |    bf16: 14    --- diffusion_engine.cpp:1548
+[I] Conditioner weight type stat:          f32: 145  |    q8_0: 253   --- diffusion_engine.cpp:1549
+[I] Diffusion model weight type stat:      f32: 86   |    q8_0: 12   |    q2_K: 24   |    q3_K: 5    |    q4_K: 51   |    q5_K: 88   |    q6_K: 79   |    bf16: 14    --- diffusion_engine.cpp:1550
+[I] VAE weight type stat:                  f32: 250  |     i32: 1     --- diffusion_engine.cpp:1551
+[V] llm: num_layers = 36, vocab_size = 151936, hidden_size = 2560, intermediate_size = 9728 --- llm.hpp:442
+[V] flux3: hidden_size = 3072, context_dim = 20480, depth = 5, single_depth = 28, flow_map = true --- flux3.hpp:52
+[I] using VAE for encoding / decoding --- model_builders.cpp:210
+[I] vae decoder: ch = 128 --- auto_encoder_kl.hpp:529
+[I] flash attention auto: Vulkan1 -> on (Vulkan NVIDIA RTX) --- flash_attn.cpp:78
+[I] conv2d direct auto: Vulkan1 -> on (probe: im2col 0.160 ms, direct 0.079 ms) --- conv_direct.cpp:82
+[I] conv3d direct auto: Vulkan1 -> on (probe: im2col 0.255 ms, direct 0.183 ms) --- conv_direct.cpp:82
+[V] validating model metadata --- diffusion_engine.cpp:1307
+[V] model metadata validated; weights will be prepared lazily --- diffusion_engine.cpp:1377
+[I] total params memory size = 7988.73MB (VRAM 7988.73MB, RAM 0.00MB): text_encoders 4076.43MB(VRAM), diffusion_model 3747.86MB(VRAM), vae 164.43MB(VRAM), controlnet 0.00MB(N/A), extensions 0.00MB(N/A) --- diffusion_engine.cpp:1423
+[I] running in Flux.3 FLOW mode --- diffusion_engine.cpp:1488
+[I] generate_image 512x512 --- image.cpp:869
+[V] using 12 threads for model loading --- model_loader.cpp:190
+[I] Using 'flux2' preset for reference images --- diffusion_engine.cpp:3103
+[I] sampling using Euler method --- request.cpp:477
+[V] parse '<|im_start|>user\na red apple on a table<|im_end|>\n<|im_start|>assistant\n' to [['<|im_start|>user\n', 1], ['a red apple on a table', 1], ['<|im_end|>\n<|im_start|>assistant\n', 1], ] --- conditioner.hpp:2181
+[V] split prompt "<|im_start|>user\n" to 3 tokens ["<|im_start|>", "user", "Ċ", ] --- bpe_tokenizer.cpp:245
+[V] split prompt "a red apple on a table" to 6 tokens ["a", "Ġred", "Ġapple", "Ġon", "Ġa", "Ġtable", ] --- bpe_tokenizer.cpp:245
+[V] split prompt "<|im_end|>\n<|im_start|>assistant\n" to 5 tokens ["<|im_end|>", "Ċ", "<|im_start|>", "assistant", "Ċ", ] --- bpe_tokenizer.cpp:245
+[I] qwen3vl build cached graph cut plan done (taking 1 ms) --- ggml_graph_cut.cpp:1032
+[V] loading 353/398 tensors from /home/idaho/.local/share/muchai/models/shared/flux3/Qwen3VL-4B-Instruct-Q8_0.gguf --- model_loader.cpp:1130
+
+[I] loading tensors completed, taking 1.00s (read: 0.07s, memcpy: 0.00s, convert: 0.00s, copy_to_backend: 0.78s) --- model_loader.cpp:1400
+[V] model manager prepared params backend buffers (3667.28 MB, 353 tensors, 4 blocks, VRAM) on Vulkan1 --- model_manager.cpp:490
+[V] qwen3vl compute buffer size: 14.87 MB(VRAM) on Vulkan1 (peak across 1 segment) --- ggml_runner.cpp:1019
+[V] computing condition graph completed, taking 1141 ms --- conditioner.hpp:3287
+[I] get_learned_condition completed, taking 1.14s --- image.cpp:580
+[I] generating image: 1/1 - seed 42 --- image.cpp:920
+[I] flux3 build cached graph cut plan done (taking 1 ms) --- ggml_graph_cut.cpp:1032
+[V] loading 316/359 tensors from /home/idaho/.local/share/muchai/models/shared/flux3/flux-3-image-klein-UD-Q4_K_XL.gguf --- model_loader.cpp:1130
+
+[I] loading tensors completed, taking 0.80s (read: 0.06s, memcpy: 0.00s, convert: 0.00s, copy_to_backend: 0.64s) --- model_loader.cpp:1400
+[V] model manager prepared params backend buffers (3434.15 MB, 316 tensors, 4 blocks, VRAM) on Vulkan1 --- model_manager.cpp:490
+[V] flux3 compute buffer size: 213.89 MB(VRAM) on Vulkan1 (peak across 1 segment) --- ggml_runner.cpp:1019
+
+  |===>                                              |  1/16 -   1.55s/it - ETA 00:23[K
+  |======>                                           |  2/16 -   1.48it/s - ETA 00:15[K
+  |=========>                                        |  3/16 -   1.48it/s - ETA 00:12[K
+  |============>                                     |  4/16 -   1.48it/s - ETA 00:10[K
+  |===============>                                  |  5/16 -   1.48it/s - ETA 00:09[K
+  |==================>                               |  6/16 -   1.48it/s - ETA 00:08[K
+  |=====================>                            |  7/16 -   1.48it/s - ETA 00:07[K
+  |=========================>                        |  8/16 -   1.48it/s - ETA 00:06[K
+  |============================>                     |  9/16 -   1.48it/s - ETA 00:05[K
+  |===============================>                  | 10/16 -   1.48it/s - ETA 00:04[K
+  |==================================>               | 11/16 -   1.47it/s - ETA 00:03[K
+  |=====================================>            | 12/16 -   1.48it/s - ETA 00:02[K
+  |========================================>         | 13/16 -   1.48it/s - ETA 00:02[K
+  |===========================================>      | 14/16 -   1.48it/s - ETA 00:01[K
+  |==============================================>   | 15/16 -   1.47it/s - ETA 00:00[K
+  |==================================================| 16/16 -   1.47it/s[K
+[I] sampling completed, taking 11.71s --- image.cpp:953
+[I] generating 1 latent images completed, taking 11.71s --- image.cpp:965
+[I] decoding 1 latents --- image.cpp:605
+[V] VAE decode tile size: 256x256 pixels (16x16 latent) --- vae.hpp:347
+[V] num tiles : 3, 3  --- tiling.cpp:178
+[V] processing 9 tiles --- tiling.cpp:179
+[I] vae build cached graph cut plan done (taking 0 ms) --- ggml_graph_cut.cpp:1032
+[V] loading 140/251 tensors from /home/idaho/.local/share/muchai/models/shared/flux2/flux2-vae.safetensors --- model_loader.cpp:1130
+
+[I] loading tensors completed, taking 0.20s (read: 0.01s, memcpy: 0.00s, convert: 0.01s, copy_to_backend: 0.03s) --- model_loader.cpp:1400
+[V] model manager prepared params backend buffers ( 96.72 MB, 140 tensors, 1 blocks, VRAM) on Vulkan1 --- model_manager.cpp:490
+[V] vae compute buffer size: 176.13 MB(VRAM) on Vulkan1 (peak across 1 segment) --- ggml_runner.cpp:1019
+
+  |=====>                                            | 1/9 -   3.53it/s[K
+  |===========>                                      | 2/9 -  14.93it/s[K
+  |================>                                 | 3/9 -  14.71it/s[K
+  |======================>                           | 4/9 -  14.71it/s[K
+  |===========================>                      | 5/9 -  14.93it/s[K
+  |=================================>                | 6/9 -  14.71it/s[K
+  |======================================>           | 7/9 -  14.71it/s[K
+  |============================================>     | 8/9 -  14.93it/s[K
+  |==================================================| 9/9 -  14.71it/s[K
+[V] computing vae decode graph completed, taking 0.82s --- vae.hpp:384
+[I] latent 1 decoded, taking 0.83s --- image.cpp:671
+[I] decode_first_stage completed, taking 0.83s --- image.cpp:675
+[I] generate_image completed in 13.68s --- image.cpp:1140
+[V] model manager released params backend buffers (7198.14 MB, 809 tensors, 9 blocks, VRAM) from Vulkan1 --- model_manager.cpp:1295
+[I] save result image 0 to '/tmp/claude-1000/-home-idaho-g-mst-muchai/a5dff533-89b8-42b9-a996-1861bfc89fd5/scratchpad/out/flux3-512.png' (success) --- main.cpp:495
+[I] 1/1 images saved --- main.cpp:571
+# exit=0 wall=14.566s

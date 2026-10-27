@@ -49,8 +49,11 @@ What this release changes, and so what the checklist's "release-specific"
 items mean right now:
 
 - Engine `master-1015-e41fbcf`.
-- Qwen-Image 2.1 support. It both generates and edits: the reference image is
-  optional.
+- Qwen-Image 2.1 and Flux.3 klein support (recipes `qwen-image-2.1`, `flux3`).
+  Both generate and edit: the reference image is optional.
+- Catalog: Flux.3 klein UD-Q4_K_XL and Q8_0, Qwen-Image 2.1 Q4_K_M and Q8_0.
+  FLUX.1, Qwen-Image and Qwen-Image-Edit entries removed (their recipes stay).
+- `--llm_vision` is passed only with a reference image.
 - The gallery no longer records a reference image the run did not use.
 
 Qwen-Image 2.1 files used so far (install under
@@ -63,6 +66,16 @@ Qwen-Image 2.1 files used so far (install under
 | Text encoder (GGUF) | `Qwen3VL-8B-Instruct-Q8_0.gguf` (8.1 GB) | `Qwen/Qwen3-VL-8B-Instruct-GGUF` |
 | Vision (reference image) | `mmproj-Qwen3VL-8B-Instruct-F16.gguf` | `Qwen/Qwen3-VL-8B-Instruct-GGUF` |
 | Text encoder (int8, crashes on RADV) | `qwen3vl_8b_int8_convrot.safetensors` | `Comfy-Org/Qwen-Image-2.1`, `text_encoders/` |
+
+Flux.3 klein files (pooled under `shared/flux3/`):
+
+| Role | File | Source |
+| --- | --- | --- |
+| Diffusion | `flux-3-image-klein-UD-Q4_K_XL.gguf` (3.9 GB) | `unsloth/flux-3-image-klein-GGUF` |
+| VAE | `flux2-vae.safetensors` | `Comfy-Org/flux2-dev`, `split_files/vae/` |
+| Text encoder | `Qwen3VL-4B-Instruct-Q8_0.gguf` (4.3 GB) | `Qwen/Qwen3-VL-4B-Instruct-GGUF` |
+
+No vision file: Flux.3 reads the reference image through the VAE.
 
 When the next release starts, replace this section; keep the results below.
 
@@ -116,8 +129,22 @@ RTX 3060 12 GB (`Vulkan1`, NVIDIA 615.71.10), 31 GB RAM. Every run used
   `test-reports/desktop-rtx3060-int8enc-sigbus-backtrace.txt`). It also fails on
   the laptop (SIGSEGV, also in `ggml_backend_vk_graph_compute`), so it is not
   specific to RADV. `--backend te=cpu` was not tried here.
+- Qwen-Image 2.1 at the new recipe defaults (20 steps, CFG 6.0, euler),
+  512x512, no vision file: exit 0, sampling 80.50 s, wall 88.4 s, clean apple
+  (`desktop-rtx3060-qwen-image-2.1-defaults-512x512-20steps-cfg6.log`).
+- Flux.3 klein UD-Q4_K_XL + flux2 VAE + Qwen3-VL-4B Q8_0, `--cfg-scale 1.0`,
+  `euler`, no vision file. Engine prints `Version: Flux.3 Image Klein` and
+  `running in Flux.3 FLOW mode`; auto-fit put everything on `Vulkan1`.
+
+  | Run | Exit | Sampling | Wall | Image |
+  | --- | --- | --- | --- | --- |
+  | 256x256, 4 steps | 0 | 1.82 s | 4.8 s | apple |
+  | 512x512, 16 steps | 0 | 11.71 s | 14.6 s | clean apple |
+  | 512x512, 16 steps, `--ref-image` (the 512 apple), "make the apple green" | 0 | 24.31 s | 27.8 s | same apple, green |
+
 - Not run: the gallery check with a non-edit model, and the AppImage check. Both
-  need the app's window.
+  need the app's window. Not downloaded or run: Flux.3 Q8_0, Qwen-Image 2.1
+  Q4_K_M.
 
 ## Checklist for a new machine or release
 
