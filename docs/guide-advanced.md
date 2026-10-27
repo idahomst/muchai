@@ -40,20 +40,20 @@ community and reliable results.
 **Z-Image** — a recent, small, guidance-distilled model. Eight steps at CFG 1.
 Very fast for its quality; good general-purpose choice on limited VRAM.
 
-**FLUX.1** — excellent prompt adherence and legible text in images. Comes in two
-profiles: *schnell* is distilled to four steps, *dev* and *krea* want about
-twenty. Both run at CFG 1.
+**FLUX.2** — four steps at CFG 1, strong text rendering, and the *klein*
+variants are small enough to be practical.
 
-**FLUX.2** — the newest of the line. Four steps at CFG 1, strong text rendering,
-and the *klein* variants are small enough to be practical.
+**Flux.3 klein** — the newest FLUX. Sixteen steps at CFG 1. It both generates
+and edits: give it a reference image and it changes that image instead.
 
-**Qwen-Image** — very strong at text, including non-Latin scripts, and at
-following long, structured prompts. Uses real guidance, at a low CFG of 2.5.
+**Qwen-Image 2.1** — very strong at text, including non-Latin scripts, and at
+following long, structured prompts. Like Flux.3 it both generates and edits.
+Uses real guidance, at CFG 6.
 
-**Qwen-Image-Edit** — the editing family. It takes an existing image plus an
-instruction. Note that neither *Qwen-Image 2512* nor the *Layered* variants are
-editors, despite the similar names; if you want editing, the model's family must
-be `qwen-image-edit`.
+**Older families.** FLUX.1, Qwen-Image, Qwen-Image-Edit and FLUX.1 Kontext are
+no longer in the catalog, but models you already have keep working, and you
+can still add them by URL. Note that neither *Qwen-Image 2512* nor the
+*Layered* variants are editors, despite the similar names.
 
 ## Quantization
 
@@ -127,12 +127,12 @@ which is how you isolate the effect of changing one other setting.
 **Batch count** — how many images per run. Each one costs the full generation
 time.
 
-**The turbo families invert the usual advice.** FLUX.1, FLUX.2 and Z-Image are
+**The turbo families invert the usual advice.** FLUX.1, FLUX.2, Flux.3 and Z-Image are
 guidance-distilled: guidance is baked into the weights, so they run at **CFG 1**
 and **ignore the negative prompt entirely**. Turning CFG up on one of them does
 not make it follow the prompt harder, it degrades the image. Only SD 1.5 and SDXL
 use a conventional CFG around 7; Qwen-Image uses real guidance but wants a low
-2.5.
+2.5, and Qwen-Image 2.1 wants 6.
 
 Rather than memorise this, use **Use recommended settings**, which fills in the
 values known to work for the selected model:
@@ -144,9 +144,11 @@ values known to work for the selected model:
 | FLUX.1 dev / krea | 20 | 1.0 | Euler | 1024² |
 | FLUX.1 schnell | 4 | 1.0 | Euler | 1024² |
 | FLUX.2 | 4 | 1.0 | Euler | 1024² |
+| Flux.3 klein | 16 | 1.0 | Euler | 1024² |
 | Z-Image | 8 | 1.0 | Euler | 1024² |
 | Qwen-Image | 20 | 2.5 | Euler | 1024² |
 | Qwen-Image-Edit | 20 | 2.5 | Euler | from your image |
+| Qwen-Image 2.1 | 20 | 6.0 | Euler | 1024², or from your image |
 
 The button leaves width and height alone when a reference image is loaded — an
 edit takes its size from the input.
@@ -173,23 +175,23 @@ output quality drops for no other reason.
 
 ## Instruction editing in depth
 
-Editing is a separate mode, not a parameter: it requires a model from the
-`qwen-image-edit` family. Select one and an **Image to edit** panel appears; the
-prompt box becomes **Instruction**.
+Editing needs a model that can read a reference image: Flux.3 klein, Qwen-Image
+2.1, or the older Qwen-Image-Edit and FLUX.1 Kontext. Select one and an **Image
+to edit** panel appears. Attach an image and the prompt box becomes
+**Instruction**; leave it empty and Flux.3 and Qwen-Image 2.1 generate from text
+as usual.
 
 The instruction must describe a *change*. "Make the sky stormy" edits the sky.
 "A house under a stormy sky" is a complete image description, so you get a new
 image. This single distinction accounts for most disappointing first edits.
 
-**Editing is expensive, and worth budgeting for.** A reference image makes each
-step roughly 2.25× the work of a plain generation. On a 12 GB RTX 3060 with a
-quantized Qwen-Image-Edit model, a single step took around 41 seconds — so a
-20-step edit is several minutes, not a keystroke. Your hardware will differ, but
-the ratio holds: expect edits to cost multiples of what generation costs.
+**Editing costs more than generating.** A reference image adds to the work of
+every step. On a 12 GB RTX 3060, a 512×512 Flux.3 klein edit took about 24
+seconds of sampling against 12 for the same image from text. The older
+Qwen-Image-Edit is far slower, around 41 seconds a step on that card.
 
-Start from 20 steps, CFG 2.5, Euler — the values in stable-diffusion.cpp's own
-documentation for this family, and what **Use recommended settings** applies.
-Output size is matched to your input image automatically. An edited result can be
+**Use recommended settings** applies each family's values. Output size is
+matched to your input image automatically. An edited result can be
 fed straight back in as the next input, which is usually better than trying to
 express two changes in one instruction.
 

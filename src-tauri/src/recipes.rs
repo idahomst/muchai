@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 /// the `custom` recipe is not a base family. Keep in sync with
 /// `family_defaults` below and with `catalog::validate`.
 pub const FAMILIES: &[&str] = &[
-    "sd15", "sdxl", "sd3", "flux1", "flux1-kontext", "flux2", "qwen-image", "qwen-image-edit",
-    "z-image",
+    "sd15", "sdxl", "sd3", "flux1", "flux1-kontext", "flux2", "flux3", "qwen-image",
+    "qwen-image-edit", "qwen-image-2.1", "z-image",
 ];
 
 /// True when models of this family are instruction editors — read off the
@@ -161,8 +161,13 @@ pub fn detect(recipe: &ModelRecipe, filenames: &[String]) -> DetectedComponents 
     DetectedComponents { assignments }
 }
 
-/// Pick the family that best explains this file set: most required roles matched,
-/// then most total roles matched. None if no recipe matches any required role.
+/// Pick the family that best explains this file set: one that recognises the
+/// diffusion model first, then most required roles matched, then most total
+/// roles matched. None if no recipe matches any required role.
+///
+/// The diffusion model comes first because a pasted URL is detected from that
+/// one filename, and every Qwen-encoded family's `"qwen"` encoder pattern
+/// matches a Qwen-Image checkpoint as well: one role each, a tie.
 ///
 /// `max_by_key` returns the *last* maximum, so a tie is settled by recipe order
 /// — which is not a meaningful ranking. Two recipes must therefore never be
@@ -178,7 +183,9 @@ pub fn detect_best(filenames: &[String]) -> Option<(ModelRecipe, DetectedCompone
             (r, d)
         })
         .filter(|(r, d)| d.required_matched(r) > 0)
-        .max_by_key(|(r, d)| (d.required_matched(r), d.assignments.len()))
+        .max_by_key(|(r, d)| {
+            (d.get(ComponentRole::Diffusion).is_some(), d.required_matched(r), d.assignments.len())
+        })
 }
 
 fn role(role: ComponentRole, required: bool, patterns: &[&'static str]) -> RoleSpec {
@@ -210,8 +217,17 @@ pub fn recipes() -> Vec<ModelRecipe> {
                 // checkpoint does, and would then tie with the flux1-kontext
                 // recipe on required roles — a tie `detect_best` settles by
                 // list position. Excluding it here decides the match on the
-                // filename instead, wherever either recipe sits.
-                role_not(ComponentRole::Diffusion, true, &["flux1", "flux-1", "flux"], &["kontext"]),
+                // filename instead, wherever either recipe sits. The same goes
+                // for FLUX.2 and Flux.3 checkpoints, which all say "flux".
+                role_not(
+                    ComponentRole::Diffusion,
+                    true,
+                    &["flux1", "flux-1", "flux"],
+                    &[
+                        "kontext", "flux2", "flux-2", "flux.2", "flux_2", "flux3", "flux-3", "flux.3",
+                        "flux_3",
+                    ],
+                ),
                 role(ComponentRole::T5xxl, true, &["t5xxl", "t5-xxl", "t5"]),
                 role(ComponentRole::ClipL, true, &["clip_l", "clip-l"]),
                 role(ComponentRole::Vae, true, &["ae.", "vae"]),
@@ -349,7 +365,14 @@ pub fn recipes() -> Vec<ModelRecipe> {
                 // `"qwen_image"` matches `qwen_image_vae.safetensors` more
                 // strongly than `"vae"` does, so without the exclusion the VAE
                 // becomes the diffusion model on any folder that holds both.
-                role_not(ComponentRole::Diffusion, true, &["qwen-image", "qwen_image", "qwen"], &["vae"]),
+                // Edit and 2.1 checkpoints say "qwen-image" too; excluding them
+                // keeps a lone pasted file from tying with its own family.
+                role_not(
+                    ComponentRole::Diffusion,
+                    true,
+                    &["qwen-image", "qwen_image", "qwen"],
+                    &["vae", "edit", "image-2.1", "image_2.1", "image-2_1", "image_2_1"],
+                ),
                 // The mmproj shares the encoder's name up to a suffix. This
                 // family has no vision slot, but the shared pool it reads from
                 // holds one for qwen-image-edit.
@@ -464,7 +487,10 @@ pub fn recipes() -> Vec<ModelRecipe> {
             name: "FLUX.2 (klein / dev)",
             edits_images: false,
             roles: vec![
-                role(ComponentRole::Diffusion, true, &["flux2", "flux-2", "flux.2"]),
+                // `flux2-vae.safetensors` says "flux2" as plainly as a
+                // checkpoint does. Flux.3 ships that same VAE, so without the
+                // exclusion a Flux.3 folder fills every flux2 role and ties.
+                role_not(ComponentRole::Diffusion, true, &["flux2", "flux-2", "flux.2", "flux_2"], &["vae"]),
                 role(ComponentRole::Llm, true, &["qwen3", "qwen", "llm"]),
                 role(ComponentRole::Vae, true, &["vae", "ae."]),
             ],
@@ -489,6 +515,100 @@ pub fn recipes() -> Vec<ModelRecipe> {
                     url: "https://huggingface.co/Comfy-Org/flux2-dev/resolve/main/split_files/vae/flux2-vae.safetensors",
                     size_bytes: 336_213_556,
                     filename: "flux2-vae.safetensors",
+                },
+            ],
+        },
+        ModelRecipe {
+            family: "flux3",
+            // Own pool rather than flux2's, although the VAE is the same file:
+            // its Qwen3-VL encoder next to flux2's Qwen3 would leave the pool's
+            // "qwen3" pattern match to whichever `read_dir` lists first.
+            pool_family: "flux3",
+            name: "Flux.3 (klein)",
+            // Up to 10 reference images. They go through the VAE, not the
+            // text encoder, so there is no vision tower to fetch.
+            edits_images: true,
+            roles: vec![
+                role_not(ComponentRole::Diffusion, true, &["flux3", "flux-3", "flux.3", "flux_3"], &["vae"]),
+                role_not(
+                    ComponentRole::Llm,
+                    true,
+                    &["qwen3vl", "qwen3-vl", "qwen3_vl", "qwen3", "qwen", "llm"],
+                    &["mmproj", "vision"],
+                ),
+                role(ComponentRole::Vae, true, &["vae", "ae."]),
+            ],
+            // Neither flag: the engine identifies the checkpoint ("Version:
+            // Flux.3 Image Klein" → "running in Flux.3 FLOW mode"), and that is
+            // how it was run on the RTX 3060 on engine master-1015-e41fbcf.
+            vae_format: None,
+            prediction: None,
+            shared: vec![
+                SharedComponent {
+                    role: ComponentRole::Llm,
+                    url: "https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct-GGUF/resolve/main/Qwen3VL-4B-Instruct-Q8_0.gguf",
+                    size_bytes: 4_280_406_144,
+                    filename: "Qwen3VL-4B-Instruct-Q8_0.gguf",
+                },
+                SharedComponent {
+                    // The FLUX.2 autoencoder; the same download as flux2's.
+                    // BFL's own repos are gated.
+                    role: ComponentRole::Vae,
+                    url: "https://huggingface.co/Comfy-Org/flux2-dev/resolve/main/split_files/vae/flux2-vae.safetensors",
+                    size_bytes: 336_213_556,
+                    filename: "flux2-vae.safetensors",
+                },
+            ],
+        },
+        ModelRecipe {
+            family: "qwen-image-2.1",
+            // Not pooled with qwen-image: a different encoder (Qwen3-VL-8B, not
+            // Qwen2.5-VL-7B) and a different VAE.
+            pool_family: "qwen-image-2.1",
+            name: "Qwen-Image 2.1",
+            edits_images: true,
+            roles: vec![
+                // The VAE is `qwen_image_2.1_vae_bf16.safetensors`.
+                role_not(
+                    ComponentRole::Diffusion,
+                    true,
+                    &["qwen-image-2.1", "qwen_image_2.1", "qwen-image-2_1", "qwen_image_2_1"],
+                    &["vae"],
+                ),
+                role_not(
+                    ComponentRole::Llm,
+                    true,
+                    &["qwen3vl", "qwen3-vl", "qwen3_vl", "llm"],
+                    &["mmproj", "vision"],
+                ),
+                // Read only when a reference image is attached.
+                role(ComponentRole::LlmVision, true, &["mmproj", "llm_vision", "vision"]),
+                role(ComponentRole::Vae, true, &["vae", "ae."]),
+            ],
+            // Neither flag, as run on the RTX 3060 and the 8060S.
+            vae_format: None,
+            prediction: None,
+            shared: vec![
+                SharedComponent {
+                    // GGUF only. Comfy-Org's int8 safetensors encoder crashes
+                    // the Vulkan backend in the first text-encoder graph
+                    // (SIGBUS on the RTX 3060, SIGSEGV on the 8060S).
+                    role: ComponentRole::Llm,
+                    url: "https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF/resolve/main/Qwen3VL-8B-Instruct-Q8_0.gguf",
+                    size_bytes: 8_709_519_456,
+                    filename: "Qwen3VL-8B-Instruct-Q8_0.gguf",
+                },
+                SharedComponent {
+                    role: ComponentRole::LlmVision,
+                    url: "https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-8B-Instruct-F16.gguf",
+                    size_bytes: 1_159_029_824,
+                    filename: "mmproj-Qwen3VL-8B-Instruct-F16.gguf",
+                },
+                SharedComponent {
+                    role: ComponentRole::Vae,
+                    url: "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main/vae/qwen_image_2.1_vae_bf16.safetensors",
+                    size_bytes: 675_509_688,
+                    filename: "qwen_image_2.1_vae_bf16.safetensors",
                 },
             ],
         },
@@ -594,6 +714,8 @@ pub fn family_defaults(family: &str, diffusion_filename: Option<&str>) -> Option
         // takes its size from the reference image (see `imagedim::suggest_size`).
         "flux1-kontext" => Some(d(20, 1.0, Sampler::Euler, 1024, 1024)),
         "flux2" => Some(d(4, 1.0, Sampler::Euler, 1024, 1024)),
+        // Klein is the 16-step distilled checkpoint, guidance off.
+        "flux3" => Some(d(16, 1.0, Sampler::Euler, 1024, 1024)),
         "sd3" => {
             // SD3.5 Large Turbo is timestep-distilled: it bakes guidance in, so
             // CFG must be ~1.0 and steps low. Applying the non-turbo default
@@ -612,6 +734,8 @@ pub fn family_defaults(family: &str, diffusion_filename: Option<&str>) -> Option
         // fallback: an edit run overrides width/height from the reference
         // image's aspect ratio (see `imagedim::suggest_size`).
         "qwen-image-edit" => Some(d(20, 2.5, Sampler::Euler, 1024, 1024)),
+        // unsloth's stable-diffusion.cpp example for the GGUF.
+        "qwen-image-2.1" => Some(d(20, 6.0, Sampler::Euler, 1024, 1024)),
         "z-image" => Some(d(8, 1.0, Sampler::Euler, 1024, 1024)),
         "sdxl" => Some(d(28, 7.0, Sampler::EulerA, 1024, 1024)),
         "sd15" => Some(d(20, 7.0, Sampler::EulerA, 512, 512)),
@@ -886,6 +1010,169 @@ mod tests {
         let vae = r.shared.iter().find(|s| s.role == ComponentRole::Vae).unwrap();
         assert_eq!(vae.filename, "flux2-vae.safetensors");
         assert_eq!(vae.size_bytes, 336_213_556);
+    }
+
+    fn names(files: &[&str]) -> Vec<String> {
+        files.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn required_roles(r: &ModelRecipe) -> Vec<ComponentRole> {
+        r.roles.iter().filter(|s| s.required).map(|s| s.role).collect()
+    }
+
+    /// Mirrors the stack run on the RTX 3060 (engine master-1015-e41fbcf):
+    /// generation and a reference-image edit, with neither `--vae-format` nor
+    /// `--prediction` and no vision tower. The reference image goes through the
+    /// VAE, not the encoder, so an mmproj would only cost a download.
+    #[test]
+    fn flux3_recipe_matches_the_tested_stack() {
+        let r = recipe_for("flux3").expect("flux3 recipe must exist");
+        assert!(r.edits_images, "Flux.3 klein edits as well as generates");
+        assert_eq!(r.pool_family, "flux3");
+        assert_eq!((r.vae_format, r.prediction), (None, None));
+        assert_eq!(
+            required_roles(&r),
+            vec![ComponentRole::Diffusion, ComponentRole::Llm, ComponentRole::Vae]
+        );
+        let llm = r.shared.iter().find(|s| s.role == ComponentRole::Llm).unwrap();
+        assert_eq!(
+            llm.url,
+            "https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct-GGUF/resolve/main/Qwen3VL-4B-Instruct-Q8_0.gguf"
+        );
+        assert_eq!(llm.filename, "Qwen3VL-4B-Instruct-Q8_0.gguf");
+        assert_eq!(llm.size_bytes, 4_280_406_144);
+        // Flux.3 ships the FLUX.2 autoencoder: same download as flux2's.
+        let vae = r.shared.iter().find(|s| s.role == ComponentRole::Vae).unwrap();
+        let flux2 = recipe_for("flux2").unwrap();
+        let flux2_vae = flux2.shared.iter().find(|s| s.role == ComponentRole::Vae).unwrap();
+        assert_eq!((vae.url, vae.filename, vae.size_bytes), (flux2_vae.url, flux2_vae.filename, flux2_vae.size_bytes));
+    }
+
+    /// Mirrors the stack run on both machines. The encoder must be a GGUF: the
+    /// int8 safetensors one (`qwen3vl_8b_int8_convrot.safetensors`) crashed the
+    /// Vulkan backend on the RTX 3060 (SIGBUS) and on the 8060S (SIGSEGV).
+    #[test]
+    fn qwen_image_2_1_recipe_matches_the_tested_stack() {
+        let r = recipe_for("qwen-image-2.1").expect("qwen-image-2.1 recipe must exist");
+        assert!(r.edits_images, "Qwen-Image 2.1 edits as well as generates");
+        assert_eq!(r.pool_family, "qwen-image-2.1");
+        assert_eq!((r.vae_format, r.prediction), (None, None));
+        assert_eq!(
+            required_roles(&r),
+            vec![
+                ComponentRole::Diffusion,
+                ComponentRole::Llm,
+                ComponentRole::LlmVision,
+                ComponentRole::Vae
+            ]
+        );
+        let get = |role| r.shared.iter().find(|s| s.role == role).unwrap();
+        let llm = get(ComponentRole::Llm);
+        assert_eq!(
+            llm.url,
+            "https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF/resolve/main/Qwen3VL-8B-Instruct-Q8_0.gguf"
+        );
+        assert_eq!((llm.filename, llm.size_bytes), ("Qwen3VL-8B-Instruct-Q8_0.gguf", 8_709_519_456));
+        let vision = get(ComponentRole::LlmVision);
+        assert_eq!(
+            vision.url,
+            "https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-8B-Instruct-F16.gguf"
+        );
+        assert_eq!(
+            (vision.filename, vision.size_bytes),
+            ("mmproj-Qwen3VL-8B-Instruct-F16.gguf", 1_159_029_824)
+        );
+        let vae = get(ComponentRole::Vae);
+        assert_eq!(
+            vae.url,
+            "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main/vae/qwen_image_2.1_vae_bf16.safetensors"
+        );
+        assert_eq!((vae.filename, vae.size_bytes), ("qwen_image_2.1_vae_bf16.safetensors", 675_509_688));
+    }
+
+    /// The pool directories hold exactly these sets. Every file must land in
+    /// its own slot whatever order `read_dir` lists them in.
+    #[test]
+    fn the_new_families_detect_their_own_file_sets_in_any_order() {
+        let flux3 = names(&[
+            "flux-3-image-klein-UD-Q4_K_XL.gguf",
+            "Qwen3VL-4B-Instruct-Q8_0.gguf",
+            "flux2-vae.safetensors",
+        ]);
+        let qwen21 = names(&[
+            "qwen-image-2.1-Q8_0.gguf",
+            "Qwen3VL-8B-Instruct-Q8_0.gguf",
+            "mmproj-Qwen3VL-8B-Instruct-F16.gguf",
+            "qwen_image_2.1_vae_bf16.safetensors",
+        ]);
+        for (set, family) in [(flux3, "flux3"), (qwen21, "qwen-image-2.1")] {
+            for files in [set.clone(), set.iter().rev().cloned().collect()] {
+                let (r, d) = detect_best(&files).expect("detectable");
+                assert_eq!(r.family, family, "{files:?}");
+                assert_eq!(d.get(ComponentRole::Diffusion), Some(set[0].as_str()), "{files:?}");
+                assert_eq!(d.get(ComponentRole::Llm), Some(set[1].as_str()), "{files:?}");
+                assert_eq!(d.get(ComponentRole::Vae), set.last().map(String::as_str), "{files:?}");
+                assert_eq!(d.required_matched(&r), required_roles(&r).len(), "{files:?}");
+            }
+        }
+    }
+
+    /// `flux2-vae.safetensors` says "flux2" as plainly as a FLUX.2 checkpoint
+    /// does, so without an exclusion flux2 fills all three of its roles from a
+    /// Flux.3 folder and ties with flux3 — a tie `detect_best` settles by list
+    /// position.
+    #[test]
+    fn the_flux2_vae_is_never_a_flux2_checkpoint() {
+        let flux3 = names(&[
+            "flux2-vae.safetensors",
+            "flux-3-image-klein-UD-Q4_K_XL.gguf",
+            "Qwen3VL-4B-Instruct-Q8_0.gguf",
+        ]);
+        let d = detect(&recipe_for("flux2").unwrap(), &flux3);
+        assert_eq!(d.get(ComponentRole::Diffusion), None);
+    }
+
+    /// A pasted URL is detected from one filename. The older families' broad
+    /// patterns ("flux", "qwen_image") match these too and would tie.
+    #[test]
+    fn a_lone_new_checkpoint_is_not_filed_under_an_older_family() {
+        for (file, family) in [
+            ("flux-3-image-klein-Q8_0.gguf", "flux3"),
+            ("FLUX.3-image-klein.safetensors", "flux3"),
+            ("flux3_klein_fp8.safetensors", "flux3"),
+            ("qwen-image-2.1-Q4_K_M.gguf", "qwen-image-2.1"),
+            ("Qwen_Image_2.1-Q8_0.gguf", "qwen-image-2.1"),
+            // The older families keep their own files.
+            ("flux1-dev-Q4_K_S.gguf", "flux1"),
+            ("flux-2-klein-4b-Q4_0.gguf", "flux2"),
+            ("qwen-image-2512-Q2_K.gguf", "qwen-image"),
+            ("qwen-image-edit-2511-Q3_K_S.gguf", "qwen-image-edit"),
+        ] {
+            let (r, _) = detect_best(&names(&[file])).expect(file);
+            assert_eq!(r.family, family, "{file}");
+            for other in recipes().iter().filter(|o| o.family != family && o.family != "custom") {
+                assert_eq!(
+                    detect(other, &names(&[file])).get(ComponentRole::Diffusion),
+                    None,
+                    "{file} must not be a {} checkpoint at all",
+                    other.family
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn family_defaults_for_the_new_families_follow_their_model_cards() {
+        // Klein is the 16-step distilled checkpoint, guidance off.
+        let flux3 = family_defaults("flux3", None).unwrap();
+        assert_eq!((flux3.steps, flux3.cfg_scale), (16, 1.0));
+        assert_eq!(flux3.sampler, crate::types::Sampler::Euler);
+        assert_eq!((flux3.width, flux3.height), (1024, 1024));
+        // unsloth's stable-diffusion.cpp example: 20 steps, cfg 6.0, euler.
+        let qwen21 = family_defaults("qwen-image-2.1", None).unwrap();
+        assert_eq!((qwen21.steps, qwen21.cfg_scale), (20, 6.0));
+        assert_eq!(qwen21.sampler, crate::types::Sampler::Euler);
+        assert_eq!((qwen21.width, qwen21.height), (1024, 1024));
     }
 
     #[test]

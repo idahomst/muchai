@@ -477,21 +477,45 @@ mod tests {
         // Tier floor + ceiling present.
         assert!(entries.iter().any(|e| e.recommended_vram_mb <= 4096), "need an ultra-light entry");
         assert!(entries.iter().any(|e| e.recommended_vram_mb > 16000), "need a 24GB-tier entry");
-        // Every engine family represented. `sd3` is intentionally excluded: the
-        // only ungated SD3.5 GGUFs (city96 lineage) decode to a degenerate
-        // constant latent ("blue square") under the pinned engine, so we ship no
-        // SD3.5 catalog entry. The sd3 recipe stays for manual multi-file adds.
-        for fam in ["sd15", "sdxl", "flux1", "flux2", "qwen-image", "qwen-image-edit", "z-image"] {
+        // The families on offer. `sd3` is intentionally excluded: the only
+        // ungated SD3.5 GGUFs (city96 lineage) decode to a degenerate constant
+        // latent ("blue square") under the pinned engine, so we ship no SD3.5
+        // catalog entry. The sd3 recipe stays for manual multi-file adds.
+        for fam in ["sd15", "sdxl", "flux2", "flux3", "qwen-image-2.1", "z-image"] {
             assert!(entries.iter().any(|e| e.family == fam), "family {fam} missing from catalog");
         }
-        // The edit entry must not carry its own `shared` overrides: those land
+        // Superseded by Flux.3 and Qwen-Image 2.1. Their recipes stay, so an
+        // installed copy keeps working and can still be added by URL.
+        for fam in ["flux1", "flux1-kontext", "qwen-image", "qwen-image-edit"] {
+            assert!(!entries.iter().any(|e| e.family == fam), "{fam} is no longer offered");
+            assert!(crate::recipes::recipe_for(fam).is_some(), "{fam} must still load");
+        }
+        // An edit entry must not carry its own `shared` overrides: those land
         // in the model folder, un-pooled, and would duplicate the encoder the
-        // recipe already pools under shared/qwen-image.
-        let edit = entries
-            .iter()
-            .find(|e| e.family == "qwen-image-edit")
-            .expect("an edit entry ships");
-        assert!(edit.shared.is_empty(), "the edit entry's parts come from the recipe");
+        // recipe already pools.
+        let edits: Vec<_> =
+            entries.iter().filter(|e| crate::recipes::is_edit_family(&e.family)).collect();
+        assert!(!edits.is_empty(), "an edit entry ships");
+        for e in edits {
+            assert!(e.shared.is_empty(), "{}: the edit entry's parts come from the recipe", e.id);
+        }
+    }
+
+    /// "Edit this image" with no edit model installed opens the catalog at
+    /// this id. A removed entry would open it at nothing.
+    #[test]
+    fn the_frontends_edit_entry_exists_and_edits() {
+        let svelte = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../src/lib/components/ImagePreview.svelte"
+        ))
+        .unwrap();
+        let start = svelte.find("EDIT_CATALOG_ID = \"").expect("EDIT_CATALOG_ID is declared") + 19;
+        let id = &svelte[start..start + svelte[start..].find('"').unwrap()];
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/resources/catalog.json");
+        let entries = parse_catalog(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let entry = entries.iter().find(|e| e.id == id).unwrap_or_else(|| panic!("no catalog entry {id}"));
+        assert!(crate::recipes::is_edit_family(&entry.family), "{id} cannot edit");
     }
 
     #[test]

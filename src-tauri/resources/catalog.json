@@ -69,21 +69,6 @@
       "recommended_vram_mb": 6144
     },
     {
-      "id": "flux1-schnell-q2k",
-      "name": "FLUX.1 schnell (GGUF Q2_K)",
-      "family": "flux1",
-      "license": "Apache-2.0",
-      "source_url": "https://huggingface.co/city96/FLUX.1-schnell-gguf",
-      "diffusion": {
-        "url": "https://huggingface.co/city96/FLUX.1-schnell-gguf/resolve/main/flux1-schnell-Q2_K.gguf",
-        "filename": "flux1-schnell-Q2_K.gguf",
-        "size_bytes": 4010296352
-      },
-      "shared": [],
-      "min_vram_mb": 4096,
-      "recommended_vram_mb": 6144
-    },
-    {
       "id": "z-image-turbo-q4k",
       "name": "Z-Image Turbo (GGUF Q4_K)",
       "family": "z-image",
@@ -129,30 +114,45 @@
       "recommended_vram_mb": 8192
     },
     {
-      "id": "flux1-schnell-q4ks",
-      "name": "FLUX.1 schnell (GGUF Q4_K_S)",
-      "family": "flux1",
-      "license": "Apache-2.0",
-      "source_url": "https://huggingface.co/city96/FLUX.1-schnell-gguf",
+      "id": "flux3-klein-q4",
+      "name": "Flux.3 klein (GGUF UD-Q4_K_XL)",
+      "family": "flux3",
+      "license": "flux-kommunity-license",
+      "source_url": "https://huggingface.co/unsloth/flux-3-image-klein-GGUF",
       "diffusion": {
-        "url": "https://huggingface.co/city96/FLUX.1-schnell-gguf/resolve/main/flux1-schnell-Q4_K_S.gguf",
-        "filename": "flux1-schnell-Q4_K_S.gguf",
-        "size_bytes": 6783943712
+        "url": "https://huggingface.co/unsloth/flux-3-image-klein-GGUF/resolve/main/flux-3-image-klein-UD-Q4_K_XL.gguf",
+        "filename": "flux-3-image-klein-UD-Q4_K_XL.gguf",
+        "size_bytes": 3929944992
+      },
+      "shared": [],
+      "min_vram_mb": 6144,
+      "recommended_vram_mb": 8192
+    },
+    {
+      "id": "qwen-image-2.1-q4km",
+      "name": "Qwen-Image 2.1 (GGUF Q4_K_M)",
+      "family": "qwen-image-2.1",
+      "license": "qwen-research",
+      "source_url": "https://huggingface.co/unsloth/Qwen-Image-2.1-GGUF",
+      "diffusion": {
+        "url": "https://huggingface.co/unsloth/Qwen-Image-2.1-GGUF/resolve/main/qwen-image-2.1-Q4_K_M.gguf",
+        "filename": "qwen-image-2.1-Q4_K_M.gguf",
+        "size_bytes": 4199565024
       },
       "shared": [],
       "min_vram_mb": 8192,
       "recommended_vram_mb": 12288
     },
     {
-      "id": "flux1-dev-q4ks",
-      "name": "FLUX.1 dev (GGUF Q4_K_S)",
-      "family": "flux1",
-      "license": "flux-1-dev-non-commercial-license",
-      "source_url": "https://huggingface.co/city96/FLUX.1-dev-gguf",
+      "id": "flux3-klein-q8",
+      "name": "Flux.3 klein (GGUF Q8_0)",
+      "family": "flux3",
+      "license": "flux-kommunity-license",
+      "source_url": "https://huggingface.co/unsloth/flux-3-image-klein-GGUF",
       "diffusion": {
-        "url": "https://huggingface.co/city96/FLUX.1-dev-gguf/resolve/main/flux1-dev-Q4_K_S.gguf",
-        "filename": "flux1-dev-Q4_K_S.gguf",
-        "size_bytes": 6805988640
+        "url": "https://huggingface.co/unsloth/flux-3-image-klein-GGUF/resolve/main/flux-3-image-klein-Q8_0.gguf",
+        "filename": "flux-3-image-klein-Q8_0.gguf",
+        "size_bytes": 6092755872
       },
       "shared": [],
       "min_vram_mb": 8192,
@@ -174,49 +174,19 @@
       "recommended_vram_mb": 12288
     },
     {
-      "id": "qwen-image-2512-q2k",
-      "name": "Qwen-Image 2512 (GGUF Q2_K)",
-      "family": "qwen-image",
-      "license": "Apache-2.0",
-      "source_url": "https://huggingface.co/unsloth/Qwen-Image-2512-GGUF",
+      "id": "qwen-image-2.1-q8",
+      "name": "Qwen-Image 2.1 (GGUF Q8_0)",
+      "family": "qwen-image-2.1",
+      "license": "qwen-research",
+      "source_url": "https://huggingface.co/unsloth/Qwen-Image-2.1-GGUF",
       "diffusion": {
-        "url": "https://huggingface.co/unsloth/Qwen-Image-2512-GGUF/resolve/main/qwen-image-2512-Q2_K.gguf",
-        "filename": "qwen-image-2512-Q2_K.gguf",
-        "size_bytes": 7333837344
+        "url": "https://huggingface.co/unsloth/Qwen-Image-2.1-GGUF/resolve/main/qwen-image-2.1-Q8_0.gguf",
+        "filename": "qwen-image-2.1-Q8_0.gguf",
+        "size_bytes": 7640860384
       },
       "shared": [],
-      "min_vram_mb": 8192,
-      "recommended_vram_mb": 12288
-    },
-    {
-      "id": "qwen-image-q3ks",
-      "name": "Qwen-Image (GGUF Q3_K_S)",
-      "family": "qwen-image",
-      "license": "Apache-2.0",
-      "source_url": "https://huggingface.co/QuantStack/Qwen-Image-GGUF",
-      "diffusion": {
-        "url": "https://huggingface.co/QuantStack/Qwen-Image-GGUF/resolve/main/Qwen_Image-Q3_K_S.gguf",
-        "filename": "Qwen_Image-Q3_K_S.gguf",
-        "size_bytes": 8952609312
-      },
-      "shared": [],
-      "min_vram_mb": 12288,
+      "min_vram_mb": 10240,
       "recommended_vram_mb": 16384
-    },
-    {
-      "id": "qwen-image-edit-2511-q3ks",
-      "name": "Qwen-Image-Edit 2511 (GGUF Q3_K_S)",
-      "family": "qwen-image-edit",
-      "license": "Apache-2.0",
-      "source_url": "https://huggingface.co/unsloth/Qwen-Image-Edit-2511-GGUF",
-      "diffusion": {
-        "url": "https://huggingface.co/unsloth/Qwen-Image-Edit-2511-GGUF/resolve/main/qwen-image-edit-2511-Q3_K_S.gguf",
-        "filename": "qwen-image-edit-2511-Q3_K_S.gguf",
-        "size_bytes": 9218914912
-      },
-      "shared": [],
-      "min_vram_mb": 12288,
-      "recommended_vram_mb": 24576
     }
   ]
 }

@@ -101,7 +101,8 @@ of trying to remember what you typed.
 
 MuchAI can also alter a picture you give it, but only with a model built for
 that job. An ordinary model cannot do it. In the catalog, that is
-**Qwen-Image-Edit**.
+**Flux.3 klein** or **Qwen-Image 2.1**. Both also make pictures from text as
+usual; they only edit when you give them a photo.
 
 Once such a model is selected, an **Image to edit** panel appears above the
 prompt. Drop your photo onto it, or click to choose a file. The **Prompt** box
@@ -115,8 +116,8 @@ time:
 > "A house under a stormy sky" is a description of a whole picture, so that is
 > what you get — a brand-new house that is not yours.
 
-Editing is much slower than making a picture from nothing; a single edit can
-take several minutes. Start with a small change and see what you get before
+Editing is slower than making a picture from nothing, and with a large model a
+single edit can take several minutes. Start with a small change and see what you get before
 committing to a long one.
 
 ## When it is slow, or does not work

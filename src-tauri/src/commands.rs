@@ -783,13 +783,15 @@ fn infer_single_file_family(filename: &str) -> String {
     // and hit "flux" instead. That mislabelled model then hid every flux2 LoRA.
     let squashed: String = lower.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
     for (needle, family) in [
-        // Both edit variants must be tested before the base family whose name
-        // is a prefix of theirs, or "flux"/"qwen" claims them first and the
-        // model silently loses its edit capability.
+        // Every edit-capable family must be tested before the base family
+        // whose name is a prefix of theirs, or "flux"/"qwen" claims them first
+        // and the model silently loses its edit capability.
         ("kontext", "flux1-kontext"),
         ("qwenimageedit", "qwen-image-edit"),
         ("qwenedit", "qwen-image-edit"),
+        ("qwenimage21", "qwen-image-2.1"),
         ("flux2", "flux2"),
+        ("flux3", "flux3"),
         ("flux", "flux1"),
         ("qwen", "qwen-image"),
         ("zimage", "z-image"),
@@ -2912,6 +2914,18 @@ mod tests {
         // The base families keep their own files.
         assert_eq!(infer_single_file_family("flux1-dev-Q4_K_S.gguf"), "flux1");
         assert_eq!(infer_single_file_family("qwen-image-Q4.gguf"), "qwen-image");
+    }
+
+    /// Same ordered-needle trap: "flux" and "qwen" would claim both first.
+    #[test]
+    fn the_newer_families_are_not_filed_under_their_predecessors() {
+        for name in ["flux-3-image-klein-UD-Q4_K_XL.gguf", "FLUX.3-image-klein.safetensors", "flux3_klein.gguf"] {
+            assert_eq!(infer_single_file_family(name), "flux3", "{name}");
+        }
+        for name in ["qwen-image-2.1-Q8_0.gguf", "Qwen_Image_2.1-Q4_K_M.gguf"] {
+            assert_eq!(infer_single_file_family(name), "qwen-image-2.1", "{name}");
+        }
+        assert_eq!(infer_single_file_family("qwen-image-2512-Q2_K.gguf"), "qwen-image");
     }
 
     /// The exact URL the user pasted. Everything here is known from the

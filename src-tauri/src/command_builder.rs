@@ -85,7 +85,9 @@ pub fn build_args(
             if let Some(v) = &c.llm {
                 push("--llm", v.clone());
             }
-            if let Some(v) = &c.llm_vision {
+            // Only a reference image uses it, and an edit-capable model can
+            // also run from text alone.
+            if let (Some(v), false) = (&c.llm_vision, ref_images.is_empty()) {
                 push("--llm_vision", v.clone());
             }
             if let Some(v) = &c.vae_format {
@@ -260,26 +262,14 @@ mod tests {
         assert_eq!(val_after(&args, "--clip_l"), Some("/m/clip_l.safetensors"));
         assert_eq!(val_after(&args, "--clip_g"), Some("/m/clip_g.safetensors"));
         assert_eq!(val_after(&args, "--llm"), Some("/m/llm.safetensors"));
-        assert_eq!(val_after(&args, "--llm_vision"), Some("/m/mmproj.safetensors"));
+        // No reference image: see `the_vision_tower_goes_only_with_a_reference_image`.
+        assert!(!args.iter().any(|x| x == "--llm_vision"));
         assert_eq!(val_after(&args, "--vae"), Some("/m/ae.safetensors"));
         assert_eq!(val_after(&args, "--vae-format"), Some("flux"));
         assert_eq!(val_after(&args, "--prediction"), Some("flux_flow"));
         assert!(!args.iter().any(|x| x == "-m"), "multi-file must not emit -m");
     }
 
-    #[test]
-    fn a_vision_tower_emits_llm_vision() {
-        use crate::types::ModelComponents;
-        let mut req = sample();
-        req.model = ModelRef::MultiFile(ModelComponents {
-            diffusion_model: "/m/qwen-edit.gguf".into(),
-            llm: Some("/m/shared/qwen2.5-vl.gguf".into()),
-            llm_vision: Some("/m/shared/mmproj.gguf".into()),
-            ..Default::default()
-        });
-        let args = build_args(&req, "/out/x.png", None, EngineOptions::default());
-        assert_eq!(val_after(&args, "--llm_vision"), Some("/m/shared/mmproj.gguf"));
-    }
 
     #[test]
     fn multi_file_omits_absent_optional_roles() {
@@ -314,6 +304,25 @@ mod tests {
             ..Default::default()
         });
         req
+    }
+
+    /// The vision tower only reads reference images. Qwen-Image 2.1 also
+    /// generates from text, and that ran on the RTX 3060 without it; loading
+    /// it anyway costs ~1.1 GB for nothing.
+    #[test]
+    fn the_vision_tower_goes_only_with_a_reference_image() {
+        let mut req = edit_model();
+        let gate_open = EngineOptions { ref_images: true, ..Default::default() };
+        let args = build_args(&req, "/out/x.png", None, gate_open.clone());
+        assert!(!args.iter().any(|x| x == "--llm_vision"), "no reference, no vision tower");
+
+        req.ref_images = vec!["/in/ref.png".into()];
+        let args = build_args(&req, "/out/x.png", None, gate_open);
+        assert_eq!(val_after(&args, "--llm_vision"), Some("/m/shared/qwen-image/mmproj-f16.gguf"));
+
+        // A reference the gate dropped takes the vision tower with it.
+        let args = build_args(&req, "/out/x.png", None, EngineOptions::default());
+        assert!(!args.iter().any(|x| x == "--llm_vision"));
     }
 
     #[test]

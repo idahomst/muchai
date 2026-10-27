@@ -84,7 +84,7 @@
 
   /** The catalog entry offered when the user wants to edit but owns no edit
    *  model. Matches the id in resources/catalog.json. */
-  const EDIT_CATALOG_ID = "qwen-image-edit-2511-q3ks";
+  const EDIT_CATALOG_ID = "flux3-klein-q4";
 
   const editModels = $derived($library.filter((e) => $editFamilies.includes(e.family)));
   const selectedIsEditModel = $derived(
