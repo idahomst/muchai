@@ -1,7 +1,7 @@
-import { writable, derived } from "svelte/store";
+import { writable, derived, get } from "svelte/store";
 import type { GenerationRequest, GalleryItem, SystemStats, AppConfig, ProgressUpdate, GpuDevice, LibraryEntry, DownloadProgress, LoraInfo } from "./types";
 import { defaultRequest } from "./types";
-import { listLibrary, listLoras } from "./api";
+import { listLibrary, listLoras, addCatalogModel } from "./api";
 
 export const request = writable<GenerationRequest>(defaultRequest());
 export const settings = writable<AppConfig | null>(null);
@@ -116,17 +116,63 @@ export async function runDownload<T>(fn: () => Promise<T>): Promise<T | null> {
   downloadBusy.set(true);
   downloadError.set(null);
   downloadProgress.set(null);
+  let failed = false;
   try {
     const result = await fn();
     await refreshLibrary();
     return result;
   } catch (e) {
-    downloadError.set(String(e));
+    failed = true;
+    // A failure or a cancel stops the queue: carrying on would bury this
+    // error under the next download's progress.
+    const dropped = get(catalogQueue).length;
+    catalogQueue.set([]);
+    downloadError.set(
+      dropped > 0
+        ? `${String(e)} (${dropped} queued model${dropped === 1 ? " was" : "s were"} not downloaded.)`
+        : String(e),
+    );
     return null;
   } finally {
     downloadBusy.set(false);
     downloadProgress.set(null);
+    if (!failed) startNextQueued();
   }
+}
+
+/** Catalog entries waiting for the download in flight. Downloads run one at a
+ *  time: the backend has a single cancel flag, and two entries of one family
+ *  would fetch the same shared encoder into the same file. App-level, like
+ *  `downloadBusy`, so the queue keeps going after the dialog closes. */
+export const catalogQueue = writable<string[]>([]);
+
+/** The catalog entry downloading now, so its row can show the progress bar. */
+export const activeCatalogId = writable<string | null>(null);
+
+/** Download one catalog entry as an app-level task. */
+export async function runCatalogDownload(id: string): Promise<LibraryEntry | null> {
+  activeCatalogId.set(id);
+  try {
+    return await runDownload(() => addCatalogModel(id));
+  } finally {
+    // The next queued entry may already have taken the slot.
+    activeCatalogId.update((v) => (v === id ? null : v));
+  }
+}
+
+/** Add a catalog entry to the queue, or take it back out if it is there. */
+export function toggleQueuedCatalog(id: string): void {
+  if (get(activeCatalogId) === id) return;
+  catalogQueue.update((q) => (q.includes(id) ? q.filter((x) => x !== id) : [...q, id]));
+}
+
+/** Synchronous up to the point `runDownload` sets `downloadBusy`, so nothing
+ *  else can claim the slot in between. */
+function startNextQueued(): void {
+  const [next, ...rest] = get(catalogQueue);
+  if (next === undefined || get(downloadBusy) || get(engineInstalling)) return;
+  catalogQueue.set(rest);
+  void runCatalogDownload(next);
 }
 
 /** Tag of an engine update waiting to be noticed, or null. Set by the once-a-day

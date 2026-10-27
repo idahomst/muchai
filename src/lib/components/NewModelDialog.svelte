@@ -1,10 +1,10 @@
 <script lang="ts">
   import { get } from "svelte/store";
-  import { catalogEntries, addCatalogModel, addUrlModel, addLocalModel, pickModelFile, openExternal,
+  import { catalogEntries, addUrlModel, addLocalModel, pickModelFile, openExternal,
            diskSpace, checkCatalogSpace, listReclaimable, trashDir, deleteModelEntry, openFolder,
            planUrlAdd } from "../api";
   import { settings, runDownload, downloadBusy, downloadProgress, downloadError, refreshLibrary, engineInstalling,
-           catalogHighlightId } from "../stores";
+           catalogHighlightId, catalogQueue, activeCatalogId, runCatalogDownload, toggleQueuedCatalog } from "../stores";
   import { formatBytes, catalogTotalBytes } from "../modelFormat";
   import DownloadProgressBar from "./DownloadProgressBar.svelte";
   import { INSUFFICIENT_SPACE_PREFIX, ROLE_LABELS } from "../types";
@@ -155,32 +155,36 @@
   });
 
   // Downloads run at the app level (stores.runDownload) so busy/progress/error
-  // survive this dialog closing mid-download. Close only on success.
+  // survive this dialog closing mid-download.
   async function run(fn: () => Promise<unknown>) {
-    if ((await runDownload(fn)) !== null) {
-      onClose();
+    await settle(await runDownload(fn));
+  }
+
+  // Close on success, unless a queued download has already started: the user
+  // is still watching that one.
+  async function settle(result: unknown) {
+    if (result !== null) {
+      if (!get(downloadBusy)) onClose();
       return;
     }
     const err = get(downloadError);
     if (err?.includes(INSUFFICIENT_SPACE_PREFIX)) await openBlocked(null);
   }
 
-  // Which catalog entry is currently downloading, so its progress bar renders
-  // inline under that row (not at the bottom of the whole list). Cleared when
-  // the download settles (success closes the dialog; failure returns here).
-  let downloadingId = $state<string | null>(null);
+  // While another download runs, Add queues the entry instead (and a second
+  // click takes it back out). The space check waits for the entry's turn,
+  // when the backend makes it against what is on disk by then.
   async function runCatalog(id: string) {
+    if (get(downloadBusy)) {
+      toggleQueuedCatalog(id);
+      return;
+    }
     const check = await checkCatalogSpace(id).catch(() => null);
     if (check && !check.ok) {
       await openBlocked(check.required_bytes);
       return;
     }
-    downloadingId = id;
-    try {
-      await run(() => addCatalogModel(id));
-    } finally {
-      downloadingId = null;
-    }
+    await settle(await runCatalogDownload(id));
   }
 
   async function pickLocal() {
@@ -277,13 +281,21 @@
                       · <button type="button" class="src" title={e.source_url} onclick={() => openExternal(e.source_url)}>Source ↗</button>
                     {/if}
                   </div>
-                  {#if downloadingId === e.id && $downloadBusy}
+                  {#if $activeCatalogId === e.id && $downloadBusy}
                     <div class="progress"><DownloadProgressBar progress={$downloadProgress} /></div>
                   {/if}
                 </div>
                 <div class="catadd">
                   <span class="vfit {f.cls}">{f.text}</span>
-                  <button class="btn btn-ghost btn-sm" disabled={$downloadBusy || $engineInstalling} onclick={() => runCatalog(e.id)}>Add</button>
+                  {#if $activeCatalogId === e.id && $downloadBusy}
+                    <button class="btn btn-ghost btn-sm" disabled>Adding…</button>
+                  {:else if $catalogQueue.includes(e.id)}
+                    <button class="btn btn-ghost btn-sm" title="Starts when the current download finishes. Click to remove it from the queue." onclick={() => runCatalog(e.id)}>Queued ✕</button>
+                  {:else}
+                    <button class="btn btn-ghost btn-sm" disabled={$engineInstalling}
+                      title={$downloadBusy ? "Starts when the current download finishes" : undefined}
+                      onclick={() => runCatalog(e.id)}>{$downloadBusy ? "Queue" : "Add"}</button>
+                  {/if}
                 </div>
               </div>
             {/each}
