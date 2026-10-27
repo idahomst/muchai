@@ -48,7 +48,7 @@ for sampling, and whether the image looks right. For a crash, add the top of
 What this release changes, and so what the checklist's "release-specific"
 items mean right now:
 
-- Engine `master-1015-e41fbcf`.
+- Engine `master-1017-be48649` (FLUX.3 segmented-execution fix, #2224).
 - Qwen-Image 2.1 and Flux.3 klein support (recipes `qwen-image-2.1`, `flux3`).
   Both generate and edit: the reference image is optional.
 - Catalog: Flux.3 klein UD-Q4_K_XL and Q8_0, Qwen-Image 2.1 Q4_K_M and Q8_0.
@@ -145,6 +145,27 @@ RTX 3060 12 GB (`Vulkan1`, NVIDIA 615.71.10), 31 GB RAM. Every run used
 - Not run: the gallery check with a non-edit model, and the AppImage check. Both
   need the app's window. Not downloaded or run: Flux.3 Q8_0, Qwen-Image 2.1
   Q4_K_M.
+
+### Desktop, RTX 3060 (2026-10-27, engine master-1017-be48649)
+
+Same machine, models and command lines as the 1015 runs above
+(`test-reports/desktop-rtx3060-1017-*.log`). `--help` is unchanged apart from
+the version line. All seven runs exit 0 and give the expected image.
+
+| Run | Sampling | Wall |
+| --- | --- | --- |
+| Flux.3 klein 256x256, 4 steps | 2.14 s | 4.6 s |
+| Flux.3 klein 512x512, 16 steps | 11.70 s | 14.2 s |
+| Flux.3 klein 512x512, 16 steps, edit with `--ref-image` | 31.82 s (rerun: 24.79 s) | 35.0 s |
+| Flux.3 klein 1024x1024, 16 steps | 55.24 s | 60.6 s |
+| Qwen-Image 2.1 256x256, 4 steps, CFG 1 | 3.79 s | 9.8 s |
+| Qwen-Image 2.1 512x512, 8 steps, CFG 1 | 10.80 s | 17.9 s |
+| Qwen-Image 2.1 512x512, 8 steps, edit with `--ref-image` + mmproj | 12.62 s | 21.6 s |
+
+Flux.3 at 1024x1024 stays entirely on `Vulkan1` (auto-fit: `--backend "vulkan1"`).
+
+The user tested the 1.7.1 AppImage built on engine 1015: Flux.3 klein and
+Qwen-Image 2.1 both generate and edit in the app.
 
 ## Checklist for a new machine or release
 

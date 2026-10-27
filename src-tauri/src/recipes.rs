@@ -540,7 +540,7 @@ pub fn recipes() -> Vec<ModelRecipe> {
             ],
             // Neither flag: the engine identifies the checkpoint ("Version:
             // Flux.3 Image Klein" → "running in Flux.3 FLOW mode"), and that is
-            // how it was run on the RTX 3060 on engine master-1015-e41fbcf.
+            // how it was run on the RTX 3060 on engines master-1015 and master-1017.
             vae_format: None,
             prediction: None,
             shared: vec![
@@ -1020,7 +1020,7 @@ mod tests {
         r.roles.iter().filter(|s| s.required).map(|s| s.role).collect()
     }
 
-    /// Mirrors the stack run on the RTX 3060 (engine master-1015-e41fbcf):
+    /// Mirrors the stack run on the RTX 3060 (engines master-1015 and 1017):
     /// generation and a reference-image edit, with neither `--vae-format` nor
     /// `--prediction` and no vision tower. The reference image goes through the
     /// VAE, not the encoder, so an mmproj would only cost a download.

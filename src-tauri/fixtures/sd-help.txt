@@ -1,4 +1,4 @@
-stable-diffusion.cpp version unknown, commit e41fbcf
+stable-diffusion.cpp version unknown, commit be48649
 Usage: ./src-tauri/binaries/engine/sd-cli [options]
 
 CLI Options:

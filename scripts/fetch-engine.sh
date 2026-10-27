@@ -27,14 +27,17 @@
 #
 # 2026-10-26: bumped fd21ecf -> e41fbcf. Same flag surface as fd21ecf (every
 # flag MuchAI emits present, none removed); `--prediction` only gained values.
+#
+# 2026-10-27: bumped e41fbcf -> be48649 for the FLUX.3 fix (segmented
+# execution, #2224) and a GGUF metadata-loading fix (#2223).
 set -euo pipefail
 
 # --- Pinned engine release (leejet/stable-diffusion.cpp GitHub Releases) --------
-ENGINE_REV="e41fbcf"
-ENGINE_TAG="master-1015-e41fbcf"
-ENGINE_ASSET="sd-master-e41fbcf-bin-Linux-Ubuntu-24.04-x86_64-vulkan.zip"
+ENGINE_REV="be48649"
+ENGINE_TAG="master-1017-be48649"
+ENGINE_ASSET="sd-master-be48649-bin-Linux-Ubuntu-24.04-x86_64-vulkan.zip"
 ENGINE_URL="https://github.com/leejet/stable-diffusion.cpp/releases/download/${ENGINE_TAG}/${ENGINE_ASSET}"
-ENGINE_SHA256="0ae9ef34eea1ff6a229b892144a65ed8c00b6438c5ba783cdeca77024b2fc697"
+ENGINE_SHA256="794c913d077aaf72025e772b2acfb6a30f49156e92d072461ae15ce958d95c14"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEST="$ROOT/src-tauri/binaries/engine"

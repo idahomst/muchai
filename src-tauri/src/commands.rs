@@ -2555,12 +2555,12 @@ mod tests {
         let base = scratch("chlog");
         let root = base.join("engines");
         std::fs::create_dir_all(&root).unwrap();
-        let mut cfg = crate::config::default_config(); // Builtin → master-1015-e41fbcf
+        let mut cfg = crate::config::default_config(); // Builtin → master-1017-be48649
 
         let (from, to) = changelog_range(&cfg, &root, "master-797-5ef4a75".into()).unwrap();
         assert_eq!(
             from.as_deref(),
-            Some("e41fbcf"),
+            Some("be48649"),
             "the range starts at the running engine's commit, not its tag"
         );
         assert_eq!(to, "5ef4a75", "a tag has to be reduced too — /compare 404s on a tag name");
@@ -2758,7 +2758,7 @@ mod tests {
         let root = base.join("engines");
         std::fs::create_dir_all(&root).unwrap();
         let cfg_path = base.join("config.json");
-        let config = Mutex::new(crate::config::default_config()); // Builtin → master-1015
+        let config = Mutex::new(crate::config::default_config()); // Builtin → master-1017
 
         // A release with nothing we can run is "no update", not an error — and
         // it still counts as a check. GitHub answered; there was simply nothing
@@ -2773,7 +2773,7 @@ mod tests {
 
         let up = record_check(&config, &cfg_path, &root, Ok(Some(a_release("master-1020-abc1234", 45020326))))
             .unwrap()
-            .expect("build 1020 is newer than the built-in 1015");
+            .expect("build 1020 is newer than the built-in 1017");
         assert_eq!(up.tag, "master-1020-abc1234");
         assert_eq!(up.asset_size, 45020326, "the card sizes the download from this");
         assert_eq!(

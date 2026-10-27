@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 /// number, so "is the release newer than what I am running?" cannot be answered
 /// from the binary alone. Without this constant the app would believe the
 /// built-in engine is build 0 and offer an update it already has.
-pub const BUILTIN_ENGINE_TAG: &str = "master-1015-e41fbcf";
+pub const BUILTIN_ENGINE_TAG: &str = "master-1017-be48649";
 
 /// A parsed `master-<build>-<sha>` release tag.
 #[derive(Debug, Clone, PartialEq, Eq)]
